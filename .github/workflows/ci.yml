@@ -382,7 +382,7 @@ jobs:
 
           ### Install
 
-          - **macOS:** open the `.dmg` and drag Evyro to Applications.
+          - **macOS:** open the `.dmg` and drag Evyro to Applications. While builds are unsigned, macOS blocks the first open: click **Open Anyway** in System Settings › Privacy & Security, or run `xattr -dr com.apple.quarantine /Applications/Evyro.app`.
           - **Windows:** run the `-setup.exe`.
           - **Linux:** install the `.deb`, or make the `.AppImage` executable and run it.
           - **CLI only:** `curl -fsSL https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.sh | sh`, or on Windows `irm https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.ps1 | iex`.
