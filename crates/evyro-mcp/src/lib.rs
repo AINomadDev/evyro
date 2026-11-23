@@ -11,7 +11,7 @@ use evyro_core::memory::NewMemory;
 use evyro_core::projects::Project;
 use evyro_core::sessions::NewSession;
 use evyro_core::tasks::{Actor, NewTask, TaskStatus, TaskUpdate};
-use evyro_core::{brand, git, redact, Error, Store};
+use evyro_core::{brand, git, redact, search, Error, Store};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
@@ -76,6 +76,14 @@ fn tools() -> Vec<ToolDef> {
             schema: s(json!({"category": {"type": "string"}, "content": {"type": "string"}, "files": strs}), &["category", "content"]) },
         ToolDef { name: "get_relevant_files", mutating: false, description: "Files linked to the task plus files currently changed in its worktree.",
             schema: s(json!({"task": {"type": "string"}}), &[]) },
+        ToolDef { name: "find_files", mutating: false, description: "Fuzzy-find files by name in the project or task worktree (Git-tracked and new files, .gitignore honoured, sensitive paths excluded).",
+            schema: s(json!({"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 200}, "task": {"type": "string"}}), &["query"]) },
+        ToolDef { name: "search_code", mutating: false, description: "Search file contents for text or a regex. Returns path, line, column and the (redacted) line. Binary, large and sensitive files are skipped.",
+            schema: s(json!({"pattern": {"type": "string"}, "regex": {"type": "boolean"}, "case_sensitive": {"type": "boolean"}, "path": {"type": "string", "description": "Only files whose path contains this"}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}, "task": {"type": "string"}}), &["pattern"]) },
+        ToolDef { name: "find_symbols", mutating: false, description: "Find functions, types, classes and other definitions by name across the code (pattern-based, many languages).",
+            schema: s(json!({"query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 200}, "task": {"type": "string"}}), &["query"]) },
+        ToolDef { name: "get_outline", mutating: false, description: "The symbol outline of one repository file (repo-relative path).",
+            schema: s(json!({"path": {"type": "string"}, "task": {"type": "string"}}), &["path"]) },
     ]
 }
 
@@ -449,6 +457,45 @@ impl Server {
                     .map(|f| f.path)
                     .collect();
                 json!({"task_files": t.map(|t| t.files).unwrap_or_default(), "changed_files": changed})
+            }
+            "find_files" | "search_code" | "find_symbols" | "get_outline" => {
+                let t = self.task(args)?;
+                let root = match &t {
+                    Some(t) => s.task_root(t)?,
+                    None => self.project.root(),
+                };
+                let limit = |d: u64, max: u64| {
+                    args.get("limit")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(d)
+                        .clamp(1, max) as usize
+                };
+                match name {
+                    "find_files" => json!(search::find_files(
+                        &root,
+                        arg_str(args, "query").unwrap_or(""),
+                        limit(20, 200)
+                    )?),
+                    "search_code" => json!(search::search_text(
+                        &root,
+                        &search::TextQuery {
+                            pattern: arg_str(args, "pattern").unwrap_or(""),
+                            regex: args.get("regex").and_then(|v| v.as_bool()).unwrap_or(false),
+                            case_sensitive: args
+                                .get("case_sensitive")
+                                .and_then(|v| v.as_bool())
+                                .unwrap_or(false),
+                            path_filter: arg_str(args, "path"),
+                            limit: limit(100, 500),
+                        }
+                    )?),
+                    "find_symbols" => json!(search::find_symbols(
+                        &root,
+                        arg_str(args, "query").unwrap_or(""),
+                        limit(30, 200)
+                    )?),
+                    _ => json!(search::outline(&root, arg_str(args, "path").unwrap_or(""))?),
+                }
             }
             _ => return Err(Error::NotFound(format!("tool {name}"))),
         };

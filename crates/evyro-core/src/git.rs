@@ -209,6 +209,29 @@ pub fn status_files(root: &Path) -> Result<Vec<FileState>> {
     Ok(out)
 }
 
+/// Files in the working tree that Git tracks or would track: committed,
+/// staged and new files, without anything `.gitignore` excludes.
+pub fn ls_files(root: &Path) -> Result<Vec<String>> {
+    let raw = git(
+        root,
+        &[
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ],
+    )?;
+    let mut v: Vec<String> = raw
+        .split('\0')
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    v.sort();
+    v.dedup();
+    Ok(v)
+}
+
 pub fn snapshot(dir: &Path) -> Result<GitSnapshot> {
     let root = toplevel(dir)?;
     let files = status_files(&root)?;

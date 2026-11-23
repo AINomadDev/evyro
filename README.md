@@ -55,7 +55,7 @@ Your AI hits a usage limit halfway through a feature. A different AI would be fa
 
 ### Local-first, everywhere you work
 - **CLI, MCP server and a desktop app** on macOS, Windows and Linux, all on one local SQLite database.
-- **Desktop app:** overview, task board, **agent threads** (run Claude Code, Codex or any coding agent in a terminal inside the window), a Changes view with the diff, handoff review, sessions, decisions, AI targets, a command palette (⌘K) and live refresh.
+- **Desktop app:** overview, task board, **agent threads** (run Claude Code, Codex or any coding agent in a terminal inside the window), a Changes view with the diff, **code search** (⌘P for files, text and regex, symbols, with a file viewer and outline), handoff review, sessions, decisions, AI targets, a command palette (⌘K) and live refresh.
 - **No cloud account.** Nothing leaves your machine unless you hand it to an AI.
 
 <table>
@@ -83,7 +83,7 @@ Evyro is not another place to chat with an agent. It is the layer that remembers
 | Switch to an AI IDE, chat app or raw API key | ✓ | partly | — | — |
 | Run and chat with agents in one window | ✓ | ✓ | ✓ | — |
 | Review workbench with diff comments | planned | — | ✓ | — |
-| Code search and symbols | planned | — | ✓ | — |
+| Code search and symbols | ✓ | — | ✓ | — |
 | Remote and mobile access | planned | ✓ | — | — |
 
 <sub>✓ has it · partly: some of it · — not its focus. Based on our source review in <a href="docs/research/OPEN_SOURCE_RESEARCH.md">docs/research</a>, November 2026. "Planned" items are in the <a href="docs/BACKLOG.md">backlog</a>; Evyro does not have them yet.</sub>

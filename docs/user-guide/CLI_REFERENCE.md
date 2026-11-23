@@ -45,6 +45,7 @@ Commands:
   verify       Run a verification command and record a receipt: `evyro verify -- cargo test`
   decide       Record a decision. Record a decision: `evyro decide "<title>" "<decision>" [--why ...]`
   decisions    Decisions for the project
+  search       Search the code: file names, text or regex, symbols, a file's outline
   memory       Project memory
   handoffs     Handoff history
   health       Evidence-linked project health
@@ -535,6 +536,39 @@ Options:
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors
   -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro search
+
+Search the repository: fuzzy file names, text or regex, symbols, and one file's outline. Only files Git tracks or would track are searched (`.gitignore` is honoured). Binary files, files over 1 MB, `.evyro/` and sensitive files (`.env`, keys) are skipped, and secrets in matched lines are redacted. `--json` gives the raw results.
+
+```bash
+evyro search files ratelim
+evyro search text "allow_request" --path src/
+evyro search text --regex 'fn \w+_request'
+evyro search symbols RateLimiter
+evyro search outline src/net/rate_limiter.rs
+```
+
+```text
+Find text in files (plain text by default, `--regex` for a pattern)
+
+Usage: evyro search text [OPTIONS] <PATTERN>
+
+Arguments:
+  <PATTERN>  What to look for
+
+Options:
+      --json               Machine-readable JSON output
+      --regex              Treat the pattern as a regular expression
+      --case               Match case exactly
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+      --path <PATH>        Only files whose path contains this
+  -C, --dir <DIR>          Run as if started in this directory
+      --limit <LIMIT>      Stop after this many matching lines [default: 100]
       --project <PROJECT>  Target a registered project by id or alias instead of the current directory
   -h, --help               Print help
 ```

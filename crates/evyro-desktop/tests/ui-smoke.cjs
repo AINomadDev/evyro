@@ -33,6 +33,9 @@ git("init", "-q", "-b", "main");
 git("config", "user.email", "t@example.com");
 git("config", "user.name", "t");
 fs.writeFileSync(path.join(repo, "app.txt"), "one\n");
+fs.mkdirSync(path.join(repo, "src"));
+const LIMITER = "pub struct Limiter {\n    per_minute: u32,\n}\n\nimpl Limiter {\n    pub fn allow(&mut self, key: &str) -> bool {\n        let _ = key;\n        true\n    }\n}\n";
+fs.writeFileSync(path.join(repo, "src/limiter.rs"), LIMITER);
 git("add", "-A");
 git("commit", "-qm", "init");
 const ev = (...a) => execFileSync(EXE, a, { cwd: repo, env, stdio: "pipe" }).toString();
@@ -85,6 +88,11 @@ const FIX = {
     ides: [{ id: "cursor-ide", display_name: "Cursor" }], chat_apps: [{ id: "chatgpt", display_name: "ChatGPT" }],
   },
   run_doctor: [{ name: "evyro", status: "ok", detail: "0.1.0" }],
+  // Code search results come from the real CLI on the scratch repo.
+  find_files: evj("search", "files", "lim"),
+  search_text: evj("search", "text", "allow"),
+  find_symbols: evj("search", "symbols", "allow"),
+  view_file: { path: "src/limiter.rs", text: LIMITER, lines: LIMITER.split("\n").length - 1, redactions: 0, symbols: evj("search", "outline", "src/limiter.rs") },
 };
 
 // ---------- browser ----------
@@ -184,6 +192,27 @@ const FIX = {
     await page.keyboard.type("go to tasks");
     await page.keyboard.press("Enter");
     await page.waitForSelector('.tab.active[data-view="tasks"]');
+  });
+  await step("code search: find a file, search text, jump to a symbol", async () => {
+    await page.keyboard.press("Control+p");
+    await page.waitForSelector(".palette.search .search-row >> text=limiter.rs");
+    await page.keyboard.type("lim");
+    await page.waitForSelector(".search-row mark");
+    await page.keyboard.press("Tab");
+    await page.waitForSelector(".seg-btn.active >> text=Text");
+    await page.fill(".palette.search > input", "allow");
+    await page.waitForSelector(".search-row >> text=src/limiter.rs:6");
+    await page.waitForSelector(".search-status >> text=1 match in 1 file");
+    await page.keyboard.press("Tab");
+    await page.waitForSelector(".seg-btn.active >> text=Symbols");
+    await page.waitForSelector(".search-row .sym-kind >> text=function");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".file-viewer .fv-line.hit[data-line=\"6\"]");
+    await page.waitForSelector(".fv-outline >> text=Limiter");
+    await page.click(".fv-sym >> nth=0");
+    await page.waitForSelector(".fv-line.hit[data-line=\"1\"]");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".file-viewer", { state: "detached" });
   });
   await step("keyboard shortcut switches tabs", async () => {
     await page.click(".tab[data-view=\"tasks\"]");

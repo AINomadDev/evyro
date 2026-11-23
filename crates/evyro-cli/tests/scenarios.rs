@@ -1263,3 +1263,126 @@ fn switch_to_any_kind_of_ai() {
         );
     }
 }
+
+/// Code search: file names, text, symbols and outlines through the CLI and the
+/// read-only MCP server. Ignored, binary and sensitive files stay out, and
+/// secrets in matched lines are redacted.
+#[test]
+fn code_search_respects_ignores_and_secrets() {
+    let mut env = Env::new();
+    let repo = env.repo("search");
+    let gh = "ghp_abcdefghijklmnopqrstuvwxyz0123456789AB";
+    std::fs::create_dir_all(repo.join("src/net")).unwrap();
+    std::fs::write(
+        repo.join("src/net/rate_limiter.rs"),
+        "pub struct RateLimiter {\n    per_minute: u32,\n}\n\nimpl RateLimiter {\n    pub fn allow_request(&mut self) -> bool {\n        true\n    }\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        repo.join("src/config.ts"),
+        format!("export const GITHUB = \"{gh}\"; // allow_request token\nexport function loadConfig() {{}}\n"),
+    )
+    .unwrap();
+    std::fs::write(repo.join(".gitignore"), "build/\n").unwrap();
+    std::fs::create_dir_all(repo.join("build")).unwrap();
+    std::fs::write(repo.join("build/out.rs"), "fn allow_request() {}\n").unwrap();
+    std::fs::write(repo.join(".env"), format!("allow_request={gh}\n")).unwrap();
+    std::fs::write(repo.join("blob.bin"), b"allow_request\0\0\x01").unwrap();
+    env.init(&repo);
+
+    // Files: fuzzy name match, ignored and sensitive paths left out.
+    let files = env.json(&repo, &["search", "files", "ratelim"]);
+    assert_eq!(files[0]["path"], "src/net/rate_limiter.rs", "{files}");
+    let all = env.json(&repo, &["search", "files", "", "--limit", "500"]);
+    let paths: Vec<&str> = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert!(!paths.iter().any(|p| p.starts_with("build/")), "{paths:?}");
+    assert!(!paths.contains(&".env"), "{paths:?}");
+    assert!(!paths.iter().any(|p| p.starts_with(".evyro/")), "{paths:?}");
+
+    // Text: plain, then regex; binary, ignored and sensitive files skipped.
+    let t = env.json(&repo, &["search", "text", "allow_request"]);
+    let hits = t["hits"].as_array().unwrap();
+    let hit_paths: Vec<&str> = hits.iter().map(|h| h["path"].as_str().unwrap()).collect();
+    assert_eq!(
+        hit_paths,
+        ["src/config.ts", "src/net/rate_limiter.rs"],
+        "{t}"
+    );
+    assert_eq!(hits[1]["line"], 6);
+    let raw = t.to_string();
+    assert!(!raw.contains(gh), "matched line leaked the token: {raw}");
+    assert!(raw.contains("REDACTED"), "{raw}");
+    let re = env.json(
+        &repo,
+        &[
+            "search",
+            "text",
+            "--regex",
+            r"fn \w+_request",
+            "--path",
+            "src/net",
+        ],
+    );
+    assert_eq!(re["hits"].as_array().unwrap().len(), 1, "{re}");
+    let none = env.json(&repo, &["search", "text", "ALLOW_REQUEST", "--case"]);
+    assert_eq!(none["hits"].as_array().unwrap().len(), 0, "{none}");
+
+    // Symbols and outline.
+    let syms = env.json(&repo, &["search", "symbols", "RateLimiter"]);
+    assert_eq!(syms[0]["name"], "RateLimiter");
+    assert_eq!(syms[0]["kind"], "struct");
+    let out = env.json(&repo, &["search", "outline", "src/config.ts"]);
+    assert!(out
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["name"] == "loadConfig" && s["kind"] == "function"));
+    let esc = env.run(&repo, &["search", "outline", "../search/.env"]);
+    assert!(!esc.status.success(), "a path outside the repo is refused");
+
+    // MCP, read-only: the search tools stay available.
+    let mut child = env
+        .cmd(&repo, &["mcp", "--read-only", "--agent", "codex"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    let mut stdin = child.stdin.take().unwrap();
+    let msgs = [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"find_files","arguments":{"query":"ratelim"}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_code","arguments":{"pattern":"allow_request"}}}"#,
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"find_symbols","arguments":{"query":"allow"}}}"#,
+        r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_outline","arguments":{"path":"src/net/rate_limiter.rs"}}}"#,
+        r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"get_outline","arguments":{"path":"/etc/passwd"}}}"#,
+    ];
+    for m in msgs {
+        writeln!(stdin, "{m}").unwrap();
+    }
+    drop(stdin);
+    let o = child.wait_with_output().unwrap();
+    let r: Vec<Value> = String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let res = |i: usize| &r[i]["result"]["structuredContent"]["result"];
+    assert_eq!(res(1)[0]["path"], "src/net/rate_limiter.rs", "{}", r[1]);
+    assert_eq!(res(2)["hits"].as_array().unwrap().len(), 2, "{}", r[2]);
+    assert!(
+        !r[2].to_string().contains(gh),
+        "MCP search leaked the token"
+    );
+    assert_eq!(res(3)[0]["name"], "allow_request", "{}", r[3]);
+    assert!(res(4)
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s["name"] == "allow_request" && s["line"] == 6));
+    assert_eq!(r[5]["result"]["isError"], true, "{}", r[5]);
+}

@@ -13,10 +13,11 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - Export/import, database backup/restore.
 - MCP stdio server.
 - Three-agent continuation using simulated harness binaries.
+- Code search through the CLI and MCP (scenario test): fuzzy file names, text and regex, symbols and outlines; `.gitignore`, binary and sensitive files left out, secrets in matched lines redacted, paths outside the repository refused.
 - A receiving agent that fails to launch reopens its handoff instead of stranding the task.
 - Switch targets of every kind, with simulated binaries: an API target (key from an env var, model mapped for OpenCode), refusal before any state change when the key is missing, `app_login` removing `ANTHROPIC_API_KEY`, an IDE launch, a redacted chat pack, and continuing a handoff with a different AI than it named.
 
-- Desktop UI smoke test (Playwright): every screen, the add-target form, the command palette, shortcuts, live refresh and first-run setup, on Linux, macOS and Windows.
+- Desktop UI smoke test (Playwright): every screen, the add-target form, the command palette, code search and the file viewer, shortcuts, live refresh and first-run setup, on Linux, macOS and Windows.
 - Desktop app builds on Linux, macOS and Windows.
 - Installers build in CI (2026-11-23): a universal macOS .dmg, Windows .msi and .exe, Linux .deb and .AppImage, each with SHA-256 checksums.
 
@@ -32,6 +33,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 
 - Desktop app under Xvfb: creating a task, checking criteria, running tests, accepting a handoff with drift, saving commands, the AI targets screen, adding a target, switching to a chat app through a handoff, the Changes view, the palette and live refresh after a CLI checkpoint.
 - Agent threads in the real app under Xvfb (2026-11-23): an agent thread ran `evyro run --to aider --task T-1` with a stand-in agent in a PTY, took typed input, was tracked as a session (top bar showed "With aider") and checkpointed on exit; a shell thread ran commands and followed window resizes; quitting the app stopped a running thread's program.
+- Code search in the real app under Xvfb (2026-11-23): Ctrl+P found `rate_limiter.rs` from "ratelim", text search showed both matches with the token in `config.ts` as `[REDACTED:github_token]` and left `.env` out, symbol search jumped to `allow_request`, and the file viewer opened at line 6 with its outline.
 
 ## Not yet verified
 
@@ -47,7 +49,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - Desktop: tray icon, auto-update.
 - Web UI, mobile companion, remote access.
 - Review workflow with inline diff comments (planned).
-- Code search, symbol index, LSP, codebase map.
+- Code intelligence beyond search: tree-sitter parsing, find references, LSP (types, go to definition across files), a codebase map. Symbols come from per-language patterns, so an unusual declaration can be missed.
 - Skills registry, context deduplication across sessions, embeddings.
 - Model discovery (listing a provider's models), quota tracking, routing policies, automation rules. A provider registry exists (`evyro targets providers`).
 - GitHub Issues sync, Relay contract import/export, ACP.

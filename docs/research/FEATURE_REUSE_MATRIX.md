@@ -11,7 +11,7 @@
 | ACP | Use existing protocol (later) | T3 Code `effect-acp`, Goose | Not implemented |
 | Agent threads, model switching UI | Implement compatible functionality | T3 Code (threads), `portable-pty` + xterm.js | Implemented: agent and shell threads in the desktop app, each running `evyro run` in a PTY |
 | Review workbench, PR review | Integrate existing tool | px0 | Planned (launch `px0 <worktree>`) |
-| Fuzzy / regex search, symbols | Study architectural ideas | px0 `internal/fuzzy`, `internal/symbols`; tree-sitter | Not implemented |
+| Fuzzy / regex search, symbols | Study architectural ideas | px0 `internal/fuzzy`, `internal/symbols`; tree-sitter | Implemented in `evyro-core::search` (own code, no px0 source copied): fuzzy file names, text and regex search, per-language pattern symbols and outlines, in the CLI, MCP and desktop. Tree-sitter not yet |
 | Symbol-level retrieval | Integrate existing tool | Serena as optional MCP server | Not implemented |
 | Context packing | Study ideas | Repomix | Budgeted packet implemented |
 | Skills | Study ideas | obra/superpowers format | Not implemented |

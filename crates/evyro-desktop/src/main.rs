@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+mod search;
 mod threads;
 
 type CmdResult = Result<Value, Value>;
@@ -864,6 +865,10 @@ fn main() {
             open_in_terminal,
             pick_folder,
             repo_changes,
+            search::find_files,
+            search::search_text,
+            search::find_symbols,
+            search::view_file,
             threads::term_open,
             threads::term_list,
             threads::term_write,
