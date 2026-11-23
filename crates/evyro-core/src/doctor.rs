@@ -134,6 +134,14 @@ pub fn run(store: &Store, cwd: &Path) -> Vec<Check> {
             format!("{} ({})", p.name, p.id),
             None,
         ));
+        if let Err(e) = crate::projects::project_file_problem(&p.root()) {
+            out.push(c(
+                "project.toml",
+                "fail",
+                e,
+                Some("fix the file; until then Evyro keeps the last commands it read"),
+            ));
+        }
         if p.commands.test.is_empty() {
             out.push(c(
                 "test command",
@@ -141,6 +149,9 @@ pub fn run(store: &Store, cwd: &Path) -> Vec<Check> {
                 "none configured",
                 Some("set [commands] test in .evyro/project.toml"),
             ));
+        } else {
+            let cmds: Vec<String> = p.commands.test.iter().map(|a| a.join(" ")).collect();
+            out.push(c("test command", "ok", cmds.join("; "), None));
         }
         if let Ok(stale) = store.stale_sessions(&p.id, false) {
             if !stale.is_empty() {

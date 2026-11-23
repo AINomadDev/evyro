@@ -117,6 +117,16 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
     for (i, a) in plan.extra_args.iter().enumerate() {
         argv.insert(1 + i, a.clone());
     }
+    if opts.headless && spec.id == "codex" {
+        // The workspace-write sandbox lets Codex write only in the repo and
+        // temp dirs. Its own `evyro checkpoint` / `evyro verify` calls write
+        // Evyro's database, so that folder has to be writable too.
+        if let Some(at) = argv.iter().position(|a| a == "workspace-write") {
+            let data = evyro_core::paths::GlobalPaths::resolve()?.data_dir;
+            argv.insert(at + 1, "--add-dir".into());
+            argv.insert(at + 2, data.to_string_lossy().into_owned());
+        }
+    }
     let cwd = match &session.task_id {
         Some(t) => store.task_root(&store.get_task(t)?)?,
         None => p.root(),
@@ -138,6 +148,16 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
         .current_dir(&cwd)
         .env("EVYRO_SESSION_ID", &session.id)
         .env("EVYRO_PROJECT_ID", &p.id);
+    if opts.headless {
+        // Nobody types into a headless run. An open stdin makes some CLIs
+        // (Codex among them) wait for more prompt text forever.
+        cmd.stdin(std::process::Stdio::null());
+        if spec.id == "gemini" {
+            // Gemini asks whether to trust a new folder before it will edit
+            // there; headless runs have nobody to answer.
+            cmd.env("GEMINI_CLI_TRUST_WORKSPACE", "true");
+        }
+    }
     for k in &plan.env_remove {
         cmd.env_remove(k);
     }

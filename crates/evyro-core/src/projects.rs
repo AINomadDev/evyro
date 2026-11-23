@@ -8,12 +8,61 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct Commands {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "command_list")]
     pub build: Vec<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "command_list")]
     pub test: Vec<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "command_list")]
     pub lint: Vec<Vec<String>>,
+}
+
+/// Commands are a list of argv lists, `test = [["cargo", "test"]]`. People
+/// also write one command as a list of words (`test = ["./test.sh"]`) or as
+/// a string (`test = "cargo test"`, split on spaces, no shell), so accept those.
+fn command_list<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Vec<Vec<String>>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Item {
+        Argv(Vec<String>),
+        Line(String),
+    }
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Shape {
+        Line(String),
+        List(Vec<Item>),
+    }
+    let words = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+    Ok(match Shape::deserialize(d)? {
+        Shape::Line(s) => vec![words(&s)],
+        // ["cargo", "test"] is one argv; ["cargo test", "npm test"] is two lines.
+        Shape::List(items)
+            if !items.is_empty()
+                && items
+                    .iter()
+                    .all(|i| matches!(i, Item::Line(s) if !s.contains(char::is_whitespace))) =>
+        {
+            vec![items
+                .into_iter()
+                .map(|i| match i {
+                    Item::Line(s) => s,
+                    Item::Argv(_) => unreachable!(),
+                })
+                .collect()]
+        }
+        Shape::List(items) => items
+            .into_iter()
+            .map(|i| match i {
+                Item::Argv(a) => a,
+                Item::Line(s) => words(&s),
+            })
+            .collect(),
+    }
+    .into_iter()
+    .filter(|a| !a.is_empty())
+    .collect())
 }
 
 impl Commands {
@@ -62,9 +111,20 @@ pub struct ProjectFile {
 }
 
 pub fn read_project_file(root: &Path) -> Option<ProjectFile> {
+    project_file_problem(root).ok().flatten()
+}
+
+/// Read `.evyro/project.toml`: `Ok(None)` when there is none, `Err` with the
+/// parse error when it cannot be read, so callers can say what is wrong
+/// instead of silently ignoring the file.
+pub fn project_file_problem(root: &Path) -> std::result::Result<Option<ProjectFile>, String> {
     let p = root.join(brand::PROJECT_DIR).join("project.toml");
-    let s = std::fs::read_to_string(p).ok()?;
-    toml::from_str(&s).ok()
+    let Ok(s) = std::fs::read_to_string(&p) else {
+        return Ok(None);
+    };
+    toml::from_str(&s)
+        .map(Some)
+        .map_err(|e| format!("{} could not be read: {e}", p.display()))
 }
 
 /// Detect stacks and default build/test/lint argv from marker files.
@@ -251,7 +311,14 @@ impl Store {
         })
     }
 
+    /// A project, with its commands refreshed from `.evyro/project.toml`.
     pub fn get_project(&self, id: &str) -> Result<Project> {
+        let p = self.get_project_stored(id)?;
+        self.sync_project_file(p)
+    }
+
+    /// A project as stored, without re-reading `.evyro/project.toml`.
+    pub fn get_project_stored(&self, id: &str) -> Result<Project> {
         self.conn
             .query_row(
                 &format!("SELECT {PROJECT_COLS} FROM projects WHERE id = ?1 OR alias = ?1"),
@@ -309,7 +376,7 @@ impl Store {
         if let Some(pf) = read_project_file(&p.root()) {
             if pf.id == p.id && pf.commands != p.commands {
                 self.set_project_commands(&p.id, &pf.commands)?;
-                return self.get_project(&p.id);
+                return self.get_project_stored(&p.id);
             }
         }
         Ok(p)
@@ -365,5 +432,61 @@ impl Store {
             rusqlite::params![to_json(commands), util::now(), id],
         )?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod command_shape_tests {
+    use super::*;
+    fn test_cmds(toml_text: &str) -> Vec<Vec<String>> {
+        let f: ProjectFile = toml::from_str(&format!(
+            "schema_version = 1\nid = \"p\"\nname = \"n\"\n[commands]\n{toml_text}\n"
+        ))
+        .unwrap();
+        f.commands.test
+    }
+    fn v(a: &[&[&str]]) -> Vec<Vec<String>> {
+        a.iter()
+            .map(|x| x.iter().map(|s| s.to_string()).collect())
+            .collect()
+    }
+    #[test]
+    fn every_reasonable_shape_is_read() {
+        assert_eq!(
+            test_cmds("test = [[\"cargo\", \"test\"]]"),
+            v(&[&["cargo", "test"]])
+        );
+        assert_eq!(
+            test_cmds("test = \"cargo test --all\""),
+            v(&[&["cargo", "test", "--all"]])
+        );
+        assert_eq!(test_cmds("test = [\"./test.sh\"]"), v(&[&["./test.sh"]]));
+        assert_eq!(
+            test_cmds("test = [\"cargo\", \"test\"]"),
+            v(&[&["cargo", "test"]])
+        );
+        assert_eq!(
+            test_cmds("test = [\"cargo test\", \"npm test\"]"),
+            v(&[&["cargo", "test"], &["npm", "test"]])
+        );
+        assert_eq!(
+            test_cmds("test = [[\"cargo\", \"test\"], \"npm test\"]"),
+            v(&[&["cargo", "test"], &["npm", "test"]])
+        );
+        assert_eq!(test_cmds("test = []"), Vec::<Vec<String>>::new());
+        assert_eq!(test_cmds("test = \"\""), Vec::<Vec<String>>::new());
+    }
+    #[test]
+    fn unreadable_file_is_reported() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(d.path().join(brand::PROJECT_DIR)).unwrap();
+        assert!(matches!(project_file_problem(d.path()), Ok(None)));
+        std::fs::write(
+            d.path().join(brand::PROJECT_DIR).join("project.toml"),
+            "test = = 1",
+        )
+        .unwrap();
+        let e = project_file_problem(d.path()).unwrap_err();
+        assert!(e.contains("project.toml could not be read"), "{e}");
     }
 }

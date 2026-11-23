@@ -87,7 +87,19 @@ pub fn registry() -> Vec<AdapterSpec> {
             model_flag: Some("--model"),
             evidence: "documented",
             notes: "Hooks (SessionStart, PostToolUse, PreCompact, Stop) can call `evyro checkpoint --auto`; see `evyro integrate claude-code`.",
-            headless: Some(|bin, p| vec![bin.into(), "-p".into(), p.into()]),
+            // Headless `-p` has nobody to answer permission prompts: allow file
+            // edits and Evyro's own CLI (checkpoints, verify), nothing else.
+            headless: Some(|bin, p| {
+                vec![
+                    bin.into(),
+                    "-p".into(),
+                    p.into(),
+                    "--permission-mode".into(),
+                    "acceptEdits".into(),
+                    "--allowedTools".into(),
+                    "Bash(evyro *)".into(),
+                ]
+            }),
             interactive: Some(|bin, p| vec![bin.into(), p.into()]),
         },
         AdapterSpec {
@@ -101,7 +113,11 @@ pub fn registry() -> Vec<AdapterSpec> {
             model_flag: Some("--model"),
             evidence: "documented",
             notes: "Reads AGENTS.md. `codex exec` is the non-interactive mode.",
-            headless: Some(|bin, p| vec![bin.into(), "exec".into(), p.into()]),
+            // `codex exec` defaults to a read-only sandbox; a task needs to write
+            // in the workspace (still no network, nothing outside the repo).
+            headless: Some(|bin, p| {
+                vec![bin.into(), "exec".into(), "--sandbox".into(), "workspace-write".into(), p.into()]
+            }),
             interactive: Some(|bin, p| vec![bin.into(), p.into()]),
         },
         AdapterSpec {
@@ -608,7 +624,16 @@ mod tests {
         let argv = a
             .launch_argv("codex", LaunchMode::Headless, p, None)
             .unwrap();
-        assert_eq!(argv, vec!["codex".to_string(), "exec".into(), p.into()]);
+        assert_eq!(
+            argv,
+            vec![
+                "codex".to_string(),
+                "exec".into(),
+                "--sandbox".into(),
+                "workspace-write".into(),
+                p.into()
+            ]
+        );
     }
     #[test]
     fn model_flag_inserted() {
@@ -618,10 +643,20 @@ mod tests {
             .unwrap();
         assert_eq!(
             argv,
-            ["claude", "--model", "opus", "-p", "hi"]
-                .iter()
-                .map(|s| s.to_string())
-                .collect::<Vec<_>>()
+            [
+                "claude",
+                "--model",
+                "opus",
+                "-p",
+                "hi",
+                "--permission-mode",
+                "acceptEdits",
+                "--allowedTools",
+                "Bash(evyro *)"
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
         );
     }
     #[test]
