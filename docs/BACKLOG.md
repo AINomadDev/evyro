@@ -37,7 +37,7 @@ Requirement references are spec section numbers. Evidence for done items is the 
 4a. **Targets, next steps**: confirm login-file locations and model mapping against real installs; model discovery per provider; a generic "custom CLI" harness with an argv template.
 5. **px0 / T3 Code integration** (21.2): launch px0 on a task worktree; document T3 Code + Evyro MCP setup.
 6. **Codex and Gemini hooks** (14.4): automatic checkpoints where those agents expose hooks.
-7. **Code search and symbols** (22): fuzzy file search, regex search, tree-sitter outlines; optional Serena MCP.
+7. **Code search and symbols** (22): done for fuzzy file search, text and regex search, pattern-based symbols and outlines (CLI, MCP, desktop). Next: tree-sitter outlines, find references, optional Serena or LSP over MCP.
 8. **Skills registry** (23).
 9. **Handoff benchmark suite** (38) with real agents.
 10. **Packaging** (5.5): release binaries + checksums, Homebrew tap, then installers.

@@ -157,6 +157,9 @@ enum Cmd {
     },
     /// Decisions for the project.
     Decisions,
+    /// Search the code: file names, text or regex, symbols, a file's outline.
+    #[command(subcommand)]
+    Search(SearchCmd),
     /// Review comments on the working-tree changes: leave them on files and
     /// lines, send the open ones to an agent, resolve them when addressed.
     Review {
@@ -433,6 +436,41 @@ enum TargetsCmd {
     Remove { name: String },
     /// Providers you can use with API targets.
     Providers,
+}
+
+#[derive(Subcommand)]
+enum SearchCmd {
+    /// Fuzzy-find files by name: `evyro search files hndrs` finds handoff.rs.
+    Files {
+        query: String,
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// Find text in files (plain text by default, `--regex` for a pattern).
+    Text {
+        /// What to look for.
+        pattern: String,
+        /// Treat the pattern as a regular expression.
+        #[arg(long)]
+        regex: bool,
+        /// Match case exactly.
+        #[arg(long)]
+        case: bool,
+        /// Only files whose path contains this.
+        #[arg(long)]
+        path: Option<String>,
+        /// Stop after this many matching lines.
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+    },
+    /// Find functions, types and other symbols by name across the repository.
+    Symbols {
+        query: String,
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+    },
+    /// List the symbols in one file.
+    Outline { path: String },
 }
 
 #[derive(Subcommand)]
@@ -1274,6 +1312,82 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                     .collect::<Vec<_>>()
                     .join("\n")
             });
+        }
+        Cmd::Search(cmd) => {
+            use evyro_core::search;
+            let p = project(&store, &cli.project, &dir)?;
+            let root = p.root();
+            match cmd {
+                SearchCmd::Files { query, limit } => {
+                    let hits = search::find_files(&root, &query, limit)?;
+                    o.print(&hits, || {
+                        hits.iter()
+                            .map(|h| h.path.clone())
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    });
+                }
+                SearchCmd::Text {
+                    pattern,
+                    regex,
+                    case,
+                    path,
+                    limit,
+                } => {
+                    let r = search::search_text(
+                        &root,
+                        &search::TextQuery {
+                            pattern: &pattern,
+                            regex,
+                            case_sensitive: case,
+                            path_filter: path.as_deref(),
+                            limit,
+                        },
+                    )?;
+                    o.print(&r, || {
+                        let mut out: Vec<String> = r
+                            .hits
+                            .iter()
+                            .map(|h| {
+                                format!("{}:{}:{}: {}", h.path, h.line, h.column, h.text.trim())
+                            })
+                            .collect();
+                        out.push(format!(
+                            "{} match(es) in {} file(s) searched{}",
+                            r.hits.len(),
+                            r.files_searched,
+                            if r.truncated {
+                                "; stopped at the limit, use --limit for more"
+                            } else {
+                                ""
+                            }
+                        ));
+                        out.join("\n")
+                    });
+                }
+                SearchCmd::Symbols { query, limit } => {
+                    let syms = search::find_symbols(&root, &query, limit)?;
+                    o.print(&syms, || {
+                        syms.iter()
+                            .map(|s| format!("{:10} {}  {}:{}", s.kind, s.name, s.path, s.line))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    });
+                }
+                SearchCmd::Outline { path } => {
+                    let syms = search::outline(&root, &path)?;
+                    o.print(&syms, || {
+                        if syms.is_empty() {
+                            "No symbols found (unknown language or none defined).".into()
+                        } else {
+                            syms.iter()
+                                .map(|s| format!("{:>5}  {:10} {}", s.line, s.kind, s.name))
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        }
+                    });
+                }
+            }
         }
         Cmd::Review { cmd } => {
             let p = project(&store, &cli.project, &dir)?;

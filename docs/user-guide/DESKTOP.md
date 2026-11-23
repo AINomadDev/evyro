@@ -33,6 +33,9 @@ Requirements: Rust 1.80+ and Git. On Linux, the WebKitGTK 4.1 development packag
 | ⌘K / Ctrl+K | Command palette: every screen, new task, new handoff, switch to any AI, open any project |
 | ⌘1 to ⌘9 / Ctrl+1 to Ctrl+9 | Jump to a screen |
 | ⌘N / Ctrl+N | New task |
+| ⌘P / Ctrl+P | Go to a file by name |
+| ⌘⇧F / Ctrl+Shift+F | Search the code for text or a regex |
+| ⌘⇧O / Ctrl+Shift+O | Go to a function, type or class |
 | Esc | Close a dialog, the palette or the task drawer |
 
 Inside a terminal, Ctrl keys go to the program (Ctrl+C, Ctrl+K, Ctrl+N work as in any terminal). On macOS the ⌘ shortcuts still work there; on Windows and Linux click **Ctrl K** in the top bar for the palette.
@@ -42,6 +45,8 @@ Inside a terminal, Ctrl keys go to the program (Ctrl+C, Ctrl+K, Ctrl+N work as i
 **Notifications.** While the window is in the background, Evyro shows a desktop notification when an agent stops, a handoff is prepared, accepted or reopened, or tests fail. macOS asks once for permission.
 
 **Agent threads.** **Switch to** a coding agent (or **+ Agent** on the Threads screen) starts it in a thread inside the window. The thread runs `evyro run --to <target> --task <key>` through your login shell, so the agent sees the same PATH and keys as in your own terminal, and Evyro tracks the session, claims any waiting handoff and checkpoints when the agent exits. Threads keep running while you look at other screens and stop when you quit the app. To use your own terminal instead, pick **Open in Terminal instead** in the new-thread dialog.
+
+**Code search.** **Search** in the top bar (or ⌘P) opens one panel with three modes: **Files** (fuzzy names, like `ratelim` for `rate_limiter.rs`), **Text** (with **Regex**, **Match case** and a path filter) and **Symbols**. **Tab** switches mode, the arrow keys move and Enter opens. A file opens read only with line numbers and an outline; click a symbol to jump to it, or **Copy path** for a `path:line` to paste to an AI. Search skips ignored, binary, very large and sensitive files, and hides secrets in what it shows.
 
 **First run.** With no projects yet, the welcome screen walks through adding a project (with a folder picker), checking your AIs and handing work over.
 

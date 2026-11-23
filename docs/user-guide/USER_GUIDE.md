@@ -328,6 +328,23 @@ evyro export --out my-app.json   # one project, redacted, portable
 evyro import my-app.json         # on the other machine (--root to point at the repo)
 ```
 
+### 4.9 Find code fast
+
+Search the repository by file name, by text or regex, or by symbol (a function, type or class). Search only looks at files Git tracks or would track, so anything in `.gitignore` stays out. It also skips binary files, files over 1 MB and files that may hold secrets (`.env`, keys). If a line it shows contains a secret, that part reads `[REDACTED]`.
+
+```bash
+evyro search files ratelim             # fuzzy file names: finds src/net/rate_limiter.rs
+evyro search text "allow_request"      # every line that contains it
+evyro search text --regex 'fn \w+_request' --path src/net
+evyro search text Token --case          # match upper and lower case exactly
+evyro search symbols RateLimiter        # where it is defined
+evyro search outline src/net/rate_limiter.rs
+```
+
+In the desktop app, press **⌘ P** (Ctrl P on Windows and Linux) to go to a file, **⌘ ⇧ F** to search the code, or **⌘ ⇧ O** to go to a symbol. **Tab** switches between the three. Pick a result to open the file with line numbers and an outline. Click a symbol in the outline to jump to it. Agents connected over MCP get the same search as the tools `find_files`, `search_code`, `find_symbols` and `get_outline`, which also work with `--read-only`.
+
+Symbols come from patterns for each language: Rust, TypeScript and JavaScript, Python, Go, Java, Kotlin, C#, Scala, Swift, Dart, Ruby, C and C++, plus Markdown headings. They are quick and need nothing installed, but they are not a full parser. An unusual declaration can be missed.
+
 ---
 
 ## Part 5. Desktop app
@@ -340,6 +357,7 @@ The app shows the same data as the CLI. See the [Desktop guide](DESKTOP.md) for 
 | **Handoffs** | Open a handoff, pick any AI under **Continue with**, then **Start with this AI**. Coding agents start in a thread inside the window; IDEs and chat apps open with the text on your clipboard. **Accept only** starts the session and copies the prompt, and you start the AI yourself. |
 | **Threads** | Every agent you started from the app, each in its own terminal. Type into it as in any terminal. **+ Agent** starts another AI on a task, **+ Shell** opens a shell in the repo, **Hand off** passes a running agent's task on. |
 | **Overview** and **Tasks** | **Hand off** on any task writes a handoff to the AI you pick. |
+| **Search** (⌘ P) | Go to a file, search the code or jump to a symbol, then read the file with its outline. |
 
 If the task still belongs to another AI, **Switch to** opens the handoff form instead, so nothing is taken over silently.
 
@@ -391,6 +409,7 @@ If the task still belongs to another AI, **Switch to** opens the handoff form in
 | See all AIs | `evyro targets` |
 | Add an AI | `evyro targets add <name> --kind harness/api/ide/chat ...` |
 | Fix stale sessions | `evyro recover` |
+| Find a file or code | `evyro search files <name>` / `evyro search text <text>` |
 | Comment on a change | `evyro review comment <path>:<line> "..."` |
 | Send review comments | `evyro review prompt --mark-sent` |
 | Health check | `evyro doctor` |
