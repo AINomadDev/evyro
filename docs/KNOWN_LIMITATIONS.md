@@ -18,6 +18,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 
 - Desktop UI smoke test (Playwright): every screen, the add-target form, the command palette, shortcuts, live refresh and first-run setup, on Linux, macOS and Windows.
 - Desktop app builds on Linux, macOS and Windows.
+- Installers build in CI (2026-11-23): a universal macOS .dmg, Windows .msi and .exe, Linux .deb and .AppImage, each with SHA-256 checksums.
 
 ## Works (checked on a real Mac, 2026-11-23, macOS 27.2 arm64)
 
@@ -37,7 +38,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - **Real agents.** No real Claude Code, Codex, Gemini or OpenCode run has been recorded. Argv and MCP setup are from docs. The first real run on your Mac is the next acceptance step.
 - **Windows end-to-end.** Unit tests and builds pass on Windows CI, but the end-to-end scenario tests use shell-script stand-ins for agents and run only on Linux and macOS. No one has used Evyro on a Windows machine.
 - **Notifications, agent threads and the Terminal launch** on a real Mac or Windows desktop. Agent threads were checked by hand on Linux with a real PTY and a stand-in agent.
-- **Installers.** The CI job that builds .dmg, .exe, .deb and .AppImage is configured; see the backlog for its first run. Builds are not code-signed or notarized (needs an Apple Developer ID and a Windows certificate).
+- **Installers on real machines.** The installers build in CI but have not been installed on a real Mac, Windows or Linux machine yet. They are not code-signed or notarized (needs an Apple Developer ID and a Windows certificate), so macOS and Windows will warn on first open.
 - **Sign-in and key checks against real tools.** Login detection is confirmed for Claude Code, Codex and Gemini CLI on a real Mac; the others follow their docs. Opening IDEs from Evyro has not been checked on a real Mac yet.
 - **Real API keys.** No target has been run with a real key; model name mapping per agent follows each agent's docs.
 
@@ -51,7 +52,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - Model discovery (listing a provider's models), quota tracking, routing policies, automation rules. A provider registry exists (`evyro targets providers`).
 - GitHub Issues sync, Relay contract import/export, ACP.
 - Handoff benchmark suite (fresh vs. transcript vs. summary vs. contract) with real agents.
-- Installers (DMG, MSI, AppImage), signing, Homebrew/winget.
+- Code signing and notarization, Homebrew/winget, published releases.
 - Storing keys. By design Evyro never stores keys; targets can read one from the macOS Keychain at launch (`--key-keychain`).
 
 ## Known gaps in what exists

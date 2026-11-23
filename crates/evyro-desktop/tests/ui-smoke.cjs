@@ -25,7 +25,7 @@ const EXE = process.env.EVYRO_BIN || path.join(ROOT, "target/debug", process.pla
 
 // ---------- scratch project, driven by the real CLI ----------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "evyro-ui-"));
-const repo = path.join(tmp, "repo");
+const repo = path.join(tmp, "my-app");
 fs.mkdirSync(repo);
 const env = { ...process.env, EVYRO_HOME: path.join(tmp, "home"), EVYRO_NO_APP_LOOKUP: "1" };
 const git = (...a) => execFileSync("git", a, { cwd: repo, env, stdio: "pipe" });
@@ -111,7 +111,7 @@ const FIX = {
             const t = { id: "term_" + (terms.length + 1), title: args.kind === "agent" ? `${args.target} on ${args.task}` : "Shell", kind: args.kind,
               target: args.target, task: args.task, project_id: args.projectId, cwd: "/repo", command: "evyro run", started_at: Math.floor(Date.now() / 1000), running: true, exit_code: null };
             terms.push(t);
-            setTimeout(() => window.__emit("term-output", { id: t.id, data: "agent ready\r\n", end: 13 }), 50);
+            setTimeout(() => window.__emit("term-output", { id: t.id, data: "\x1b[2m[evyro] launching Claude Code for target 'claude-code' (session ses_01a2)\x1b[0m\r\n\r\n\x1b[1;35m*\x1b[0m Reading .evyro/CURRENT_TASK.md\r\n  T-1 Add rate limiting. Next: write the test\r\n\x1b[1;35m*\x1b[0m Writing tests/limiter.rs\r\n\x1b[32m✓\x1b[0m evyro verify -- cargo test (12 passed)\r\nagent ready\r\n", end: 1 }), 50);
             return t;
           }
           if (cmd === "term_snapshot") return { data: "", end: 0 };
@@ -171,7 +171,7 @@ const FIX = {
     await page.click(".xterm");
     await page.keyboard.type("hi");
     await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("agent readyhi") || document.querySelector(".xterm-rows")?.textContent.includes("hi"));
-    await page.evaluate(() => window.__emit("term-exit", { id: "term_1", code: 0 }));
+    await page.evaluate(() => { window.__terms[0].running = false; window.__terms[0].exit_code = 0; window.__emit("term-exit", { id: "term_1", code: 0 }); });
     await page.waitForSelector(".thread-item >> text=exit 0");
     await tab("overview");
     await tab("threads");
@@ -199,6 +199,23 @@ const FIX = {
     await page.waitForTimeout(800);
     if (calls.filter((c) => c === "overview").length <= before) throw new Error("no refresh");
   });
+  // EVYRO_SHOTS=docs/assets writes the README screenshots (light and dark).
+  if (process.env.EVYRO_SHOTS) {
+    await step("screenshots", async () => {
+      const dir = path.resolve(process.env.EVYRO_SHOTS);
+      fs.mkdirSync(dir, { recursive: true });
+      for (const scheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme: scheme });
+        for (const v of ["overview", "tasks", "changes", "threads", "agents"]) {
+          await tab(v);
+          await page.waitForTimeout(400);
+          await page.evaluate(() => document.querySelectorAll(".toast").forEach((t) => t.remove()));
+          await page.screenshot({ path: path.join(dir, `screen-${v}-${scheme}.png`) });
+        }
+      }
+      await page.emulateMedia({ colorScheme: "light" });
+    });
+  }
   await step("first-run setup when there are no projects", async () => {
     await page.evaluate(() => { state.projects = []; state.project = null; setTab("overview"); });
     await page.waitForSelector("ol.setup");

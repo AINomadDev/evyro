@@ -19,6 +19,11 @@ function termTheme() {
   };
 }
 
+// Follow the system light/dark switch.
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+  for (const x of XTERMS.values()) x.term.options.theme = termTheme();
+});
+
 async function loadThreads() {
   try { state.threads = await invoke("term_list"); } catch { state.threads = []; }
   return state.threads;
