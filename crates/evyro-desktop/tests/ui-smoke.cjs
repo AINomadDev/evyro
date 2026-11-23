@@ -25,7 +25,7 @@ const EXE = process.env.EVYRO_BIN || path.join(ROOT, "target/debug", process.pla
 
 // ---------- scratch project, driven by the real CLI ----------
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "evyro-ui-"));
-const repo = path.join(tmp, "repo");
+const repo = path.join(tmp, "my-app");
 fs.mkdirSync(repo);
 const env = { ...process.env, EVYRO_HOME: path.join(tmp, "home"), EVYRO_NO_APP_LOOKUP: "1" };
 const git = (...a) => execFileSync("git", a, { cwd: repo, env, stdio: "pipe" });
@@ -166,6 +166,23 @@ const FIX = {
     await page.waitForTimeout(800);
     if (calls.filter((c) => c === "overview").length <= before) throw new Error("no refresh");
   });
+  // EVYRO_SHOTS=docs/assets writes the README screenshots (light and dark).
+  if (process.env.EVYRO_SHOTS) {
+    await step("screenshots", async () => {
+      const dir = path.resolve(process.env.EVYRO_SHOTS);
+      fs.mkdirSync(dir, { recursive: true });
+      for (const scheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme: scheme });
+        for (const v of ["overview", "tasks", "changes", "agents"]) {
+          await tab(v);
+          await page.waitForTimeout(400);
+          await page.evaluate(() => document.querySelectorAll(".toast").forEach((t) => t.remove()));
+          await page.screenshot({ path: path.join(dir, `screen-${v}-${scheme}.png`) });
+        }
+      }
+      await page.emulateMedia({ colorScheme: "light" });
+    });
+  }
   await step("first-run setup when there are no projects", async () => {
     await page.evaluate(() => { state.projects = []; state.project = null; setTab("overview"); });
     await page.waitForSelector("ol.setup");

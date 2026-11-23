@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Evyro. Switch agents. Keep building.</title>
+<meta name="description" content="The local-first continuity layer for AI coding. Hand work between Claude Code, Codex, Cursor, ChatGPT and any API model without losing the task, the decisions or the test proof.">
+<meta property="og:image" content="../assets/social-preview.png">
+<link rel="icon" href="../brand/logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --indigo: #4f46e5; --cyan: #22d3ee; --violet: #8b85ff;
+    --bg: #f7f7f9; --panel: #ffffff; --panel-2: #f1f2f6; --border: #e3e4ea; --text: #1b1d24; --muted: #5d6170;
+    --ok: #16803c; --accent: var(--indigo); --hero-grad: linear-gradient(90deg, var(--indigo), #1fb6d4);
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c0e14; --panel: #151821; --panel-2: #1b1f2a; --border: #262b38; --text: #e7e9ee; --muted: #9298a7;
+      --ok: #4cc47a; --accent: var(--violet); --hero-grad: linear-gradient(90deg, var(--violet), var(--cyan));
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(900px 520px at 50% 0, rgba(79,70,229,.20), rgba(34,211,238,.07) 50%, transparent 75%) no-repeat, var(--bg); color: var(--text); font: 16px/1.6 Inter, system-ui, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  code, pre { font-family: "JetBrains Mono", ui-monospace, monospace; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+  nav { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px; color: var(--text); letter-spacing: -.4px; }
+  .logo img { width: 32px; height: 32px; }
+  nav .links { display: flex; gap: 22px; font-size: 15px; }
+  nav .links a { color: var(--muted); }
+  header { padding: 64px 0 40px; text-align: center; }
+  h1 { font-size: clamp(40px, 7vw, 76px); line-height: 1.02; letter-spacing: -2.5px; margin: 0 0 20px; font-weight: 700; }
+  h1 span { background: var(--hero-grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .lede { font-size: clamp(17px, 2.2vw, 21px); color: var(--muted); max-width: 720px; margin: 0 auto 30px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn { padding: 12px 20px; border-radius: 10px; font-weight: 600; border: 1px solid var(--border); background: var(--panel); color: var(--text); }
+  .btn.primary { background: var(--indigo); border-color: var(--indigo); color: #fff; }
+  .install { margin: 26px auto 0; display: inline-block; padding: 10px 16px; border-radius: 10px; background: var(--panel); border: 1px solid var(--border); font-size: 14px; }
+  .install b { color: var(--accent); font-weight: 500; }
+  .relay { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; margin: 40px 0 8px; }
+  .chip { font: 500 14px "JetBrains Mono", monospace; padding: 7px 12px; border-radius: 9px; background: var(--panel); border: 1px solid var(--border); }
+  .chip.hub { background: linear-gradient(90deg, var(--indigo), #2a9fe6); color: #fff; border-color: transparent; }
+  .dot { width: 22px; height: 2px; background: var(--border); position: relative; }
+  .dot::after { content: ""; position: absolute; left: 7px; top: -3px; width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); }
+  .shot { margin: 36px auto 0; border-radius: 14px; border: 1px solid var(--border); box-shadow: 0 20px 60px rgba(20,20,60,.18); overflow: hidden; max-width: 1040px; }
+  .shot img { display: block; width: 100%; }
+  section { padding: 72px 0 8px; }
+  h2 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -1.2px; line-height: 1.1; margin: 0 0 12px; }
+  .kicker { font: 500 13px "JetBrains Mono", monospace; color: var(--accent); text-transform: uppercase; letter-spacing: 1px; }
+  .sub { color: var(--muted); max-width: 680px; margin: 0 0 32px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .card h3 { margin: 0 0 8px; font-size: 18px; letter-spacing: -.3px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .card .ic { width: 34px; height: 34px; border-radius: 9px; background: var(--hero-grad); margin-bottom: 14px; display: grid; place-items: center; color: #fff; font: 600 15px "JetBrains Mono", monospace; }
+  pre { background: #0c0e14; color: #e7e9ee; border: 1px solid #262b38; padding: 20px; border-radius: 14px; overflow-x: auto; font-size: 14px; line-height: 1.7; margin: 0; }
+  pre .c { color: #6b7385; } pre .p { color: var(--cyan); }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--panel); }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; min-width: 640px; }
+  th, td { padding: 12px 14px; border-bottom: 1px solid var(--border); text-align: center; }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { background: var(--panel-2); font-weight: 600; }
+  th.us { color: var(--accent); }
+  td.y { color: var(--ok); font-weight: 600; }
+  td.pl { color: var(--muted); font-style: italic; }
+  tr:last-child td { border-bottom: 0; }
+  .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  footer { margin-top: 80px; padding: 28px 0 40px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  @media (max-width: 640px) { nav .links { display: none; } header { padding-top: 32px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="logo" href="#"><img src="../brand/logo.svg" alt="">Evyro</a>
+    <div class="links"><a href="#features">Features</a><a href="#different">Compare</a><a href="#start">Get started</a><a href="../user-guide/USER_GUIDE.md">Docs</a></div>
+  </nav>
+
+  <header>
+    <h1>Switch agents.<br><span>Keep building.</span></h1>
+    <p class="lede">Evyro is the local-first continuity layer for AI coding. Tasks, decisions, checkpoints and test proof travel with your repo, so the next AI picks up exactly where the last one stopped.</p>
+    <div class="cta"><a class="btn primary" href="#start">Get started</a><a class="btn" href="../user-guide/USER_GUIDE.md">Read the guide</a></div>
+    <div class="install"><code><b>$</b> evyro switch --to codex</code></div>
+    <div class="relay">
+      <span class="chip">Claude Code</span><span class="dot"></span><span class="chip hub">evyro handoff</span><span class="dot"></span>
+      <span class="chip">Codex</span><span class="dot"></span><span class="chip">Cursor</span><span class="dot"></span><span class="chip">ChatGPT</span><span class="dot"></span><span class="chip">any API model</span>
+    </div>
+    <div class="shot">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="../assets/screen-overview-dark.png">
+        <img src="../assets/screen-overview-light.png" alt="Evyro desktop app overview">
+      </picture>
+    </div>
+  </header>
+
+  <section id="features">
+    <div class="kicker">Features</div>
+    <h2>The work stays. The AI can change.</h2>
+    <p class="sub">Hit a usage limit, want a faster model, or prefer to finish in your IDE. Evyro carries the task across, checks nothing drifted, and only calls it done when the tests say so.</p>
+    <div class="grid">
+      <div class="card"><div class="ic">→</div><h3>Signed handoffs</h3><p>A continuation contract with the goal, next step, do-not-redo list, decisions and file hashes, signed so it cannot be quietly changed.</p></div>
+      <div class="card"><div class="ic">≠</div><h3>Drift checks</h3><p>Branch, commit and file hashes are compared before anyone resumes. If the repo moved, Evyro stops and shows you what changed.</p></div>
+      <div class="card"><div class="ic">✓</div><h3>Proof, not promises</h3><p>Evyro runs your tests and records a receipt. A task is verified only with every criterion met and a passing run on the current code.</p></div>
+      <div class="card"><div class="ic">∗</div><h3>Any AI</h3><p>Eight coding agents, six AI IDEs, four chat apps, and fourteen API providers including local models through Ollama and LM Studio.</p></div>
+      <div class="card"><div class="ic">⌂</div><h3>Local-first</h3><p>One SQLite database on your machine. No account. Keys are read at launch from an env var or the Keychain, never stored.</p></div>
+      <div class="card"><div class="ic">▣</div><h3>CLI, MCP and desktop</h3><p>The same state everywhere: a fast CLI, an MCP server agents call directly, and a desktop app for macOS, Windows and Linux.</p></div>
+    </div>
+  </section>
+
+  <section id="different">
+    <div class="kicker">How it is different</div>
+    <h2>Not another agent window.</h2>
+    <p class="sub">Evyro remembers the work between agents. It is built to sit next to the tools you already use, not to replace them.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th></th><th class="us">Evyro</th><th>T3 Code</th><th>px0</th><th>Relay</th></tr></thead>
+        <tbody>
+          <tr><td>Signed handoff that any AI can continue</td><td class="y">✓</td><td>—</td><td>—</td><td class="y">✓</td></tr>
+          <tr><td>Drift check before resuming</td><td class="y">✓</td><td>—</td><td>—</td><td class="pl">partly</td></tr>
+          <tr><td>Task graph with acceptance criteria</td><td class="y">✓</td><td>—</td><td>—</td><td class="pl">partly</td></tr>
+          <tr><td>"Verified" needs a passing test run on current code</td><td class="y">✓</td><td>—</td><td>—</td><td>—</td></tr>
+          <tr><td>Switch to an AI IDE, chat app or raw API key</td><td class="y">✓</td><td class="pl">partly</td><td>—</td><td>—</td></tr>
+          <tr><td>Run and chat with agents in one window</td><td class="pl">planned</td><td class="y">✓</td><td class="y">✓</td><td>—</td></tr>
+          <tr><td>Review workbench with diff comments</td><td class="pl">planned</td><td>—</td><td class="y">✓</td><td>—</td></tr>
+          <tr><td>Code search and symbols</td><td class="pl">planned</td><td>—</td><td class="y">✓</td><td>—</td></tr>
+          <tr><td>Remote and mobile access</td><td class="pl">planned</td><td class="y">✓</td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">✓ has it · partly: some of it · — not its focus. Based on our source review, November 2026. "Planned" means Evyro does not have it yet.</p>
+  </section>
+
+  <section id="start">
+    <div class="kicker">Get started</div>
+    <h2>Five minutes to your first handoff.</h2>
+    <p class="sub">Needs Rust 1.80+ and git. Installers for macOS, Windows and Linux are built in CI; they are not code-signed yet.</p>
+<pre><span class="c"># install and check</span>
+<span class="p">$</span> cargo install --path crates/evyro-cli && evyro doctor
+
+<span class="c"># in your repo</span>
+<span class="p">$</span> evyro init
+<span class="p">$</span> evyro task add "Add rate limiter" --accept "429 after 10 req/s" --accept "tests pass"
+<span class="p">$</span> evyro run --to claude-code --task T-1
+
+<span class="c"># Claude hits its limit</span>
+<span class="p">$</span> evyro switch --to codex          <span class="c"># or cursor-ide, chatgpt, or an API target</span>
+
+<span class="c"># prove it</span>
+<span class="p">$</span> evyro verify -- cargo test
+<span class="p">$</span> evyro task update T-1 --status verified</pre>
+  </section>
+
+  <footer>
+    <span>Evyro 0.1.0 · MIT or Apache-2.0 · Local-first, no account</span>
+    <span><a href="../KNOWN_LIMITATIONS.md">Known limitations</a> · <a href="../BRAND.md">Brand</a></span>
+  </footer>
+</div>
+</body>
+</html>

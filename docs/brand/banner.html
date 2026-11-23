@@ -1,0 +1,59 @@
+<!doctype html>
+<!-- Source for docs/assets/banner-*.png and social-preview.png. Rendered by render.cjs. -->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --indigo: #4f46e5; --cyan: #22d3ee; --violet: #8b85ff;
+    --ink: #0c0e14; --ink-2: #151821; --line: #262b38; --paper: #f7f7f9; --text: #e7e9ee; --muted: #9298a7;
+  }
+  body.light { --ink: #f7f7f9; --ink-2: #ffffff; --line: #e3e4ea; --text: #1b1d24; --muted: #5d6170; }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: var(--w); height: var(--h); background: var(--ink); color: var(--text); font-family: Inter, sans-serif; overflow: hidden; position: relative; }
+  .grid { position: absolute; inset: 0; background-image: radial-gradient(var(--line) 1.2px, transparent 1.2px); background-size: 24px 24px; mask-image: linear-gradient(90deg, transparent, #000 35%, #000); }
+  .glow { position: absolute; width: 760px; height: 760px; right: -220px; top: -260px; border-radius: 50%;
+    background: radial-gradient(circle, rgba(79,70,229,.40), rgba(34,211,238,.14) 45%, transparent 70%); filter: blur(10px); }
+  body.light .glow { background: radial-gradient(circle, rgba(79,70,229,.16), rgba(34,211,238,.10) 45%, transparent 70%); }
+  .wrap { position: relative; height: 100%; padding: 0 72px; display: flex; flex-direction: column; justify-content: center; gap: 26px; }
+  .brand { display: flex; align-items: center; gap: 22px; }
+  .brand img { width: 84px; height: 84px; }
+  .word { font-family: "Inter Display", Inter, sans-serif; font-weight: 700; font-size: 76px; letter-spacing: -2.5px; line-height: 1; }
+  .tag { font-family: "Inter Display", Inter, sans-serif; font-weight: 600; font-size: 40px; letter-spacing: -1px; line-height: 1.1; }
+  .tag span { background: linear-gradient(90deg, var(--indigo), var(--cyan)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  body:not(.light) .tag span { background: linear-gradient(90deg, var(--violet), var(--cyan)); -webkit-background-clip: text; background-clip: text; }
+  .sub { font-size: 21px; color: var(--muted); max-width: 820px; line-height: 1.45; }
+  .relay { display: flex; align-items: center; margin-top: 6px; }
+  .chip { font: 500 16px "JetBrains Mono", monospace; padding: 9px 14px; border-radius: 10px; background: var(--ink-2); border: 1px solid var(--line); white-space: nowrap; }
+  .chip.hub { border-color: transparent; color: #fff; background: linear-gradient(90deg, var(--indigo), #2a9fe6); }
+  .link { width: 34px; height: 2px; background: linear-gradient(90deg, var(--line), var(--violet), var(--line)); position: relative; }
+  .link::after { content: ""; position: absolute; left: 50%; top: -3px; width: 8px; height: 8px; margin-left: -4px; border-radius: 50%; background: var(--cyan); }
+  body.social .wrap { gap: 34px; }
+  body.social .sub { font-size: 24px; }
+</style>
+</head>
+<body>
+<div class="grid"></div><div class="glow"></div>
+<div class="wrap">
+  <div class="brand"><img src="logo.svg" alt=""><div class="word">Evyro</div></div>
+  <div class="tag">Switch agents. <span>Keep building.</span></div>
+  <div class="sub">The local-first continuity layer for AI coding. Tasks, decisions, checkpoints and test proof travel with your repo, so the next AI picks up exactly where the last one stopped.</div>
+  <div class="relay">
+    <div class="chip">Claude Code</div><div class="link"></div>
+    <div class="chip hub">evyro handoff</div><div class="link"></div>
+    <div class="chip">Codex</div><div class="link"></div>
+    <div class="chip">Cursor</div><div class="link"></div>
+    <div class="chip">ChatGPT</div><div class="link"></div>
+    <div class="chip">any API model</div>
+  </div>
+</div>
+<script>
+  const q = new URLSearchParams(location.search);
+  const [w, h] = (q.get("size") || "1280x440").split("x");
+  document.body.style.setProperty("--w", w + "px");
+  document.body.style.setProperty("--h", h + "px");
+  if (q.get("theme") === "light") document.body.classList.add("light");
+  if (q.get("social")) document.body.classList.add("social");
+</script>
+</body>
+</html>
