@@ -117,6 +117,16 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
     for (i, a) in plan.extra_args.iter().enumerate() {
         argv.insert(1 + i, a.clone());
     }
+    if opts.headless && spec.id == "codex" {
+        // The workspace-write sandbox lets Codex write only in the repo and
+        // temp dirs. Its own `evyro checkpoint` / `evyro verify` calls write
+        // Evyro's database, so that folder has to be writable too.
+        if let Some(at) = argv.iter().position(|a| a == "workspace-write") {
+            let data = evyro_core::paths::GlobalPaths::resolve()?.data_dir;
+            argv.insert(at + 1, "--add-dir".into());
+            argv.insert(at + 2, data.to_string_lossy().into_owned());
+        }
+    }
     let cwd = match &session.task_id {
         Some(t) => store.task_root(&store.get_task(t)?)?,
         None => p.root(),

@@ -273,7 +273,16 @@ exit 0
             == 64
     );
     env.ok(&repo, &["run", "--agent", "codex", "--headless"]);
-    assert!(read(&repo.join(".agent-codex-args")).starts_with("exec "));
+    let codex_args = read(&repo.join(".agent-codex-args"));
+    assert!(
+        codex_args.starts_with("exec --sandbox workspace-write --add-dir "),
+        "{codex_args}"
+    );
+    // Codex may write Evyro's data folder, for its own checkpoints and receipts.
+    assert!(
+        codex_args.contains(&format!("{}", env.home.path().join("data").display())),
+        "{codex_args}"
+    );
 
     // --- Codex -> Gemini
     let h2 = env.json(&repo, &["handoff", "--to", "gemini"]);

@@ -5,7 +5,7 @@
 | Agent | Binary | Headless argv | Interactive argv | Instruction file | MCP | Hooks | Evidence |
 |---|---|---|---|---|---|---|---|
 | Claude Code | `claude` | `claude -p <prompt> --permission-mode acceptEdits --allowedTools "Bash(evyro *)"` | `claude <prompt>` | CLAUDE.md | yes | yes (`evyro integrate claude-code --hooks`) | documented + simulated |
-| Codex CLI | `codex` | `codex exec --sandbox workspace-write <prompt>` | `codex <prompt>` | AGENTS.md | yes | no (fallback: instructions + MCP) | documented + simulated + real (macOS, 2026-11-23) |
+| Codex CLI | `codex` | `codex exec --sandbox workspace-write --add-dir <evyro data dir> <prompt>` | `codex <prompt>` | AGENTS.md | yes | no (fallback: instructions + MCP) | documented + simulated + real (macOS, 2026-11-23) |
 | Gemini CLI | `gemini` | `gemini -p <prompt>` (with `GEMINI_CLI_TRUST_WORKSPACE=true`) | `gemini -i <prompt>` | GEMINI.md | yes | no | documented + simulated |
 | OpenCode | `opencode` | `opencode run <prompt>` | `opencode --prompt <prompt>` | AGENTS.md | yes | no | documented (source at 4332e24) |
 | Cursor | `cursor-agent` | `cursor-agent -p <prompt>` | fallback | AGENTS.md | yes | no | documented |
@@ -14,7 +14,7 @@
 | Aider | `aider` | `aider --read .evyro/CURRENT_TASK.md --message <prompt>` | fallback | AGENTS.md | no | no | documented |
 | Antigravity | none | fallback only | fallback only | AGENTS.md | yes (settings) | no | fallback |
 
-All launches use explicit argv; the prompt is one argument, so task text cannot inject shell commands. Headless runs get a closed stdin, since nobody types into them and an open one makes some CLIs wait for more prompt text. Headless permissions are kept narrow: Claude Code may edit files and run `evyro` only, and Codex may write inside the workspace only (its sandbox still blocks the network). `--model <id>` is passed through for agents with a model flag. `EVYRO_AGENT_BIN_<ID>` overrides the binary path (e.g. `EVYRO_AGENT_BIN_CLAUDE_CODE`).
+All launches use explicit argv; the prompt is one argument, so task text cannot inject shell commands. Headless runs get a closed stdin, since nobody types into them and an open one makes some CLIs wait for more prompt text. Headless permissions are kept narrow: Claude Code may edit files and run `evyro` only, and Codex may write inside the workspace and Evyro's data folder only, so its own checkpoints and receipts work (its sandbox still blocks the network). `--model <id>` is passed through for agents with a model flag. `EVYRO_AGENT_BIN_<ID>` overrides the binary path (e.g. `EVYRO_AGENT_BIN_CLAUDE_CODE`).
 
 `evyro targets check` reports a sign-in as found when the tool's login file exists. It cannot see the account's plan, usage limit or forced migrations; those show up only when the tool runs, and Evyro then reopens the handoff.
 

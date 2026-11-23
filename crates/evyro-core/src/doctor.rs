@@ -149,6 +149,9 @@ pub fn run(store: &Store, cwd: &Path) -> Vec<Check> {
                 "none configured",
                 Some("set [commands] test in .evyro/project.toml"),
             ));
+        } else {
+            let cmds: Vec<String> = p.commands.test.iter().map(|a| a.join(" ")).collect();
+            out.push(c("test command", "ok", cmds.join("; "), None));
         }
         if let Ok(stale) = store.stale_sessions(&p.id, false) {
             if !stale.is_empty() {
