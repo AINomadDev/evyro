@@ -55,7 +55,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - **Windows by hand.** Everything runs on Windows in CI, scenario tests included, but no one has used Evyro on a Windows machine.
 - **Notifications, agent threads and the Terminal launch** on a real Mac or Windows desktop. Agent threads were checked by hand on Linux with a real PTY and a stand-in agent.
 - **Signed installers.** The installers are installed and started in CI, and the .dmg on a real Mac, but they are not code-signed or notarized (needs an Apple Developer ID and a Windows certificate), so macOS and Windows warn on first open.
-- **Screen readers.** No hand test with VoiceOver or NVDA, and no recorded keyboard-only run.
+- **Screen readers.** No hand test with VoiceOver or NVDA. Keyboard-only use is checked by the UI smoke test (PR #14).
 - **Sign-in and key checks against real tools.** Login detection is confirmed for Claude Code, Codex and Gemini CLI on a real Mac; the others follow their docs. Opening IDEs from Evyro has not been checked on a real Mac yet.
 - **Remote access on a real phone.** The phone companion has been driven only in automated tests and with curl on Linux. No run on a real phone, over Tailscale, or from the desktop app on a Mac has been recorded.
 - **Real API keys.** No target has been run with a real key; model name mapping per agent follows each agent's docs.
