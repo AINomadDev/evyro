@@ -56,6 +56,14 @@ Everything works from the keyboard alone. Tab reaches every button, row and card
 
 **Updates.** A few seconds after it starts, the app checks once for a newer release. When there is one, a button at the bottom of the sidebar says **Update to x.y.z**. Settings › **Updates** shows the same thing, with **Check now** and a switch to turn the startup check off. Nothing is downloaded until you click **Install and restart**. The app then checks the download's signature, installs it and restarts. Agents running in the window stop first, and their progress is checkpointed. On Linux only the AppImage updates itself; a `.deb` updates through a new download.
 
+## Menu bar and tray
+
+Evyro puts an icon in the macOS menu bar, or the Windows or Linux tray. Click it to bring the window back. Its menu has **Show Evyro** and **Quit Evyro**.
+
+If you close the window while agent threads or chats are still running, Evyro hides the window instead of stopping them, and a notification says so. On macOS, clicking the Dock icon also brings it back. Quitting from the menu stops every running agent and closes their sessions with a checkpoint. With nothing running, closing the window quits as before.
+
+On Linux the icon needs `libayatana-appindicator3-1`. The `.deb` installs it. Without it, Evyro runs with no tray icon, and closing the window always quits.
+
 ## Rules the app follows
 
 - **Verified needs evidence.** Moving a task to Verified needs every acceptance criterion ticked and a passing test run on the current code. If that is missing, the app offers a human override, which asks for a reason and logs it.

@@ -13,6 +13,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 - Skills library: 15 built-in skills, project and global skills, checks, import, export and sync into agent files.
 - Remote access (`evyro serve`): pair a phone or another computer, follow the work, approve agents, chat.
 - Release pipeline: a version tag publishes installers, CLI archives for macOS, Linux and Windows, `SHA256SUMS`, an SBOM and a Homebrew formula, with signed build provenance. macOS signing and notarization switch on once the certificate secrets are set.
+- Menu bar and tray icon. Closing the window while agents run hides it instead of stopping them.
 - Desktop auto-update: the app checks for a newer release at startup and in Settings, and installs it on request after checking its signature.
 - `evyro bug-report`: a Markdown report (versions, `evyro doctor`, recent crashes, with home paths and secrets hidden) to paste into an issue. The CLI and the desktop app write a crash log when they panic.
 - Evyro copies the database aside before upgrading its schema, and keeps the last 5 copies.
