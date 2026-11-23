@@ -3,6 +3,7 @@ name: ci
 on:
   push:
     branches: [main]
+    tags: ['v*']
   pull_request:
   workflow_dispatch:
 
@@ -74,6 +75,10 @@ jobs:
       - name: CLI end-to-end (no agents)
         shell: bash
         run: bash scripts/cli-e2e.sh
+      - name: release scripts (version check, notes, formula, install script)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: bash scripts/release/selftest.sh
 
   ui-smoke:
     strategy:
@@ -122,7 +127,20 @@ jobs:
       - name: linux system libraries
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libsoup-3.0-dev librsvg2-dev libayatana-appindicator3-dev
-      - name: build installers (.dmg, .msi/.exe, .deb, .AppImage)
+      # Tauri signs and notarizes the app when these are in the environment.
+      # Without the secrets the build is unsigned, as before. See docs/RELEASING.md.
+      - name: macOS signing and notarization, when the secrets are set
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/release/apple-env.sh
+      - name: build installers (.dmg, .exe, .deb, .AppImage)
         working-directory: crates/evyro-desktop
         run: npx --yes @tauri-apps/cli@2.12.6 build ${{ matrix.args }}
       - name: checksums
@@ -163,6 +181,13 @@ jobs:
           hdiutil detach /Volumes/evyro-check
           app=$(find "$RUNNER_TEMP" -maxdepth 4 -path '*.app/Contents/MacOS/*' -type f | head -1)
           echo "installed: $app"; lipo -archs "$app"
+          if [ "${EVYRO_SIGNED:-}" = 1 ]; then
+            bundle="${app%/Contents/MacOS/*}"
+            codesign --verify --deep --strict --verbose=2 "$bundle"
+            spctl --assess --type execute --verbose=2 "$bundle"
+            xcrun stapler validate "$dmg"
+            echo "signed, notarized and stapled"
+          fi
           HOME=$(mktemp -d) "$app" & pid=$!
           sleep 20
           kill -0 $pid || { echo "the app from the .dmg exited early"; exit 1; }
@@ -221,36 +246,133 @@ jobs:
 
   release-build:
     needs: [lint, audit, test]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # On a manual run everything but the publish step runs, so the pipeline
+    # can be tried on a branch without making a release.
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       id-token: write
       attestations: write
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: macos-latest, target: x86_64-apple-darwin }
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - name: tag, Cargo.toml, tauri.conf.json and CHANGELOG.md agree
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"
+          else tag="v$(awk -F'"' '/^\[workspace.package\]/{f=1;next} /^\[/{f=0} f&&/^version *=/{print $2; exit}' Cargo.toml | head -1)"; fi
+          echo "EVYRO_VERSION=${tag#v}" >> "$GITHUB_ENV"
+          bash scripts/release/check-version.sh "$tag"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --release --locked -p evyro-cli --target ${{ matrix.target }}
-      - name: checksum
+      - name: macOS signing and notarization, when the secrets are set
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/release/apple-env.sh
+      - name: sign and notarize the CLI
+        if: runner.os == 'macOS' && env.EVYRO_SIGNED == '1'
+        shell: bash
+        run: bash scripts/release/sign-macos-cli.sh target/${{ matrix.target }}/release/evyro
+      - name: archive
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
-          f=evyro; [ -f evyro.exe ] && f=evyro.exe
-          shasum -a 256 $f > $f.sha256 || sha256sum $f > $f.sha256
+          name="evyro-$EVYRO_VERSION-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          f=evyro; [ -f target/${{ matrix.target }}/release/evyro.exe ] && f=evyro.exe
+          cp "target/${{ matrix.target }}/release/$f" README.md LICENSE-MIT LICENSE-APACHE CHANGELOG.md "dist/$name/"
+          cd dist
+          if [ "$f" = evyro.exe ]; then 7z a -tzip "$name.zip" "$name" >/dev/null; else tar -czf "$name.tar.gz" "$name"; fi
+          rm -rf "$name"
+          ls -l
+      # The x86_64 macOS build is made on an arm64 runner and is not run here.
+      - name: the archived CLI runs
+        if: runner.os != 'Windows' && matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP" && tar -xzf "$GITHUB_WORKSPACE"/dist/*.tar.gz
+          ./evyro-*/evyro --version | grep -F "$EVYRO_VERSION"
       - name: signed build provenance for the CLI
         uses: actions/attest-build-provenance@v2
         with:
-          subject-path: target/${{ matrix.target }}/release/evyro*
+          subject-path: dist/evyro-*
       - uses: actions/upload-artifact@v4
         with:
-          name: evyro-${{ matrix.target }}
-          path: target/${{ matrix.target }}/release/evyro*
+          name: evyro-cli-${{ matrix.target }}
+          path: dist/evyro-*
+
+  # Publish a GitHub Release for a version tag: installers, CLI archives, one
+  # SHA256SUMS over everything, the SBOM and a Homebrew formula. A tag with a
+  # pre-release part (v0.2.0-rc.1) is published as a pre-release.
+  publish:
+    needs: [bundle, release-build]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: collect release files
+        shell: bash
+        run: |
+          mkdir dist
+          find artifacts -type f \( -name '*.dmg' -o -name '*-setup.exe' -o -name '*.deb' -o -name '*.AppImage' \
+            -o -name 'evyro-*.tar.gz' -o -name 'evyro-*.zip' -o -name 'evyro-sbom.spdx.json' \) -exec cp {} dist/ \;
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Homebrew formula
+        run: bash scripts/release/homebrew.sh "${GITHUB_REF_NAME#v}" dist/SHA256SUMS > dist/evyro.rb
+      - name: create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          bash scripts/release/notes.sh "$v" > notes.md
+          cat >> notes.md <<'EOF'
+
+          ### Install
+
+          - **macOS:** open the `.dmg` and drag Evyro to Applications.
+          - **Windows:** run the `-setup.exe`.
+          - **Linux:** install the `.deb`, or make the `.AppImage` executable and run it.
+          - **CLI only:** `curl -fsSL https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.sh | sh`, or on Windows `irm https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.ps1 | iex`.
+
+          Check a download with `sha256sum -c SHA256SUMS --ignore-missing`, or its build provenance with `gh attestation verify <file> --repo AINomadDev/evyro`.
+          EOF
+          pre=""; case "$v" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --title "Evyro $v" --notes-file notes.md $pre
+      - name: update the Homebrew tap, when its token is set
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then echo "no HOMEBREW_TAP_TOKEN secret: formula attached to the release only"; exit 0; fi
+          case "$GITHUB_REF_NAME" in *-*) echo "pre-release: tap left alone"; exit 0 ;; esac
+          git clone "https://x-access-token:$TAP_TOKEN@github.com/AINomadDev/homebrew-tap.git" tap
+          mkdir -p tap/Formula && cp dist/evyro.rb tap/Formula/evyro.rb
+          cd tap
+          git config user.name "Evyro release"; git config user.email "release@users.noreply.github.com"
+          git add Formula/evyro.rb
+          git commit -m "evyro ${GITHUB_REF_NAME#v}" && git push
