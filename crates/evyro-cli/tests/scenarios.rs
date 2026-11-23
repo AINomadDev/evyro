@@ -2362,3 +2362,26 @@ fn remote_access_pairs_approves_and_revokes() {
     child.kill().unwrap();
     let _ = child.wait();
 }
+
+/// `evyro ... | head -1`: the reader closes the pipe early. Evyro exits
+/// quietly (141, like other Unix tools) instead of panicking with a backtrace.
+#[cfg(unix)]
+#[test]
+fn closed_pipe_exits_quietly() {
+    use std::process::{Command, Stdio};
+    let home = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_evyro"))
+        .args(["completions", "bash"])
+        .env("EVYRO_HOME", home.path())
+        .env("RUST_BACKTRACE", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Close the reading end before Evyro has written its output.
+    drop(child.stdout.take());
+    let out = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_eq!(out.status.code(), Some(141), "{stderr}");
+}

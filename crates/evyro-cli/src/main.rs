@@ -706,7 +706,41 @@ enum MemoryCmd {
     Refresh,
 }
 
+/// A reader that stops early (`evyro ... | head`, `grep -q`) closes the pipe.
+/// That is not an error: exit quietly instead of panicking with a backtrace.
+fn is_broken_pipe(msg: &str) -> bool {
+    msg.contains("Broken pipe") || msg.contains("os error 32") || msg.contains("os error 232")
+}
+
+fn broken_pipe_in(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+            || is_broken_pipe(&c.to_string())
+    })
+}
+
+/// Exit status for a closed pipe: 141 (128 + SIGPIPE) like other Unix tools.
+const BROKEN_PIPE_EXIT: i32 = 141;
+
+fn quiet_on_broken_pipe() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let msg = info
+            .payload()
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| info.payload().downcast_ref::<&str>().copied())
+            .unwrap_or("");
+        if is_broken_pipe(msg) {
+            std::process::exit(BROKEN_PIPE_EXIT);
+        }
+        default(info);
+    }));
+}
+
 fn main() {
+    quiet_on_broken_pipe();
     let cli = Cli::parse();
     let o = Out {
         json: cli.json,
@@ -722,6 +756,7 @@ fn main() {
     );
     match run(cli, &o) {
         Ok(code) => std::process::exit(code),
+        Err(e) if broken_pipe_in(&e) => std::process::exit(BROKEN_PIPE_EXIT),
         Err(e) => {
             let (code, kind, msg) = match e.downcast_ref::<Error>() {
                 Some(ce) => (ce.exit_code(), ce.code(), ce.to_string()),
