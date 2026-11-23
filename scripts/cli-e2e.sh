@@ -35,7 +35,10 @@ if "$EVYRO" targets add bad --kind api --provider openai --key-env sk-abcdefghij
   echo "FAIL  pasted key was accepted"; exit 1
 fi
 ok "pasted key refused"
-if "$EVYRO" --json handoffs | grep -q '"accepted"'; then ok "handoff accepted"; else echo "FAIL  handoff accepted"; exit 1; fi
+# Read the whole output first: `grep -q` stops reading early, and with
+# pipefail evyro's broken-pipe exit would fail the step at random.
+handoffs_json=$("$EVYRO" --json handoffs)
+if grep -q '"accepted"' <<<"$handoffs_json"; then ok "handoff accepted"; else echo "FAIL  handoff accepted"; exit 1; fi
 step "export" "$EVYRO" export --out "$TMP/export.json"
 step "backup" "$EVYRO" backup "$TMP/backup.db"
 echo "CLI end-to-end passed."
