@@ -63,6 +63,16 @@ function ensureXterm(id, fresh = false) {
   // Fit to the pane whenever its size changes (window resize, layout settling).
   new ResizeObserver(() => fitThread(id)).observe(el);
   term.onData((d) => invoke("term_write", { id, data: d }).catch(() => {}));
+  // Tab belongs to the program in the terminal (shell completion), so F6 is
+  // the way out for keyboard users: it moves focus to the thread's buttons.
+  term.attachCustomKeyEventHandler((e) => {
+    if (e.key !== "F6") return true;
+    if (e.type === "keydown") {
+      const b = el.closest(".thread-pane, .view, main")?.querySelector(".thread-head button");
+      if (b) { b.focus(); e.preventDefault(); }
+    }
+    return false;
+  });
   if (!fresh) {
     invoke("term_snapshot", { id }).then((snap) => {
       term.write(snap.data);
@@ -192,7 +202,7 @@ function drawThreadPane() {
   if (t.kind === "chat") { drawChatPane(pane, t); return; }
   const x = ensureXterm(t.id);
   pane.append(h("div", { class: "thread-head" },
-    h("div", null, h("div", { class: "thread-name" }, t.title, " ", threadStatus(t)), h("div", { class: "muted small mono" }, t.command)),
+    h("div", null, h("div", { class: "thread-name" }, t.title, " ", threadStatus(t)), h("div", { class: "muted small mono" }, t.command), h("div", { class: "muted small" }, "F6 leaves the terminal")),
     h("div", { class: "row" },
       t.kind === "agent" && t.running ? h("button", { class: "btn small", onclick: () => handoffDialog(t.task, null) }, "Hand off") : null,
       h("button", { class: "btn small", onclick: () => closeThread(t.id) }, t.running ? "Stop" : "Close"))),
