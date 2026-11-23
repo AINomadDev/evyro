@@ -39,6 +39,10 @@ ok "pasted key refused"
 # pipefail evyro's broken-pipe exit would fail the step at random.
 handoffs_json=$("$EVYRO" --json handoffs)
 if grep -q '"accepted"' <<<"$handoffs_json"; then ok "handoff accepted"; else echo "FAIL  handoff accepted"; exit 1; fi
+search_json=$("$EVYRO" --json search text "exit 0")
+if grep -q '"test.sh"' <<<"$search_json"; then ok "search text"; else echo "FAIL  search text"; exit 1; fi
+step "search files" "$EVYRO" search files test
+step "search symbols" "$EVYRO" search symbols main
 step "review comment" "$EVYRO" review comment test.sh:1 "Explain this line"
 review_json=$("$EVYRO" --json review prompt --mark-sent)
 if grep -q "Explain this line" <<<"$review_json"; then ok "review prompt"; else echo "FAIL  review prompt"; exit 1; fi

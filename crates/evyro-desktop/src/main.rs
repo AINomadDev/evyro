@@ -19,6 +19,7 @@ use std::path::PathBuf;
 
 mod chat;
 mod review;
+mod search;
 mod threads;
 
 type CmdResult = Result<Value, Value>;
@@ -905,6 +906,10 @@ fn main() {
             open_in_terminal,
             pick_folder,
             repo_changes,
+            search::find_files,
+            search::search_text,
+            search::find_symbols,
+            search::view_file,
             review::list_review_comments,
             review::add_review_comment,
             review::set_review_status,

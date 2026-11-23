@@ -962,6 +962,9 @@ async function paletteActions() {
     acts.push({ label: "New handoff", run: () => handoffDialog(null) });
     acts.push({ label: "New agent thread", run: () => { setTab("threads"); newThreadDialog(); } });
     acts.push({ label: "New shell thread", run: () => startThread({ kind: "shell" }) });
+    acts.push({ label: "Go to file", hint: `${MOD} P`, run: () => openSearch("files") });
+    acts.push({ label: "Search in code", hint: `${MOD} ⇧ F`, run: () => openSearch("text") });
+    acts.push({ label: "Go to symbol", hint: `${MOD} ⇧ O`, run: () => openSearch("symbols") });
     acts.push({ label: "New chat with an AI (ACP)", run: () => { setTab("threads"); newChatDialog(); } });
     acts.push({ label: "Copy context for an agent", run: () => copyContext(null) });
     acts.push({ label: "Add an AI target", run: () => { setTab("agents"); addTargetDialog(); } });
@@ -1013,11 +1016,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const mod = e.metaKey || e.ctrlKey;
     if (e.key === "Escape") { if ($("#palette-root").firstChild) clear($("#palette-root")); else if ($("#modal-root").firstChild) clear($("#modal-root")); else closeDrawer(); return; }
     if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
+    if (mod && state.project && (e.key.toLowerCase() === "p" && !e.shiftKey)) { e.preventDefault(); openSearch("files"); return; }
+    if (mod && state.project && e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); openSearch("text"); return; }
+    if (mod && state.project && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); openSearch("symbols"); return; }
     if (mod && /^[1-9]$/.test(e.key)) { e.preventDefault(); setTab(TABS[Number(e.key) - 1][0]); return; }
     if (mod && e.key.toLowerCase() === "n" && state.project) { e.preventDefault(); setTab("tasks"); newTaskDialog(); }
   });
   $("#palette-btn").addEventListener("click", openPalette);
   $("#palette-btn").textContent = `${MOD} K`;
+  $("#search-btn").addEventListener("click", () => openSearch());
+  $("#search-btn").textContent = `Search  ${MOD} P`;
   if (window.__TAURI__ && window.__TAURI__.event) {
     window.__TAURI__.event.listen("evyro-events", (ev) => onLiveEvents(ev.payload || []));
     window.__TAURI__.event.listen("term-output", (ev) => threadOutput(ev.payload));
