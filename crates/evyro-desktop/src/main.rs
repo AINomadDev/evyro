@@ -710,8 +710,119 @@ async fn open_in_terminal(
     .await
 }
 
+// ---------- folder picker, changes, live events ----------
+
+/// Native folder chooser. Returns the chosen path, or null when cancelled.
+#[tauri::command]
+async fn pick_folder(app: tauri::AppHandle) -> CmdResult {
+    use tauri_plugin_dialog::DialogExt;
+    tauri::async_runtime::spawn_blocking(move || {
+        let picked = app
+            .dialog()
+            .file()
+            .set_title("Choose a Git repository")
+            .blocking_pick_folder();
+        json!(picked.map(|p| p.to_string()))
+    })
+    .await
+    .map_err(|e| json!({"code": "internal", "message": e.to_string()}))
+}
+
+/// Working-tree changes for review: changed files plus the redacted diff of
+/// tracked files against HEAD. Sensitive files (.env, keys) are left out.
+#[tauri::command]
+async fn repo_changes(project_id: String) -> CmdResult {
+    with_store(move |s| {
+        let p = s.get_project(&project_id)?;
+        let root = p.root();
+        let files = git::status_files(&root)?;
+        let raw = git::diff_text(&root, 400_000);
+        let (diff, findings) = evyro_core::redact::redact(&raw);
+        Ok(json!({
+            "files": files,
+            "diff": diff,
+            "redactions": findings.len(),
+            "truncated": diff.contains("… diff truncated …"),
+        }))
+    })
+    .await
+}
+
+/// Events worth a desktop notification, with the text to show.
+fn notable(e: &evyro_core::events::Event) -> Option<(String, String)> {
+    let p = &e.payload;
+    let s = |k: &str| p.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    match e.kind.as_str() {
+        "agent.stopped" => {
+            let code = p.get("exit_code").and_then(|v| v.as_i64());
+            Some((
+                if code == Some(0) { "Agent finished".into() } else { "Agent stopped".into() },
+                match code {
+                    Some(0) => "Progress was checkpointed. Review it, or hand off to the next AI.".into(),
+                    Some(c) => format!("Exit code {c}. Progress was checkpointed; you can switch to another AI."),
+                    None => "Ended by a signal. Progress was checkpointed; you can switch to another AI.".into(),
+                },
+            ))
+        }
+        "handoff.prepared" => Some(("Handoff ready".into(), format!("Ready for {}.", s("to")))),
+        "handoff.accepted" => Some((
+            "Handoff accepted".into(),
+            format!("{} took over the work.", s("agent")),
+        )),
+        "handoff.reopened" => Some((
+            "Handoff reopened".into(),
+            "The receiving AI did not start. Pick another one.".into(),
+        )),
+        "verification.completed" if p.get("passed") == Some(&json!(false)) => Some((
+            "Tests failed".into(),
+            "Open the task to see the output.".into(),
+        )),
+        _ => None,
+    }
+}
+
+/// Watch the database for new events from the CLI, agents and MCP. Each batch
+/// goes to the window (so screens refresh at once) and notable ones become
+/// desktop notifications while the window is in the background.
+fn start_event_watcher(app: tauri::AppHandle) {
+    use tauri::{Emitter, Manager};
+    use tauri_plugin_notification::NotificationExt;
+    std::thread::spawn(move || {
+        let store = loop {
+            match Store::open_default() {
+                Ok(s) => break s,
+                Err(_) => std::thread::sleep(std::time::Duration::from_secs(5)),
+            }
+        };
+        let mut last = store.last_event_seq().unwrap_or(0);
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            let Ok(evs) = store.events_after(last, 200) else {
+                continue;
+            };
+            let Some(newest) = evs.last() else { continue };
+            last = newest.seq;
+            let _ = app.emit("evyro-events", &evs);
+            let focused = app
+                .get_webview_window("main")
+                .and_then(|w| w.is_focused().ok())
+                .unwrap_or(false);
+            if focused {
+                continue;
+            }
+            for e in &evs {
+                if let Some((title, body)) = notable(e) {
+                    let _ = app.notification().builder().title(title).body(body).show();
+                }
+            }
+        }
+    });
+}
+
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
             app_info,
             list_projects,
@@ -748,7 +859,13 @@ fn main() {
             remove_target,
             handover_to_app,
             open_in_terminal,
+            pick_folder,
+            repo_changes,
         ])
+        .setup(|app| {
+            start_event_watcher(app.handle().clone());
+            Ok(())
+        })
         .run(tauri::generate_context!())
         .expect("error while running Evyro desktop");
 }

@@ -201,12 +201,19 @@ function selectProject(id, silent) {
   $("#project-sub").textContent = `${p.root_path}${p.stack && p.stack.length ? " · " + p.stack.join(", ") : ""}`;
   if (!silent) state.view = "overview";
   setTab(state.view);
+  updateLiveBadge();
 }
 
 function addProjectDialog() {
   const input = h("input", { type: "text", placeholder: "/Users/you/Developer/my-app" });
+  const choose = h("button", {
+    class: "btn small", type: "button", onclick: async () => {
+      try { const p = await invoke("pick_folder"); if (p) input.value = p; }
+      catch (e) { toast(errMsg(e), true); }
+    },
+  }, "Choose folder…");
   modal("Add a project", [
-    field("Repository folder", input, "Paste the full path of a Git repository. Evyro creates .evyro/ there and adds an Evyro section to agent instruction files only where none exists."),
+    field("Repository folder", h("div", { class: "row" }, input, choose), "Choose a Git repository, or paste its path. Evyro creates .evyro/ there and adds an Evyro section to agent instruction files only where none exists."),
   ], [{
     label: "Add project", primary: true, run: async () => {
       const path = input.value.trim();
@@ -231,12 +238,15 @@ function render() {
     v.append(h("div", { class: "welcome" },
       h("img", { src: "logo.png", alt: "" }),
       h("h1", null, "Welcome to Evyro"),
-      h("p", null, "Evyro keeps AI coding work continuous: tasks, checkpoints, verification and signed handoffs between Claude Code, Codex, Gemini and other agents."),
-      h("button", { class: "btn primary", onclick: addProjectDialog }, "Add your first project"),
-      h("p", { class: "small" }, "Projects you set up with ", h("code", null, "evyro init"), " in a terminal appear here automatically.")));
+      h("p", null, "Start a task with one AI and finish it with another. Evyro keeps the task, the progress, the tests and a signed handoff, so the next AI does not start from scratch."),
+      h("ol", { class: "setup" },
+        h("li", null, h("strong", null, "Add a project. "), "Pick a Git repository on this computer.", h("div", null, h("button", { class: "btn primary small", onclick: addProjectDialog }, "Add a project"))),
+        h("li", null, h("strong", null, "Check your AIs. "), "See which coding agents, API keys, IDEs and chat apps are ready, and add your own.", h("div", null, h("button", { class: "btn small", onclick: () => setTab("agents") }, "Open AI targets"))),
+        h("li", null, h("strong", null, "Plan, work, switch. "), "Create a task with acceptance criteria, start it with one AI, and use Hand off to move it to another.")),
+      h("p", { class: "small" }, "Press ", h("kbd", null, MOD + " K"), " any time for every action. Projects you set up with ", h("code", null, "evyro init"), " appear here automatically.")));
     return;
   }
-  const views = { overview: viewOverview, tasks: viewTasks, handoffs: viewHandoffs, sessions: viewSessions, knowledge: viewKnowledge, agents: viewAgents, settings: viewSettings };
+  const views = { overview: viewOverview, tasks: viewTasks, changes: viewChanges, handoffs: viewHandoffs, sessions: viewSessions, knowledge: viewKnowledge, agents: viewAgents, settings: viewSettings };
   (views[state.view] || viewOverview)(v);
 }
 
@@ -334,6 +344,7 @@ function describeEvent(e) {
     case "checkpoint.created": return `Checkpoint (${p.trigger || "manual"})`;
     case "session.status_changed": return `Session ${p.from} → ${p.to}${p.reason ? " (" + p.reason + ")" : ""}`;
     case "agent.started": return `Agent launched (${p.mode})`;
+    case "agent.handed_to_app": return `Handed to ${p.target || "an app"}${p.opened ? " (app opened)" : ""}`;
     case "agent.stopped": return `Agent exited (code ${p.exit_code ?? "signal"})`;
     default: return e.kind.replace(/[._]/g, " ");
   }
@@ -906,14 +917,141 @@ async function viewSettings(v) {
   }).catch((e) => clear(doc).append(h("div", { class: "banner bad" }, errMsg(e))));
 }
 
+// ---------- changes ----------
+async function viewChanges(v) {
+  const pid = state.project.id;
+  let c;
+  v.append(h("div", { class: "muted" }, "Reading changes…"));
+  try { c = await invoke("repo_changes", { projectId: pid }); } catch (e) { clear(v).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
+  if (state.view !== "changes" || state.project.id !== pid) return;
+  clear(v);
+  const files = c.files.filter((f) => !f.path.startsWith(".evyro/"));
+  v.append(h("div", { class: "row", style: "margin-bottom:12px" },
+    h("span", { class: "muted" }, files.length ? `${files.length} changed file(s) since the last commit` : "No uncommitted changes."),
+    h("span", { class: "spacer" }),
+    c.redactions ? pill("warn", `${c.redactions} secret(s) hidden`) : null,
+    h("button", { class: "btn small", onclick: () => render() }, "Refresh"),
+    h("button", { class: "btn small", onclick: () => copy(c.diff, "Diff copied") }, "Copy diff")));
+  if (!files.length) return;
+  const byFile = splitDiff(c.diff);
+  const card = h("div", { class: "card" });
+  for (const f of files) {
+    const d = byFile[f.path];
+    card.append(h("details", { class: "diff-file", open: files.length <= 6 ? true : null },
+      h("summary", null, pill(STATUS_GIT[f.status.trim()] ? STATUS_GIT[f.status.trim()][0] : "", STATUS_GIT[f.status.trim()] ? STATUS_GIT[f.status.trim()][1] : f.status.trim()),
+        h("span", { class: "mono" }, f.path), d ? h("span", { class: "muted small" }, `+${d.add} −${d.del}`) : null),
+      d ? h("pre", { class: "diff" }, d.lines.map((l) => h("span", { class: lineClass(l) }, l + "\n")))
+        : h("div", { class: "muted small", style: "padding:6px 10px" }, f.status.trim() === "??" ? "New file, not yet tracked by Git." : "No text diff (binary, deleted or excluded).")));
+  }
+  v.append(card);
+  if (c.truncated) v.append(h("div", { class: "banner warn", style: "margin-top:10px" }, "The diff is long and was cut off. Use git diff in a terminal for the rest."));
+}
+const STATUS_GIT = { "M": ["accent", "modified"], "A": ["ok", "added"], "D": ["bad", "deleted"], "R": ["accent", "renamed"], "??": ["ok", "new"], "MM": ["accent", "modified"], "AM": ["ok", "added"] };
+function splitDiff(text) {
+  const out = {};
+  let cur = null;
+  for (const l of String(text || "").replace(/\n$/, "").split("\n")) {
+    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(l);
+    if (m) { cur = out[m[2]] = { lines: [], add: 0, del: 0 }; continue; }
+    if (!cur || /^(index |--- |\+\+\+ |new file mode|deleted file mode|similarity|rename )/.test(l)) continue;
+    if (l.startsWith("+")) cur.add++; else if (l.startsWith("-")) cur.del++;
+    cur.lines.push(l);
+  }
+  return out;
+}
+const lineClass = (l) => (l.startsWith("@@") ? "hunk" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "");
+
+// ---------- live updates ----------
+const LIVE_VIEWS = new Set(["overview", "tasks", "handoffs", "sessions", "changes"]);
+let liveTimer = null;
+/** Refresh the current screen when something changed elsewhere (CLI, agent, MCP), unless the person is busy in a form. */
+function onLiveEvents(evs) {
+  const mine = state.project && evs.some((e) => e.project_id === state.project.id);
+  if (mine) updateLiveBadge();
+  if (!mine || !LIVE_VIEWS.has(state.view)) return;
+  const busy = $("#modal-root").firstChild || $("#palette-root").firstChild || state.drawerTask
+    || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
+  if (busy) return;
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(() => render(), 300);
+}
+async function updateLiveBadge() {
+  const b = $("#live-badge");
+  if (!state.project) { b.textContent = ""; b.className = "live-badge"; return; }
+  try {
+    const ss = await invoke("list_sessions", { projectId: state.project.id, activeOnly: true });
+    const running = ss.filter((x) => x.status === "running");
+    b.className = "live-badge" + (running.length ? " on" : "");
+    b.textContent = running.length ? `With ${running.map((x) => x.harness).join(", ")}` : "No AI working";
+    b.title = running.length ? "Sessions in progress for this project" : "";
+  } catch { b.textContent = ""; }
+}
+
+// ---------- command palette ----------
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
+const TABS = [["overview", "Overview"], ["tasks", "Tasks"], ["changes", "Changes"], ["handoffs", "Handoffs"], ["sessions", "Sessions"], ["knowledge", "Decisions & memory"], ["agents", "AI targets"], ["settings", "Settings"]];
+async function paletteActions() {
+  const acts = TABS.map(([v, l], i) => ({ label: `Go to ${l}`, hint: `${MOD} ${i + 1}`, run: () => setTab(v) }));
+  acts.push({ label: "Add a project", run: addProjectDialog });
+  if (state.project) {
+    acts.push({ label: "New task", hint: `${MOD} N`, run: () => { setTab("tasks"); newTaskDialog(); } });
+    acts.push({ label: "New handoff", run: () => handoffDialog(null) });
+    acts.push({ label: "Copy context for an agent", run: () => copyContext(null) });
+    acts.push({ label: "Add an AI target", run: () => { setTab("agents"); addTargetDialog(); } });
+    try {
+      for (const t of await loadTargets()) acts.push({ label: `Switch to ${t.target.name}`, hint: KIND_LABEL[t.target.kind], run: () => handTo(t.target.name, null, h("div")) });
+    } catch { /* targets unavailable */ }
+  }
+  for (const p of state.projects) acts.push({ label: `Open project ${p.alias || p.name}`, run: () => selectProject(p.id) });
+  return acts;
+}
+async function openPalette() {
+  const root = $("#palette-root");
+  if (root.firstChild) { clear(root); return; }
+  const acts = await paletteActions();
+  const input = h("input", { type: "text", placeholder: "Type a command, a screen, an AI or a project…", "aria-label": "Command" });
+  const list = h("ul", { class: "palette-list", role: "listbox" });
+  let sel = 0, shown = acts;
+  const close = () => clear(root);
+  const draw = () => {
+    const q = input.value.trim().toLowerCase();
+    shown = acts.filter((a) => q.split(/\s+/).every((w) => a.label.toLowerCase().includes(w)));
+    sel = Math.min(sel, Math.max(0, shown.length - 1));
+    clear(list).append(...shown.slice(0, 40).map((a, i) => h("li", {
+      class: i === sel ? "sel" : "", role: "option", onmousedown: (e) => { e.preventDefault(); close(); a.run(); },
+    }, h("span", null, a.label), a.hint ? h("span", { class: "muted small" }, a.hint) : null)));
+    if (!shown.length) list.append(h("li", { class: "muted" }, "No matching command"));
+  };
+  input.addEventListener("input", () => { sel = 0; draw(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { sel = Math.min(sel + 1, shown.length - 1); draw(); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); draw(); e.preventDefault(); }
+    else if (e.key === "Enter" && shown[sel]) { const a = shown[sel]; close(); a.run(); }
+    else if (e.key === "Escape") { close(); e.stopPropagation(); }
+  });
+  root.append(h("div", { class: "modal-back palette-back", onclick: (e) => { if (e.target.classList.contains("palette-back")) close(); } },
+    h("div", { class: "palette", role: "dialog", "aria-label": "Command palette" }, input, list)));
+  draw();
+  input.focus();
+}
+
 // ---------- boot ----------
 document.addEventListener("DOMContentLoaded", () => {
   for (const b of document.querySelectorAll(".tab")) b.addEventListener("click", () => setTab(b.dataset.view));
   $("#add-project-btn").addEventListener("click", addProjectDialog);
   $("#drawer-close").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") { if ($("#modal-root").firstChild) clear($("#modal-root")); else closeDrawer(); }
+    const mod = e.metaKey || e.ctrlKey;
+    if (e.key === "Escape") { if ($("#palette-root").firstChild) clear($("#palette-root")); else if ($("#modal-root").firstChild) clear($("#modal-root")); else closeDrawer(); return; }
+    if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
+    if (mod && /^[1-8]$/.test(e.key)) { e.preventDefault(); setTab(TABS[Number(e.key) - 1][0]); return; }
+    if (mod && e.key.toLowerCase() === "n" && state.project) { e.preventDefault(); setTab("tasks"); newTaskDialog(); }
   });
+  $("#palette-btn").addEventListener("click", openPalette);
+  $("#palette-btn").textContent = `${MOD} K`;
+  if (window.__TAURI__ && window.__TAURI__.event) {
+    window.__TAURI__.event.listen("evyro-events", (ev) => onLiveEvents(ev.payload || []));
+  }
   invoke("app_info").then((a) => { $("#side-foot").textContent = `v${a.version} · local only`; }).catch(() => {});
   loadProjects();
 });
