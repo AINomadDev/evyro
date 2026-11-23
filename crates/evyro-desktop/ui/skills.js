@@ -42,7 +42,7 @@ async function viewSkills(v) {
       title: st === "problem" ? k.problems.join("; ") : "",
       onclick: (ev) => { ev.stopPropagation(); toggleDialog(k); },
     }, st === "on" ? "Turn off" : "Turn on");
-    return h("li", { class: "skill-row", onclick: () => openSkill(k.name) },
+    return h("li", { class: "skill-row", ...opens(() => openSkill(k.name)) },
       h("div", { class: "skill-main" },
         h("div", { class: "row" },
           h("strong", null, k.name),

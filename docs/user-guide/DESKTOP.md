@@ -41,6 +41,8 @@ Requirements: Rust 1.80+ and Git. On Linux, the WebKitGTK 4.1 development packag
 
 Inside a terminal, Ctrl keys go to the program (Ctrl+C, Ctrl+K, Ctrl+N work as in any terminal). On macOS the ⌘ shortcuts still work there; on Windows and Linux click **Ctrl K** in the top bar for the palette.
 
+Everything works from the keyboard alone. Tab reaches every button, row and card, and Enter or Space opens a row. In a terminal, Tab goes to the program (for shell completion), so press **F6** to move focus out to the thread's buttons. The UI smoke test checks this on every screen.
+
 **Live updates.** The app watches Evyro's database. When an agent, the CLI or MCP records a checkpoint, a handoff or a test run, the open screen refreshes within about two seconds. The top bar shows which AI is working on the project.
 
 **Notifications.** While the window is in the background, Evyro shows a desktop notification when an agent stops, a handoff is prepared, accepted or reopened, or tests fail. macOS asks once for permission.

@@ -384,6 +384,75 @@ const FIX = {
   } else {
     console.log("SKIP  accessibility (axe-core not installed)");
   }
+  // Keyboard only: on every screen, everything that reacts to a click can be
+  // reached with Tab, and whatever Tab reaches shows where the focus is.
+  await step("keyboard only: every control reachable with Tab and visibly focused", async () => {
+    const found = [];
+    for (const v of ["overview", "tasks", "changes", "threads", "handoffs", "sessions", "knowledge", "skills", "agents", "settings"]) {
+      await tab(v);
+      await page.waitForTimeout(250);
+      // Things that look clickable (pointer cursor) but are not in the Tab order.
+      const unreachable = await page.evaluate(() => {
+        const out = [];
+        for (const el of document.querySelectorAll("body *")) {
+          const cs = getComputedStyle(el);
+          if (cs.cursor !== "pointer" || el.closest("[hidden], [aria-hidden=true]") || !el.getClientRects().length) continue;
+          if (el.parentElement && getComputedStyle(el.parentElement).cursor === "pointer") continue; // the parent is the control
+          if (el.tabIndex >= 0 || el.closest("label, summary, a[href], button")) continue;
+          if (el.matches(".xterm *, .xterm")) continue; // the terminal takes keys itself
+          if (el.matches(".diff .ln.can")) continue; // each line's "+" button does the same
+          out.push(el.tagName.toLowerCase() + (el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/).join(".") : ""));
+        }
+        return [...new Set(out)];
+      });
+      for (const u of unreachable) found.push(`[${v}] not reachable with Tab: ${u}`);
+      // Walk the Tab order and check each stop shows a focus indicator.
+      // Start each walk at the top of the page, wherever focus was left.
+      await page.evaluate(() => {
+        const start = document.createElement("span");
+        start.tabIndex = -1;
+        document.body.prepend(start);
+        start.focus();
+        start.remove();
+      });
+      const seen = new Set();
+      for (let i = 0; i < 80; i++) {
+        await page.keyboard.press("Tab");
+        const r = await page.evaluate((walk) => {
+          const el = document.activeElement;
+          if (!el || el === document.body) return null;
+          // Back at an element this walk already passed: the Tab order wrapped.
+          if (el.dataset.kbdWalk === walk) return { again: true };
+          el.dataset.kbdWalk = walk;
+          if (el.closest(".xterm")) return { key: "xterm", ok: true };
+          const id = el.tagName.toLowerCase() + (el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/).join(".") : "") + `#len:${(el.textContent || "").trim().length}`; // no page text in CI logs
+          const cs = getComputedStyle(el);
+          const ok = (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0) || (cs.boxShadow && cs.boxShadow !== "none");
+          return { key: id, ok };
+        }, `${v}-${Date.now()}`);
+        if (!r || r.again) break;
+        seen.add(r.key);
+        if (!r.ok) found.push(`[${v}] no visible focus: ${r.key}`);
+      }
+      if (process.env.SMOKE_DEBUG) console.log(`  kbd [${v}] ${seen.size} Tab stops`);
+      await page.keyboard.press("Escape");
+    }
+    // The terminal keeps Tab for the program in it; F6 leaves it.
+    await tab("threads");
+    await page.click(".term-host");
+    await page.keyboard.press("F6");
+    const out = await page.evaluate(() => !document.activeElement.closest(".xterm") && document.activeElement.matches(".thread-head button"));
+    if (!out) found.push("[threads] F6 does not leave the terminal");
+    // A row opened from the keyboard alone.
+    await tab("agents");
+    await page.focus("tr.clickable");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector('.modal[aria-label^="Target "]');
+    await page.keyboard.press("Escape");
+    await page.waitForSelector(".modal", { state: "detached" });
+    for (const f of found) console.log("  kbd " + f);
+    if (found.length) throw new Error(`${found.length} keyboard problems`);
+  });
   await step("command palette filters and runs", async () => {
     await page.keyboard.press("Control+k");
     await page.waitForSelector(".palette input");

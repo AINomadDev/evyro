@@ -9,6 +9,20 @@ const invoke = (cmd, args = {}) => {
 };
 
 // ---------- tiny DOM helpers ----------
+// Props for a row or card that opens something when clicked: also reachable
+// with Tab and opened with Enter or Space, so the keyboard can do the same.
+function opens(fn) {
+  return {
+    tabindex: "0",
+    onclick: fn,
+    onkeydown: (e) => {
+      if (e.target !== e.currentTarget || (e.key !== "Enter" && e.key !== " ")) return;
+      e.preventDefault();
+      fn(e);
+    },
+  };
+}
+
 function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
   if (attrs) {
@@ -598,7 +612,7 @@ async function viewHandoffs(v) {
   if (!hs.length) { v.append(h("div", { class: "card" }, h("div", { class: "empty" }, "No handoffs yet. Prepare one from a task when you want another agent to continue."))); return; }
   v.append(h("div", { class: "card" }, h("table", null,
     h("thead", null, h("tr", null, ["Created", "From", "To", "Quality", "Status", "Accepted"].map((x) => h("th", null, x)))),
-    h("tbody", null, hs.map((x) => h("tr", { class: "clickable", onclick: () => openHandoff(x.id) },
+    h("tbody", null, hs.map((x) => h("tr", { class: "clickable", ...opens(() => openHandoff(x.id)) },
       h("td", null, ago(x.created_at)), h("td", null, x.from_harness || "human"), h("td", null, x.to_harness),
       h("td", null, `${x.quality.met}/${x.quality.total}`), h("td", null, pill(x.status)), h("td", null, x.accepted_at ? ago(x.accepted_at) : "-")))))));
 }
@@ -753,7 +767,7 @@ async function viewAgents(v) {
         h("h3", null, KIND_LABEL[k]),
         h("table", null,
           h("thead", null, h("tr", null, ["Target", "Status", "Uses", "Next step", ""].map((x) => h("th", null, x)))),
-          h("tbody", null, g.map((t) => h("tr", { class: "clickable", onclick: () => targetDialog(t) },
+          h("tbody", null, g.map((t) => h("tr", { class: "clickable", ...opens(() => targetDialog(t)) },
             h("td", null, h("strong", { class: "mono" }, t.target.name), t.target.description ? h("div", { class: "muted small" }, t.target.description) : null),
             h("td", null, targetPill(t.state)),
             h("td", { class: "small" }, t.display),
