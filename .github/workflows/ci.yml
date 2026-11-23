@@ -140,9 +140,23 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: bash scripts/release/apple-env.sh
+      # With the update key in secrets, Tauri also writes the signed update
+      # files (.app.tar.gz, .sig) that the app's updater downloads.
+      # Without it the installers are built as before. See docs/RELEASING.md.
       - name: build installers (.dmg, .exe, .deb, .AppImage)
         working-directory: crates/evyro-desktop
-        run: npx --yes @tauri-apps/cli@2.12.6 build ${{ matrix.args }}
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          extra=""
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            extra='--config {"bundle":{"createUpdaterArtifacts":true}}'
+          else
+            echo "no TAURI_SIGNING_PRIVATE_KEY secret: building without update files"
+          fi
+          npx --yes @tauri-apps/cli@2.12.6 build ${{ matrix.args }} $extra
       - name: checksums
         shell: bash
         run: |
@@ -241,6 +255,8 @@ jobs:
             target/**/release/bundle/**/*.exe
             target/**/release/bundle/**/*.deb
             target/**/release/bundle/**/*.AppImage
+            target/**/release/bundle/**/*.app.tar.gz
+            target/**/release/bundle/**/*.sig
             target/SHA256SUMS-*.txt
             target/evyro-sbom.spdx.json
 
@@ -338,6 +354,18 @@ jobs:
           mkdir dist
           find artifacts -type f \( -name '*.dmg' -o -name '*-setup.exe' -o -name '*.deb' -o -name '*.AppImage' \
             -o -name 'evyro-*.tar.gz' -o -name 'evyro-*.zip' -o -name 'evyro-sbom.spdx.json' \) -exec cp {} dist/ \;
+          # Update files, when the build was signed with the update key: the
+          # macOS app archive gets the version in its name, and latest.json
+          # tells installed apps where the new version is.
+          app=$(find artifacts -type f -name '*.app.tar.gz' | head -1)
+          if [ -n "$app" ]; then
+            v="${GITHUB_REF_NAME#v}"
+            cp "$app" "dist/Evyro_${v}_universal.app.tar.gz"
+            cp "$app.sig" "dist/Evyro_${v}_universal.app.tar.gz.sig"
+            find artifacts -type f \( -name '*-setup.exe.sig' -o -name '*.AppImage.sig' \) -exec cp {} dist/ \;
+            bash scripts/release/latest-json.sh "$v" dist "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME" > dist/latest.json
+            cat dist/latest.json
+          fi
           cd dist
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS

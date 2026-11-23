@@ -62,7 +62,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 
 ## Not implemented
 
-- Desktop: tray icon, auto-update.
+- Desktop auto-update is tested with a stand-in in the UI smoke test and a generated `latest.json`. A real update from one signed release to the next has not been run yet; it needs the update key and two releases.
 - Remote access: no HTTPS of its own (use Tailscale or `tailscale serve`), no push notifications, no native phone app. Chats started in the desktop app and in a terminal `evyro serve` are separate. The phone companion covers following, approving and chatting, not every desktop screen.
 - Code intelligence beyond search: tree-sitter parsing, find references, LSP (types, go to definition across files), a codebase map. Symbols come from per-language patterns, so an unusual declaration can be missed.
 - Skills registry, context deduplication across sessions, embeddings.

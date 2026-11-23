@@ -54,6 +54,8 @@ Everything works from the keyboard alone. Tab reaches every button, row and card
 
 **First run.** With no projects yet, the welcome screen walks through adding a project (with a folder picker), checking your AIs and handing work over.
 
+**Updates.** A few seconds after it starts, the app checks once for a newer release. When there is one, a button at the bottom of the sidebar says **Update to x.y.z**. Settings › **Updates** shows the same thing, with **Check now** and a switch to turn the startup check off. Nothing is downloaded until you click **Install and restart**. The app then checks the download's signature, installs it and restarts. Agents running in the window stop first, and their progress is checkpointed. On Linux only the AppImage updates itself; a `.deb` updates through a new download.
+
 ## Rules the app follows
 
 - **Verified needs evidence.** Moving a task to Verified needs every acceptance criterion ticked and a passing test run on the current code. If that is missing, the app offers a human override, which asks for a reason and logs it.
@@ -65,7 +67,6 @@ Everything works from the keyboard alone. Tab reaches every button, row and card
 
 ## Known gaps
 
-- No tray icon or auto-update.
 - Agent threads were checked by hand on Linux with a real PTY (a stand-in agent, a shell, typing, resizing, quitting). They have not been run with a real Claude Code or Codex yet, or on a real Mac or Windows desktop. The terminal engine's tests run in CI on all three systems.
 - **Open in Terminal instead** uses macOS Terminal through AppleScript; elsewhere it copies the command.
 - Checked by hand on Linux; opened on a real Mac (macOS 27.2) on 2026-11-23 with every screen rendering. An automated UI smoke test runs in CI on Linux, macOS and Windows. Notifications have not been checked on a real desktop yet.

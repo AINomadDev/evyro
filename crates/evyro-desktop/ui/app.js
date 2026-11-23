@@ -921,7 +921,7 @@ async function viewSettings(v) {
   }
   const info = h("div", { class: "card" }, h("h2", null, "Evyro"), h("div", { class: "muted" }, "Loading…"));
   const doc = h("div", { class: "card wide" }, h("h2", null, "Doctor"), h("div", { class: "muted" }, "Running checks…"));
-  grid.append(info, doc, remoteCard());
+  grid.append(info, updatesCard(), doc, remoteCard());
   invoke("app_info").then((a) => {
     clear(info).append(h("h2", null, "Evyro"), h("dl", { class: "kv" },
       h("dt", null, "Version"), h("dd", null, a.version), h("dt", null, "Data folder"), h("dd", { class: "mono" }, a.data_dir),

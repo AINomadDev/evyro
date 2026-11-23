@@ -12,6 +12,22 @@ bash "$root/scripts/release/check-version.sh" "v$v"
 if bash "$root/scripts/release/check-version.sh" "v9.9.9" >/dev/null; then echo "version check passed a wrong tag"; exit 1; fi
 [ -n "$(bash "$root/scripts/release/notes.sh" "$v")" ] || { echo "no release notes for $v"; exit 1; }
 
+# latest.json: every platform with a signed file, none without one.
+if command -v jq >/dev/null; then
+  mkdir -p "$tmp/upd"
+  for f in "Evyro_${v}_universal.app.tar.gz" "Evyro_${v}_x64-setup.exe" "Evyro_${v}_amd64.AppImage"; do
+    echo data > "$tmp/upd/$f"; printf 'sig-%s\n' "$f" > "$tmp/upd/$f.sig"
+  done
+  rm "$tmp/upd/Evyro_${v}_amd64.AppImage.sig"
+  bash "$root/scripts/release/latest-json.sh" "$v" "$tmp/upd" "https://example.invalid/v$v" > "$tmp/latest.json"
+  jq -e --arg v "$v" '.version == $v and (.platforms | keys) == ["darwin-aarch64","darwin-x86_64","windows-x86_64"]
+    and .platforms["windows-x86_64"].signature == "sig-Evyro_\($v)_x64-setup.exe"
+    and (.platforms["darwin-x86_64"].url | endswith("/Evyro_\($v)_universal.app.tar.gz"))' "$tmp/latest.json" >/dev/null \
+    || { echo "latest.json is wrong:"; cat "$tmp/latest.json"; exit 1; }
+else
+  echo "selftest: no jq, skipping the latest.json check"
+fi
+
 case "$(uname -s)-$(uname -m)" in
   Linux-x86_64) t=x86_64-unknown-linux-gnu ;; Linux-aarch64) t=aarch64-unknown-linux-gnu ;;
   Darwin-arm64) t=aarch64-apple-darwin ;; Darwin-x86_64) t=x86_64-apple-darwin ;;

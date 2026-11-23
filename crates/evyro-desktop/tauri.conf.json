@@ -22,8 +22,17 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "UPDATE_PUBLIC_KEY_PENDING",
+      "endpoints": [
+        "https://github.com/AINomadDev/evyro/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": false,
     "targets": ["app", "dmg", "nsis", "deb", "appimage"],
     "category": "DeveloperTool",
     "shortDescription": "Keep AI coding work continuous across agents",
