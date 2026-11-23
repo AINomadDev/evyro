@@ -294,7 +294,23 @@ evyro memory search redis
 
 Agents see these in their context packet: `evyro context --task T-2`.
 
-### 4.6 Connect agents over MCP (optional but useful)
+### 4.6 Review what the AI changed
+
+Read the diff, leave comments on lines, and send them to the agent. In the desktop app, open **Changes**: click a line number (or the **+** at the end of a line) to comment, then **Send comments to agent**. Pick a running agent thread and the comments are typed into it as one message, or copy them as a prompt for any AI. New files the agent created show up as added, so you can comment on them too.
+
+From the command line:
+
+```bash
+evyro review comment src/limit.rs:42 "Read the limit from config"
+evyro review comment README.md "Document the new limit"   # whole-file comment
+evyro review                     # comments still waiting (open or sent)
+evyro review prompt --mark-sent  # one prompt to paste into any AI
+evyro review resolve 4f9a02c1    # by the short id shown in the list
+```
+
+Comments that are not resolved are part of every context packet and handoff context, so the next AI sees them even if you switch. Agents connected over MCP read them with `get_review_comments` and close them with `resolve_review_comment`. Snippets are redacted like everything else Evyro stores.
+
+### 4.7 Connect agents over MCP (optional but useful)
 
 | Agent | Command |
 |---|---|
@@ -304,7 +320,7 @@ Agents see these in their context packet: `evyro context --task T-2`.
 
 With MCP, the agent can claim tasks, write checkpoints, run verification and prepare handoffs itself.
 
-### 4.7 Back up, export, move machines
+### 4.8 Back up, export, move machines
 
 ```bash
 evyro backup                  # snapshot the database
@@ -375,6 +391,8 @@ If the task still belongs to another AI, **Switch to** opens the handoff form in
 | See all AIs | `evyro targets` |
 | Add an AI | `evyro targets add <name> --kind harness/api/ide/chat ...` |
 | Fix stale sessions | `evyro recover` |
+| Comment on a change | `evyro review comment <path>:<line> "..."` |
+| Send review comments | `evyro review prompt --mark-sent` |
 | Health check | `evyro doctor` |
 
 Full reference: [CLI reference](CLI_REFERENCE.md).

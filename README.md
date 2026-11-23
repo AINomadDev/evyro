@@ -82,7 +82,7 @@ Evyro is not another place to chat with an agent. It is the layer that remembers
 | "Verified" requires a passing test run on current code | ✓ | — | — | — |
 | Switch to an AI IDE, chat app or raw API key | ✓ | partly | — | — |
 | Run and chat with agents in one window | ✓ | ✓ | ✓ | — |
-| Review workbench with diff comments | planned | — | ✓ | — |
+| Review workbench with diff comments | ✓ | — | ✓ | — |
 | Code search and symbols | planned | — | ✓ | — |
 | Remote and mobile access | planned | ✓ | — | — |
 

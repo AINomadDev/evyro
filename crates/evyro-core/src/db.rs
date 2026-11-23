@@ -16,6 +16,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0002_acceptance_checks",
         include_str!("../migrations/0002_acceptance_checks.sql"),
     ),
+    (
+        "0003_review_comments",
+        include_str!("../migrations/0003_review_comments.sql"),
+    ),
 ];
 
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;

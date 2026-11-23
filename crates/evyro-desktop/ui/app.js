@@ -923,48 +923,7 @@ async function viewSettings(v) {
 }
 
 // ---------- changes ----------
-async function viewChanges(v) {
-  const pid = state.project.id;
-  let c;
-  v.append(h("div", { class: "muted" }, "Reading changes…"));
-  try { c = await invoke("repo_changes", { projectId: pid }); } catch (e) { clear(v).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
-  if (state.view !== "changes" || state.project.id !== pid) return;
-  clear(v);
-  const files = c.files.filter((f) => !f.path.startsWith(".evyro/"));
-  v.append(h("div", { class: "row", style: "margin-bottom:12px" },
-    h("span", { class: "muted" }, files.length ? `${files.length} changed file(s) since the last commit` : "No uncommitted changes."),
-    h("span", { class: "spacer" }),
-    c.redactions ? pill("warn", `${c.redactions} secret(s) hidden`) : null,
-    h("button", { class: "btn small", onclick: () => render() }, "Refresh"),
-    h("button", { class: "btn small", onclick: () => copy(c.diff, "Diff copied") }, "Copy diff")));
-  if (!files.length) return;
-  const byFile = splitDiff(c.diff);
-  const card = h("div", { class: "card" });
-  for (const f of files) {
-    const d = byFile[f.path];
-    card.append(h("details", { class: "diff-file", open: files.length <= 6 ? true : null },
-      h("summary", null, pill(STATUS_GIT[f.status.trim()] ? STATUS_GIT[f.status.trim()][0] : "", STATUS_GIT[f.status.trim()] ? STATUS_GIT[f.status.trim()][1] : f.status.trim()),
-        h("span", { class: "mono" }, f.path), d ? h("span", { class: "muted small" }, `+${d.add} −${d.del}`) : null),
-      d ? h("pre", { class: "diff" }, d.lines.map((l) => h("span", { class: lineClass(l) }, l + "\n")))
-        : h("div", { class: "muted small", style: "padding:6px 10px" }, f.status.trim() === "??" ? "New file, not yet tracked by Git." : "No text diff (binary, deleted or excluded).")));
-  }
-  v.append(card);
-  if (c.truncated) v.append(h("div", { class: "banner warn", style: "margin-top:10px" }, "The diff is long and was cut off. Use git diff in a terminal for the rest."));
-}
-const STATUS_GIT = { "M": ["accent", "modified"], "A": ["ok", "added"], "D": ["bad", "deleted"], "R": ["accent", "renamed"], "??": ["ok", "new"], "MM": ["accent", "modified"], "AM": ["ok", "added"] };
-function splitDiff(text) {
-  const out = {};
-  let cur = null;
-  for (const l of String(text || "").replace(/\n$/, "").split("\n")) {
-    const m = /^diff --git a\/(.+?) b\/(.+)$/.exec(l);
-    if (m) { cur = out[m[2]] = { lines: [], add: 0, del: 0 }; continue; }
-    if (!cur || /^(index |--- |\+\+\+ |new file mode|deleted file mode|similarity|rename )/.test(l)) continue;
-    if (l.startsWith("+")) cur.add++; else if (l.startsWith("-")) cur.del++;
-    cur.lines.push(l);
-  }
-  return out;
-}
-const lineClass = (l) => (l.startsWith("@@") ? "hunk" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "");
+// The Changes view and review comments live in review.js.
 
 // ---------- live updates ----------
 const LIVE_VIEWS = new Set(["overview", "tasks", "handoffs", "sessions", "changes"]);

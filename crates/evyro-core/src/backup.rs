@@ -108,6 +108,7 @@ const TABLES: &[(&str, &str)] = &[
         "task_id IN (SELECT id FROM tasks WHERE project_id = ?1)",
     ),
     ("decisions", "project_id = ?1 ORDER BY created_at"),
+    ("review_comments", "project_id = ?1 ORDER BY created_at"),
     ("memories", "project_id = ?1 ORDER BY created_at"),
     ("events", "project_id = ?1 ORDER BY seq"),
 ];

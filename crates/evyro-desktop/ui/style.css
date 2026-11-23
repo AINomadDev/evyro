@@ -198,11 +198,30 @@ tr.clickable:hover td { background: var(--panel-2); }
 .diff-file { border-bottom: 1px solid var(--border); }
 .diff-file:last-child { border-bottom: 0; }
 .diff-file summary { cursor: pointer; padding: 8px 4px; display: flex; gap: 10px; align-items: center; }
-pre.diff { margin: 0 0 10px; padding: 8px 0; font-size: 12px; line-height: 1.5; overflow-x: auto; }
-pre.diff span { display: block; padding: 0 10px; white-space: pre; }
-pre.diff .add { background: var(--ok-soft); color: var(--ok); }
-pre.diff .del { background: var(--bad-soft); color: var(--bad); }
-pre.diff .hunk { color: var(--accent); background: var(--accent-soft); }
+.diff { margin: 0 0 10px; font: 12px/1.55 var(--mono); overflow-x: auto; }
+.diff .dl { display: grid; grid-template-columns: 44px 44px 1fr 26px; align-items: stretch; }
+.diff .ln { color: var(--muted); text-align: right; padding: 0 8px 0 0; user-select: none; opacity: .7; }
+.diff .ln.can { cursor: pointer; }
+.diff .ln.can:hover { color: var(--accent); opacity: 1; }
+.diff .code { white-space: pre; padding: 0 10px; }
+.diff .add { background: var(--ok-soft); }
+.diff .add .code { color: var(--ok); }
+.diff .del { background: var(--bad-soft); }
+.diff .del .code { color: var(--bad); }
+.diff .hunk { color: var(--accent); background: var(--accent-soft); }
+.diff .cbtn { visibility: hidden; border: 0; border-radius: 5px; background: var(--accent); color: #fff; font: 600 12px/1 var(--mono); width: 20px; height: 18px; margin: 1px 0; cursor: pointer; }
+.diff .dl:hover .cbtn, .diff .cbtn:focus { visibility: visible; }
+.rv-bar { margin-bottom: 10px; }
+.rv-comment { margin: 6px 26px 8px 88px; border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; background: var(--panel); padding: 8px 10px; font-family: inherit; }
+.rv-comment.sent { border-left-color: var(--accent); }
+.diff-body > .rv-comment, .diff-file > div > .rv-comment { margin-left: 4px; }
+.rv-head { display: flex; align-items: center; gap: 8px; }
+.rv-body { white-space: pre-wrap; margin-top: 4px; font-size: 13.5px; }
+.rv-form { margin: 6px 26px 10px 88px; display: flex; flex-direction: column; gap: 6px; }
+.diff-body > .rv-form { margin-left: 4px; }
+.rv-form textarea { width: 100%; font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; padding: 8px; resize: vertical; }
+.rv-preview { max-height: 260px; overflow: auto; background: var(--panel-2); padding: 10px; border-radius: 8px; font-size: 12px; white-space: pre-wrap; }
+.rv-orphans-head { padding: 8px 4px 0; }
 
 /* First-run setup */
 ol.setup { text-align: left; margin: 20px auto; padding-left: 22px; display: grid; gap: 14px; }
@@ -230,6 +249,7 @@ kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px sol
 .thread-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .thread-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
 .thread-head > .row { flex-wrap: nowrap; }
+.thread-head .btn { white-space: nowrap; }
 .thread-head > div:first-child { min-width: 0; }
 .thread-head .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
 .thread-name { font-weight: 600; display: flex; align-items: center; gap: 8px; }
@@ -237,3 +257,4 @@ kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px sol
 .thread-empty { margin: auto; max-width: 520px; text-align: center; padding: 40px 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
 @media (prefers-color-scheme: dark) { .term-host { background: #0c0e14; } }
 .view:has(.threads) { padding-bottom: 20px; }
+.rv-comment, .rv-form { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif; }

@@ -45,6 +45,7 @@ Commands:
   verify       Run a verification command and record a receipt: `evyro verify -- cargo test`
   decide       Record a decision. Record a decision: `evyro decide "<title>" "<decision>" [--why ...]`
   decisions    Decisions for the project
+  review       Review comments on the working-tree changes: leave them on files and lines, send the open ones to an agent, resolve them when addressed
   memory       Project memory
   handoffs     Handoff history
   health       Evidence-linked project health
@@ -497,6 +498,88 @@ Options:
   -C, --dir <DIR>            Run as if started in this directory
       --project <PROJECT>    Target a registered project by id or alias instead of the current directory
   -h, --help                 Print help
+```
+
+### evyro review
+
+```text
+Review comments on the working-tree changes: leave them on files and lines, send the open ones to an agent, resolve them when addressed
+
+Usage: evyro review [OPTIONS] [COMMAND]
+
+Commands:
+  list     Comments still waiting for an agent (open or sent). The default
+  comment  Comment on a file or a line: `evyro review comment src/lib.rs:42 "Handle the empty case"`
+  resolve  Mark comments as addressed
+  reopen   Open a resolved or sent comment again
+  delete   Remove a comment
+  prompt   Print the open comments as one prompt to paste into any AI
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro review comment
+
+```text
+Comment on a file or a line: `evyro review comment src/lib.rs:42 "Handle the empty case"`
+
+Usage: evyro review comment [OPTIONS] <LOCATION> <TEXT>
+
+Arguments:
+  <LOCATION>  `path` or `path:line`, relative to the repository root
+  <TEXT>      
+
+Options:
+      --json               Machine-readable JSON output
+      --task <TASK>        
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro review resolve
+
+```text
+Mark comments as addressed
+
+Usage: evyro review resolve [OPTIONS] [IDS]...
+
+Arguments:
+  [IDS]...  
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro review prompt
+
+```text
+Print the open comments as one prompt to paste into any AI
+
+Usage: evyro review prompt [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+      --mark-sent          Mark the printed comments as sent
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
 ```
 
 ### evyro memory add

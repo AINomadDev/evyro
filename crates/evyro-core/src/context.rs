@@ -182,6 +182,11 @@ impl Store {
             add("decisions", 3, s);
         }
 
+        let review = self.pending_review_comments(&project.id)?;
+        if !review.is_empty() {
+            add("review", 2, crate::review::context_section(&review));
+        }
+
         if let Some(t) = task {
             if let Some(cp) = self.latest_checkpoint(&project.id, Some(&t.id))? {
                 let mut s = format!(
