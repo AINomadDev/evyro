@@ -340,6 +340,100 @@ fn is_executable(p: &Path) -> bool {
     }
 }
 
+/// Is this a Windows batch file (`.cmd` or `.bat`)?
+pub fn is_batch_file(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+}
+
+/// The program an npm (or pnpm) Windows shim runs, from the shim's text:
+/// the quoted path just before `%*`, relative to the shim's folder. For
+/// example `"%dp0%\node_modules\@openai\codex\bin\codex.js" %*`.
+pub fn npm_shim_target(shim: &str) -> Option<String> {
+    let re = regex::Regex::new(r#""%~?dp0%?\\?([^"%]+)"\s+%\*"#).ok()?;
+    let rel = re
+        .captures_iter(shim)
+        .last()?
+        .get(1)?
+        .as_str()
+        .trim_start_matches('\\');
+    if rel.is_empty() || rel.contains("..") {
+        return None;
+    }
+    Some(rel.to_string())
+}
+
+/// Make an agent's argv launchable on Windows. npm installs agent CLIs there as
+/// `.cmd` shims (`claude.cmd`, `codex.cmd`, `gemini.cmd`), and Windows cannot
+/// pass some arguments through a batch file at all: Rust refuses line breaks,
+/// which every Evyro prompt has. So:
+/// - for an npm shim, run the script it points at directly (with Node for a
+///   `.js` script, as the shim would), with the arguments unchanged;
+/// - for any other batch file, replace line breaks with spaces.
+///
+/// Other programs, and every program off Windows, are returned unchanged.
+pub fn launchable_argv(argv: Vec<String>) -> Vec<String> {
+    if !cfg!(windows) {
+        return argv;
+    }
+    launchable_argv_for_batch(argv, which("node"))
+}
+
+/// [`launchable_argv`] without the platform check, for tests.
+pub fn launchable_argv_for_batch(argv: Vec<String>, node_on_path: Option<PathBuf>) -> Vec<String> {
+    let Some(first) = argv.first() else {
+        return argv;
+    };
+    let prog = PathBuf::from(first);
+    if !is_batch_file(&prog) {
+        return argv;
+    }
+    let dir = prog.parent().map(Path::to_path_buf).unwrap_or_default();
+    let target = std::fs::read_to_string(&prog)
+        .ok()
+        .and_then(|t| npm_shim_target(&t))
+        .map(|rel| dir.join(rel.replace('\\', std::path::MAIN_SEPARATOR_STR)))
+        .filter(|p| p.is_file());
+    if let Some(t) = target {
+        let is_js = t
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "js" | "cjs" | "mjs"));
+        let mut out = Vec::with_capacity(argv.len() + 1);
+        if is_js {
+            let local = dir.join("node.exe");
+            let node = if local.is_file() {
+                Some(local)
+            } else {
+                node_on_path
+            };
+            match node {
+                Some(n) => out.push(n.to_string_lossy().into_owned()),
+                None => return flatten_line_breaks(argv),
+            }
+        } else if is_batch_file(&t) {
+            return flatten_line_breaks(argv);
+        }
+        out.push(t.to_string_lossy().into_owned());
+        out.extend(argv.into_iter().skip(1));
+        return out;
+    }
+    flatten_line_breaks(argv)
+}
+
+fn flatten_line_breaks(argv: Vec<String>) -> Vec<String> {
+    argv.into_iter()
+        .map(|a| {
+            if a.contains(['\n', '\r']) {
+                a.replace("\r\n", " ").replace(['\n', '\r'], " ")
+            } else {
+                a
+            }
+        })
+        .collect()
+}
+
 /// Run `<bin> --version` with a timeout; returns stdout+stderr.
 pub fn probe_version(bin: &Path, timeout: Duration) -> Option<String> {
     let mut child = Command::new(bin)
@@ -438,6 +532,55 @@ pub fn detect_all() -> Vec<Detection> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn npm_shims_are_run_through_their_script() {
+        // The tail of a real npm cmd-shim.
+        let shim = "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST \"%dp0%\\node.exe\" (\r\n  SET \"_prog=%dp0%\\node.exe\"\r\n) ELSE (\r\n  SET \"_prog=node\"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\nendLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & \"%_prog%\"  \"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js\" %*\r\n";
+        assert_eq!(
+            npm_shim_target(shim).as_deref(),
+            Some("node_modules\\@openai\\codex\\bin\\codex.js")
+        );
+        assert_eq!(
+            npm_shim_target("@\"%~dp0\\..\\evil.js\" %*\r\n"),
+            None,
+            "no escaping the shim's folder"
+        );
+        assert_eq!(npm_shim_target("@echo hi\r\n"), None);
+
+        let d = tempfile::tempdir().unwrap();
+        let js = d.path().join("node_modules/@openai/codex/bin");
+        std::fs::create_dir_all(&js).unwrap();
+        std::fs::write(js.join("codex.js"), "").unwrap();
+        let cmd = d.path().join("codex.cmd");
+        std::fs::write(&cmd, shim).unwrap();
+        let node = PathBuf::from("/opt/node/node");
+        let prompt = "Work on T-1.\nRead the handoff first.".to_string();
+        let out = launchable_argv_for_batch(
+            vec![cmd.to_string_lossy().into(), "exec".into(), prompt.clone()],
+            Some(node.clone()),
+        );
+        assert_eq!(out[0], node.to_string_lossy());
+        assert!(out[1].ends_with("codex.js"), "{out:?}");
+        assert_eq!(
+            out[2..],
+            ["exec".to_string(), prompt.clone()],
+            "arguments unchanged"
+        );
+
+        // Any other batch file: line breaks become spaces.
+        let other = d.path().join("agent.bat");
+        std::fs::write(&other, "@sh agent.sh %*\r\n").unwrap();
+        let out = launchable_argv_for_batch(
+            vec![other.to_string_lossy().into(), prompt.clone()],
+            Some(node),
+        );
+        assert_eq!(out[1], "Work on T-1. Read the handoff first.");
+
+        // Not a batch file: untouched.
+        let out = launchable_argv_for_batch(vec!["/usr/bin/codex".into(), prompt.clone()], None);
+        assert_eq!(out[1], prompt);
+    }
+
     use super::*;
     #[test]
     fn argv_is_shell_free() {
