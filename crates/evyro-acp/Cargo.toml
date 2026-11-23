@@ -1,0 +1,17 @@
+[package]
+name = "evyro-acp"
+description = "Agent Client Protocol (ACP) client for Evyro: structured chat with coding agents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+evyro-core = { path = "../evyro-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

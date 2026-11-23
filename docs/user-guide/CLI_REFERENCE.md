@@ -36,6 +36,7 @@ Commands:
   switch       Handoff and launch the target agent now (same as `handoff --launch`). Use `handoff` to prepare the contract without launching anything
   resume       Accept a pending handoff as the receiving agent (validates state first)
   run          Launch an agent with session tracking (pid, exit checkpoint)
+  chat         Chat with a coding agent over ACP (Agent Client Protocol): its reply, plan and tool calls in the terminal, and you approve each tool call. `evyro chat --list` shows which agents can
   agents       Detected agents and their capabilities
   targets      Switch targets: every AI you can hand work to (agent CLIs, IDEs, chat apps, API models). `evyro targets` lists them with their setup status
   models       Model selection support per agent
@@ -301,6 +302,43 @@ Options:
       --no-open            IDE/chat targets: prepare the hand-over without opening apps or the clipboard
       --handoff <HANDOFF>  Continue this handoff, even one prepared for a different AI
   -h, --help               Print help
+```
+
+### evyro chat
+
+Chat with a coding agent over ACP (Agent Client Protocol). The agent's reply, plan and tool calls stream into the terminal, and you approve each tool call. The chat runs under an Evyro session, like `evyro run`: it claims the task or a waiting handoff, checkpoints after each turn, and gives the agent Evyro's MCP server. Each line you type is the next message; an empty line or `/exit` ends the chat. Details: [ACP](../protocols/ACP.md).
+
+```bash
+evyro chat --list                                  # which agents can chat here
+evyro chat --to codex --task T-1                   # ask before every tool call
+evyro chat --to claude-code --approve reads "Start with the failing test"
+echo "now add the docs" | evyro chat --to codex --approve all "fix the bug" --json
+```
+
+```text
+Chat with a coding agent over ACP (Agent Client Protocol): its reply, plan and tool calls in the terminal, and you approve each tool call. `evyro chat --list` shows which agents can
+
+Usage: evyro chat [OPTIONS] [PROMPT]
+
+Arguments:
+  [PROMPT]  The first message (after Evyro's task or handoff context)
+
+Options:
+      --json                  Machine-readable JSON output
+      --to <TO>               The coding agent or API target to chat with (see `evyro chat --list`)
+  -q, --quiet                 Suppress non-essential output
+      --task <TASK>           The task to work on (default: a handoff waiting for this agent, or the active task)
+      --debug                 Print debug details on errors
+      --handoff <HANDOFF>     Continue this handoff, even one prepared for a different AI
+      --accept-drift          Continue a handoff even though the repository changed since it was written
+  -C, --dir <DIR>             Run as if started in this directory
+      --model <MODEL>         Model for API targets (passed to the agent's environment as `evyro run` does)
+      --project <PROJECT>     Target a registered project by id or alias instead of the current directory
+      --approve <APPROVE>     Which tool calls to allow without asking [default: ask] [possible values: ask, reads, all, none]
+      --no-mcp                Do not offer Evyro's MCP server to the agent
+      --command <COMMAND>...  Start this ACP command instead of the agent's usual one (program and arguments)
+      --list                  List the agents that can chat over ACP and how to install the missing ones
+  -h, --help                  Print help (see more with '--help')
 ```
 
 ### evyro targets

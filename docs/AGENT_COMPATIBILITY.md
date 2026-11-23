@@ -20,6 +20,10 @@ Minimum versions checked by `evyro agents`: Claude Code 1.0.0, Codex 0.1.0, Gemi
 
 Quota telemetry: not available from any agent today; Evyro never shows invented usage numbers.
 
+## Chat over ACP
+
+`evyro chat` and the desktop's chat threads talk to agents over ACP instead of a terminal. The ACP command per agent (`claude-agent-acp`, `codex-acp`, `gemini --experimental-acp`, `goose acp`, `opencode acp`, `copilot --acp`, `cursor-agent acp`) comes from each project's documentation; `evyro chat --list` shows which are installed. Evidence: simulated (a stand-in ACP agent in CI). See [ACP](protocols/ACP.md).
+
 ## Switch targets beyond agent CLIs
 
 `evyro targets` lists every AI Evyro can hand work to. See the [User guide, Part 3](user-guide/USER_GUIDE.md#part-3-switch-to-any-ai).

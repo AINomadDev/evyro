@@ -1148,12 +1148,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "evyro-acp"
+version = "0.1.0"
+dependencies = [
+ "evyro-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "evyro-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "clap_complete",
+ "evyro-acp",
  "evyro-core",
  "evyro-mcp",
  "serde",
@@ -1184,6 +1195,7 @@ dependencies = [
 name = "evyro-desktop"
 version = "0.1.0"
 dependencies = [
+ "evyro-acp",
  "evyro-core",
  "evyro-term",
  "serde",

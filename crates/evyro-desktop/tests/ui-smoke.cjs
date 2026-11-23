@@ -135,6 +135,58 @@ const FIX = {
           if (cmd === "term_write") window.__lastTermWrite = (window.__lastTermWrite || "") + args.data;
           if (cmd === "term_write") { setTimeout(() => window.__emit("term-output", { id: args.id, data: args.data, end: 0 }), 10); return null; }
           if (cmd === "term_close") { window.__terms = terms.filter((t) => t.id !== args.id); return null; }
+          // Chat threads (ACP): a stand-in agent that plans, asks permission, edits and answers.
+          const chats = (window.__chats = window.__chats || {});
+          const say = (id, item) => { chats[id].log.push(item); window.__emit("chat-event", { id, item }); };
+          const upd = (id, update) => say(id, { t: "update", update });
+          const setc = (id, patch) => { Object.assign(chats[id].info, patch); window.__emit("chat-state", JSON.parse(JSON.stringify(chats[id].info))); };
+          if (cmd === "acp_agents") return [{ harness: "codex", display_name: "Codex CLI (Codex ACP adapter)", command: "/usr/local/bin/codex-acp", install: "npm install -g @agentclientprotocol/codex-acp", evidence: "" },
+            { harness: "gemini", display_name: "Gemini CLI", command: null, install: "npm install -g @google/gemini-cli", evidence: "" }];
+          if (cmd === "chat_list") return Object.values(chats).map((c) => JSON.parse(JSON.stringify(c.info)));
+          if (cmd === "chat_log") return JSON.parse(JSON.stringify({ info: chats[args.id].info, log: chats[args.id].log }));
+          if (cmd === "chat_open") {
+            const id = "chat_" + (Object.keys(chats).length + 1);
+            const info = { id, kind: "chat", title: `${args.target} on ${args.task}`, target: args.target, task: args.task, project_id: args.projectId, started_at: Math.floor(Date.now() / 1000), running: true, busy: true, state: "starting", exit_code: null, command: "ACP chat" };
+            chats[id] = { info, log: [] };
+            setTimeout(() => {
+              setc(id, { state: "ready", agent: "Codex", session: "ses_01chat", cwd: "/repo" });
+              say(id, { t: "user", text: { context: "Work on task T-1 \"Add rate limiting\"..." } });
+              upd(id, { sessionUpdate: "plan", entries: [{ content: "Read the limiter", status: "completed" }, { content: "Add a test for 429", status: "in_progress" }, { content: "Run the tests", status: "pending" }] });
+              upd(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "I read the task through Evyro. " } });
+              upd(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Next I add a test for the 429 path." } });
+              upd(id, { sessionUpdate: "tool_call", toolCallId: "c1", title: "Read src/limiter.rs", kind: "read", status: "completed", locations: [{ path: "/repo/src/limiter.rs" }] });
+              upd(id, { sessionUpdate: "tool_call", toolCallId: "c2", title: "Edit tests/limiter.rs", kind: "edit", status: "pending",
+                content: [{ type: "diff", path: "/repo/tests/limiter.rs", oldText: "#[test]\nfn allows() {}\n", newText: "#[test]\nfn allows() {}\n#[test]\nfn blocks_after_100() {}\n" }] });
+              say(id, { t: "permission", request: 7, params: { sessionId: "s", toolCall: { toolCallId: "c2", title: "Edit tests/limiter.rs", kind: "edit" },
+                options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }, { optionId: "always", name: "Always allow", kind: "allow_always" }, { optionId: "reject", name: "Reject", kind: "reject_once" }] } });
+            }, 60);
+            return JSON.parse(JSON.stringify(info));
+          }
+          if (cmd === "chat_permission") {
+            const id = args.id;
+            setTimeout(() => {
+              say(id, { t: "permission_answer", request: args.request, option: args.optionId });
+              upd(id, { sessionUpdate: "tool_call_update", toolCallId: "c2", status: "completed" });
+              say(id, { t: "file", op: "write", path: "tests/limiter.rs", bytes: 64 });
+              upd(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Added blocks_after_100." } });
+              say(id, { t: "turn_end", reason: "end_turn" });
+              setc(id, { busy: false });
+            }, 30);
+            return null;
+          }
+          if (cmd === "chat_send") {
+            const id = args.id;
+            setTimeout(() => {
+              say(id, { t: "user", text: args.text });
+              setc(id, { busy: true });
+              upd(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "You said: " + args.text } });
+              say(id, { t: "turn_end", reason: "end_turn" });
+              setc(id, { busy: false });
+            }, 30);
+            return null;
+          }
+          if (cmd === "chat_cancel") return null;
+          if (cmd === "chat_close") { delete chats[args.id]; return null; }
           throw { code: "not_mocked", message: `no fixture for ${cmd}` };
         },
       },
@@ -146,7 +198,7 @@ const FIX = {
 
   const step = async (name, fn) => {
     try { await fn(); console.log("PASS  " + name); }
-    catch (e) { errors.push(`${name}: ${e.message.split("\n")[0]}`); console.log("FAIL  " + name); }
+    catch (e) { errors.push(`${name}: ${e.message.split("\n").slice(0, process.env.SMOKE_DEBUG ? 4 : 1).join(" / ")}`); console.log("FAIL  " + name); }
   };
   const tab = (v) => page.click(`.tab[data-view="${v}"]`);
 
@@ -214,6 +266,32 @@ const FIX = {
     await page.waitForSelector(".rv-comment.sent");
     await page.click(".rv-comment >> text=Resolve");
     await page.waitForSelector(".rv-comment", { state: "detached" });
+  });
+  await step("chat thread over ACP: plan, permission, diff, reply", async () => {
+    await tab("threads");
+    await page.click("text=+ Chat");
+    await page.waitForSelector(".modal >> text=Ready:");
+    await page.selectOption(".modal select >> nth=1", "T-1");
+    await page.click(".modal .btn.primary");
+    await page.waitForSelector(".chat-perm.open >> text=Edit tests/limiter.rs");
+    await page.waitForSelector(".chat-plan >> text=Add a test for 429");
+    await page.waitForSelector(".chat-diff >> text=+ fn blocks_after_100() {}");
+    await page.waitForSelector(".thread-item >> text=needs you");
+    await page.click(".chat-perm.open >> text=Allow");
+    await page.waitForSelector(".chat-perm >> text=You chose: Allow");
+    await page.waitForSelector(".chat-tool.completed >> text=Edit tests/limiter.rs");
+    await page.waitForSelector(".chat-note >> text=Wrote tests/limiter.rs");
+    await page.waitForSelector(".thread-item >> text=your turn");
+    await page.fill("#chat-input", "thanks");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".chat-msg.agent >> text=You said: thanks");
+    await tab("overview");
+    await tab("threads");
+    await page.click(".thread-item >> text=chat");
+    await page.waitForSelector(".chat-msg.agent >> text=You said: thanks");
+    await page.click("text=End chat");
+    await page.click(".modal >> text=Stop it");
+    await page.waitForFunction(() => !document.querySelector(".chat"));
   });
   await step("settings", async () => { await tab("settings"); await page.waitForSelector("text=Doctor"); });
   await step("command palette filters and runs", async () => {

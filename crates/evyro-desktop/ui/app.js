@@ -962,6 +962,7 @@ async function paletteActions() {
     acts.push({ label: "New handoff", run: () => handoffDialog(null) });
     acts.push({ label: "New agent thread", run: () => { setTab("threads"); newThreadDialog(); } });
     acts.push({ label: "New shell thread", run: () => startThread({ kind: "shell" }) });
+    acts.push({ label: "New chat with an AI (ACP)", run: () => { setTab("threads"); newChatDialog(); } });
     acts.push({ label: "Copy context for an agent", run: () => copyContext(null) });
     acts.push({ label: "Add an AI target", run: () => { setTab("agents"); addTargetDialog(); } });
     try {
@@ -1021,6 +1022,8 @@ document.addEventListener("DOMContentLoaded", () => {
     window.__TAURI__.event.listen("evyro-events", (ev) => onLiveEvents(ev.payload || []));
     window.__TAURI__.event.listen("term-output", (ev) => threadOutput(ev.payload));
     window.__TAURI__.event.listen("term-exit", (ev) => threadExit(ev.payload));
+    window.__TAURI__.event.listen("chat-event", (ev) => chatEvent(ev.payload));
+    window.__TAURI__.event.listen("chat-state", (ev) => chatState(ev.payload));
   }
   invoke("app_info").then((a) => { $("#side-foot").textContent = `v${a.version} · local only`; }).catch(() => {});
   loadProjects();

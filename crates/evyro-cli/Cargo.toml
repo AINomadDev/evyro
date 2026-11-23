@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 evyro-core = { path = "../evyro-core" }
 evyro-mcp = { path = "../evyro-mcp" }
+evyro-acp = { path = "../evyro-acp" }
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

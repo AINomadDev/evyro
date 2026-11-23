@@ -1370,3 +1370,183 @@ fn review_comments_reach_the_next_agent() {
         .unwrap();
     assert_eq!(resolved["id"], c["id"]);
 }
+
+/// ACP chat: `evyro chat` runs a stand-in ACP agent under an Evyro session.
+/// The agent reads the task through Evyro's MCP server, Evyro answers its
+/// file requests inside the project only, tool calls follow --approve, a
+/// pending handoff is picked up, and the chat ends with a checkpoint.
+#[test]
+fn acp_chat_runs_under_an_evyro_session() {
+    let mut env = Env::new();
+    let repo = env.repo("acp");
+    std::fs::write(repo.join("README.md"), "# Calculator\n").unwrap();
+    std::fs::write(
+        repo.join(".env"),
+        "TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789AB\n",
+    )
+    .unwrap();
+    env.init(&repo);
+    env.ok(
+        &repo,
+        &[
+            "task",
+            "add",
+            "Write release notes",
+            "--accept",
+            "notes exist",
+            "--ready",
+        ],
+    );
+    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("../evyro-acp/tests/fake_acp_agent.py");
+    let log = repo.join(".agent-acp.log");
+    let chat = |args: &[&str], input: &str| -> Output {
+        use std::io::Write;
+        let mut c = env
+            .cmd(&repo, args)
+            .env("EVYRO_ACP_BIN_CODEX", &fake)
+            .env("FAKE_ACP_LOG", &log)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        c.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        c.wait_with_output().unwrap()
+    };
+
+    // The listing sees the override.
+    let list = env.json(&repo, &["chat", "--list"]);
+    assert!(list
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|a| a["harness"] == "gemini" && a["command"].is_null()));
+
+    // Two turns: the first message is Evyro's task prompt, the second asks to write.
+    let o = chat(
+        &[
+            "chat",
+            "--to",
+            "codex",
+            "--task",
+            "T-1",
+            "--approve",
+            "all",
+            "start please",
+        ],
+        "now write the notes\n",
+    );
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        o.status.success(),
+        "{out}\n{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert!(
+        out.contains("Evyro says the task is: Write release notes"),
+        "MCP server reached the agent: {out}"
+    );
+    assert!(out.contains("README starts with: # Calculator"), "{out}");
+    assert!(out.contains("Reading .env was refused"), "{out}");
+    assert!(
+        out.contains("Reading outside the project was refused"),
+        "{out}"
+    );
+    assert!(!out.contains("ghp_"), "{out}");
+    assert_eq!(read(&repo.join("notes.txt")), "written by the fake agent\n");
+    let agent_log = read(&log);
+    assert!(
+        agent_log.contains("Work on task T-1"),
+        "first message carries the task: {agent_log}"
+    );
+    assert!(!agent_log.contains("PROTOCOL ERROR"), "{agent_log}");
+    let ses = env.json(&repo, &["sessions"]);
+    assert_eq!(ses[0]["harness"], "codex");
+    assert_eq!(ses[0]["status"], "completed");
+    assert_eq!(ses[0]["exit_reason"], "chat_closed");
+    let show = env.json(&repo, &["task", "show", "T-1"]);
+    let cps = serde_json::to_string(&show["checkpoints"]).unwrap();
+    assert!(cps.contains("Edited notes.txt"), "{cps}");
+
+    // --approve none: the edit is refused and nothing is written. JSON events.
+    std::fs::remove_file(repo.join("notes.txt")).unwrap();
+    let o = chat(
+        &[
+            "--json",
+            "chat",
+            "--to",
+            "codex",
+            "--task",
+            "T-1",
+            "--approve",
+            "none",
+            "write it",
+        ],
+        "",
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(!repo.join("notes.txt").exists());
+    let lines: Vec<Value> = String::from_utf8_lossy(&o.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert!(lines.iter().any(|l| l["event"] == "permission"));
+    assert!(lines.iter().any(|l| l["event"] == "update"
+        && l["update"]["sessionUpdate"] == "tool_call_update"
+        && l["update"]["status"] == "failed"));
+    assert_eq!(lines.last().unwrap()["event"], "done");
+    assert_eq!(lines.last().unwrap()["turns"], 1);
+
+    // A handoff to codex is picked up by the chat.
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "claude-code"]);
+    env.ok(
+        &repo,
+        &[
+            "checkpoint",
+            "--done",
+            "outline",
+            "--next",
+            "write the notes",
+        ],
+    );
+    let h = env.json(&repo, &["handoff", "--to", "codex", "--task", "T-1"]);
+    let o = chat(
+        &[
+            "chat",
+            "--to",
+            "codex",
+            "--approve",
+            "all",
+            "--accept-drift",
+        ],
+        "",
+    );
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let hs = env.json(&repo, &["handoffs"]);
+    let this = hs
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|x| x["id"] == h["record"]["id"])
+        .unwrap();
+    assert_eq!(this["status"], "accepted", "{this}");
+    assert!(
+        read(&log).contains("You are continuing task T-1"),
+        "resume prompt sent: {}",
+        read(&log)
+    );
+
+    // An agent with no ACP command: refused before any state changes.
+    let before = env.json(&repo, &["sessions"]).as_array().unwrap().len();
+    let o = chat(&["chat", "--to", "gemini", "--task", "T-1"], "");
+    assert!(!o.status.success());
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("install"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    assert_eq!(
+        env.json(&repo, &["sessions"]).as_array().unwrap().len(),
+        before
+    );
+}

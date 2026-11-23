@@ -18,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 evyro-core = { path = "../evyro-core" }
 evyro-term = { path = "../evyro-term" }
+evyro-acp = { path = "../evyro-acp" }
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"

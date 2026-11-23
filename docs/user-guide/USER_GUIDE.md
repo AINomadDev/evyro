@@ -328,6 +328,20 @@ evyro export --out my-app.json   # one project, redacted, portable
 evyro import my-app.json         # on the other machine (--root to point at the repo)
 ```
 
+### 4.9 Chat with an agent instead of a terminal
+
+Agents that speak ACP (Agent Client Protocol) can run as a **chat**: you see the agent's reply, its plan and each tool call, and the agent asks you before it edits a file or runs a command. It is still an Evyro session, so the task, checkpoints and handoffs work as usual, and the agent gets Evyro's MCP tools.
+
+```bash
+evyro chat --list                       # which agents can chat on this machine
+evyro chat --to codex --task T-1        # type messages; an empty line ends the chat
+evyro chat --to claude-code --approve reads "Start with the failing test"
+```
+
+`--approve` decides what runs without asking: `ask` (the default), `reads` (reading and searching only), `all` or `none`. In the desktop app, **+ Chat** on the Threads screen starts one; permission requests appear as buttons in the conversation.
+
+Each agent needs its ACP side installed once, for example `npm install -g @agentclientprotocol/claude-agent-acp` for Claude Code or `npm install -g @agentclientprotocol/codex-acp` for Codex. `evyro chat --list` prints the command for each. Evyro shares only files inside the project with a chat agent, never `.env` or keys. See [ACP](../protocols/ACP.md) for the details.
+
 ---
 
 ## Part 5. Desktop app
@@ -338,7 +352,7 @@ The app shows the same data as the CLI. See the [Desktop guide](DESKTOP.md) for 
 |---|---|
 | **AI targets** | Every target grouped by kind with status and next step. **+ Add target** opens a form for agents, API keys (variable name or Keychain item), IDEs and chat apps. **Switch to** hands the work over. |
 | **Handoffs** | Open a handoff, pick any AI under **Continue with**, then **Start with this AI**. Coding agents start in a thread inside the window; IDEs and chat apps open with the text on your clipboard. **Accept only** starts the session and copies the prompt, and you start the AI yourself. |
-| **Threads** | Every agent you started from the app, each in its own terminal. Type into it as in any terminal. **+ Agent** starts another AI on a task, **+ Shell** opens a shell in the repo, **Hand off** passes a running agent's task on. |
+| **Threads** | Every agent you started from the app, each in its own terminal, or as a chat (**+ Chat**, for agents that speak ACP) where you approve each tool call. Type into it as in any terminal. **+ Agent** starts another AI on a task, **+ Shell** opens a shell in the repo, **Hand off** passes a running agent's task on. |
 | **Overview** and **Tasks** | **Hand off** on any task writes a handoff to the AI you pick. |
 
 If the task still belongs to another AI, **Switch to** opens the handoff form instead, so nothing is taken over silently.
@@ -393,6 +407,7 @@ If the task still belongs to another AI, **Switch to** opens the handoff form in
 | Fix stale sessions | `evyro recover` |
 | Comment on a change | `evyro review comment <path>:<line> "..."` |
 | Send review comments | `evyro review prompt --mark-sent` |
+| Chat with an agent | `evyro chat --to <agent> --task T-1` |
 | Health check | `evyro doctor` |
 
 Full reference: [CLI reference](CLI_REFERENCE.md).
