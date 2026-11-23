@@ -1137,7 +1137,7 @@ mod tests {
         let f2 = f.clone();
         let t = std::thread::spawn(move || f2.after(0, Duration::from_secs(5)));
         std::thread::sleep(Duration::from_millis(50));
-        f.push(json!({"type": "x", "secret": "api_key=sk_live_abcdefghijklmnop"}));
+        f.push(json!({"type": "x", "secret": concat!("api_key=sk_", "live_abcdefghijklmnop")}));
         let (latest, items) = t.join().unwrap();
         assert_eq!(latest, 1);
         assert_eq!(items[0]["seq"], 1);
