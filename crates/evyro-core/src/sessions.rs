@@ -116,6 +116,8 @@ pub struct Session {
     pub provider: Option<String>,
     pub worktree: Option<String>,
     pub pid: Option<i64>,
+    /// When the process with `pid` started (Unix seconds), if known.
+    pub pid_started: Option<i64>,
     pub status: SessionStatus,
     pub started_at: String,
     pub ended_at: Option<String>,
@@ -144,7 +146,7 @@ pub struct Lease {
     pub acquired_at: String,
 }
 
-const SESSION_COLS: &str = "id, project_id, task_id, harness, model, provider, worktree, pid, status, started_at, ended_at, exit_reason, last_event_at, latest_checkpoint_id, handoff_id";
+const SESSION_COLS: &str = "id, project_id, task_id, harness, model, provider, worktree, pid, status, started_at, ended_at, exit_reason, last_event_at, latest_checkpoint_id, handoff_id, pid_started";
 
 fn row_to_session(r: &rusqlite::Row) -> rusqlite::Result<Session> {
     let st: String = r.get(8)?;
@@ -164,7 +166,78 @@ fn row_to_session(r: &rusqlite::Row) -> rusqlite::Result<Session> {
         last_event_at: r.get(12)?,
         latest_checkpoint_id: r.get(13)?,
         handoff_id: r.get(14)?,
+        pid_started: r.get(15)?,
     })
+}
+
+/// When process `pid` started, in Unix seconds (to about a second), or `None`
+/// when there is no such process or the system will not say.
+pub fn process_start_time(pid: i64) -> Option<i64> {
+    if pid <= 0 {
+        return None;
+    }
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    #[cfg(unix)]
+    {
+        // `etime` is [[dd-]hh:]mm:ss on both Linux and macOS.
+        let out = std::process::Command::new("ps")
+            .args(["-o", "etime=", "-p", &pid.to_string()])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let elapsed = parse_etime(String::from_utf8_lossy(&out.stdout).trim())?;
+        Some(now - elapsed)
+    }
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "[DateTimeOffset]::new((Get-Process -Id {pid} -ErrorAction Stop).StartTime).ToUnixTimeSeconds()"
+        );
+        let out = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let _ = now;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+    }
+}
+
+/// Parse `ps -o etime` output: `[[dd-]hh:]mm:ss`.
+fn parse_etime(s: &str) -> Option<i64> {
+    let (days, rest) = match s.split_once('-') {
+        Some((d, r)) => (d.parse::<i64>().ok()?, r),
+        None => (0, s),
+    };
+    let parts: Vec<i64> = rest
+        .split(':')
+        .map(|p| p.parse::<i64>().ok())
+        .collect::<Option<_>>()?;
+    let (h, m, sec) = match parts.as_slice() {
+        [m, s] => (0, *m, *s),
+        [h, m, s] => (*h, *m, *s),
+        _ => return None,
+    };
+    Some(((days * 24 + h) * 60 + m) * 60 + sec)
+}
+
+/// A recorded process is still the one Evyro started: it exists and, when
+/// its start time was recorded, started at that time. A pid reused by an
+/// unrelated process after the agent exited does not count.
+pub fn session_process_alive(pid: i64, recorded_start: Option<i64>) -> bool {
+    if !pid_alive(pid) {
+        return false;
+    }
+    match (recorded_start, process_start_time(pid)) {
+        (Some(want), Some(got)) => (want - got).abs() <= 3,
+        _ => true,
+    }
 }
 
 /// Best-effort liveness check for a recorded process id.
@@ -226,9 +299,15 @@ impl Store {
             }
         }
         self.conn.execute(
-            &format!("INSERT INTO sessions({SESSION_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'running',?9,NULL,NULL,?9,NULL,?10)"),
+            &format!("INSERT INTO sessions({SESSION_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'running',?9,NULL,NULL,?9,NULL,?10,NULL)"),
             rusqlite::params![id, project_id, s.task_id, s.harness, s.model, s.provider, s.worktree, s.pid, now, s.handoff_id],
         )?;
+        if let Some(pid) = s.pid {
+            self.conn.execute(
+                "UPDATE sessions SET pid_started = ?1 WHERE id = ?2",
+                rusqlite::params![process_start_time(pid), id],
+            )?;
+        }
         if let Some(tid) = &s.task_id {
             self.conn.execute(
                 "INSERT OR REPLACE INTO leases(task_id, session_id, harness, acquired_at) VALUES (?1,?2,?3,?4)",
@@ -323,8 +402,8 @@ impl Store {
 
     pub fn set_session_pid(&self, id: &str, pid: Option<i64>) -> Result<()> {
         self.conn.execute(
-            "UPDATE sessions SET pid = ?1 WHERE id = ?2",
-            rusqlite::params![pid, id],
+            "UPDATE sessions SET pid = ?1, pid_started = ?2 WHERE id = ?3",
+            rusqlite::params![pid, pid.and_then(process_start_time), id],
         )?;
         Ok(())
     }
@@ -356,10 +435,43 @@ impl Store {
             .list_sessions(project_id, true)?
             .into_iter()
             .filter(|s| match s.pid {
-                Some(pid) => !pid_alive(pid),
+                Some(pid) => !session_process_alive(pid, s.pid_started),
                 None => include_unknown,
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod liveness_tests {
+    use super::*;
+    #[test]
+    fn etime_formats() {
+        assert_eq!(parse_etime("00:07"), Some(7));
+        assert_eq!(parse_etime("12:34"), Some(754));
+        assert_eq!(parse_etime("01:00:00"), Some(3600));
+        assert_eq!(
+            parse_etime("2-03:04:05"),
+            Some(2 * 86400 + 3 * 3600 + 4 * 60 + 5)
+        );
+        assert_eq!(parse_etime(""), None);
+        assert_eq!(parse_etime("x:y"), None);
+    }
+    #[test]
+    fn this_process_is_alive_and_a_reused_pid_is_not() {
+        let me = std::process::id() as i64;
+        let started = process_start_time(me).expect("start time of this process");
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        assert!(
+            started <= now && now - started < 3600,
+            "started {started}, now {now}"
+        );
+        assert!(session_process_alive(me, Some(started)));
+        assert!(session_process_alive(me, None));
+        // Same pid, but recorded for a process that started an hour earlier:
+        // that is a different process that happened to get the same pid.
+        assert!(!session_process_alive(me, Some(started - 3600)));
+        assert!(!session_process_alive(-1, None));
     }
 }
 

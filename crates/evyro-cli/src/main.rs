@@ -244,6 +244,13 @@ enum Cmd {
     Completions { shell: clap_complete::Shell },
     /// Version information.
     Version,
+    /// Write a bug report: versions, system, doctor checks and recent crash
+    /// logs, with secrets redacted. Read it before you share it.
+    BugReport {
+        /// Write to this file instead of printing.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Args)]
@@ -740,6 +747,7 @@ fn quiet_on_broken_pipe() {
 }
 
 fn main() {
+    evyro_core::crash::install_panic_hook("evyro");
     quiet_on_broken_pipe();
     let cli = Cli::parse();
     let o = Out {
@@ -819,6 +827,27 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
     if let Cmd::Version = &cli.cmd {
         o.print(&json!({"name": brand::CLI_NAME, "version": brand::VERSION, "schema_version": evyro_core::db::SCHEMA_VERSION, "contract_schema": evyro_core::contract::SCHEMA_VERSION, "os": std::env::consts::OS, "arch": std::env::consts::ARCH}),
             || format!("{} {} (db schema v{}, contract {})", brand::CLI_NAME, brand::VERSION, evyro_core::db::SCHEMA_VERSION, evyro_core::contract::SCHEMA_VERSION));
+        return Ok(0);
+    }
+    if let Cmd::BugReport { out } = &cli.cmd {
+        // Works even when the database cannot be opened.
+        let (store, err) = match Store::open_default() {
+            Ok(s) => (Some(s), None),
+            Err(e) => (None, Some(e.to_string())),
+        };
+        let report = evyro_core::crash::bug_report(store.as_ref(), err.as_deref(), &dir);
+        match out {
+            Some(p) => {
+                std::fs::write(p, &report)?;
+                if !o.quiet {
+                    eprintln!(
+                        "Bug report written to {}. Read it before you share it.",
+                        p.display()
+                    );
+                }
+            }
+            None => print!("{report}"),
+        }
         return Ok(0);
     }
     if let Cmd::Restore { file, yes } = &cli.cmd {
@@ -2262,7 +2291,9 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 )
             });
         }
-        Cmd::Completions { .. } | Cmd::Version | Cmd::Restore { .. } => unreachable!(),
+        Cmd::Completions { .. } | Cmd::Version | Cmd::Restore { .. } | Cmd::BugReport { .. } => {
+            unreachable!()
+        }
     }
     Ok(0)
 }
