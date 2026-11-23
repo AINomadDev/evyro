@@ -10,10 +10,11 @@
   <img alt="macOS, Windows, Linux" src="https://img.shields.io/badge/macOS%20%C2%B7%20Windows%20%C2%B7%20Linux-4F46E5">
   <img alt="Local-first" src="https://img.shields.io/badge/local--first-no%20account-22D3EE">
   <img alt="License" src="https://img.shields.io/badge/license-MIT%20%2F%20Apache--2.0-1B1D24">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.1.0-8B85FF">
+  <a href="https://github.com/AINomadDev/evyro/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/AINomadDev/evyro?include_prereleases&label=release&color=8B85FF"></a>
 </p>
 
 <p align="center">
+  <a href="#download"><b>Download</b></a> ·
   <a href="docs/user-guide/USER_GUIDE.md"><b>User guide</b></a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#how-evyro-is-different">How it is different</a> ·
@@ -33,6 +34,27 @@ Your AI hits a usage limit halfway through a feature. A different AI would be fa
     <img alt="Evyro desktop app: overview of the active task, repository and health" src="docs/assets/screen-overview-light.png" width="88%">
   </picture>
 </p>
+
+## Download
+
+<p align="center">
+  <a href="https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_universal.dmg"><img alt="Download for macOS" src="https://img.shields.io/badge/macOS-Download%20.dmg-1B1D24?style=for-the-badge&logo=apple&logoColor=white"></a>
+  <a href="https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_x64-setup.exe"><img alt="Download for Windows" src="https://img.shields.io/badge/Windows-Download%20.exe-4F46E5?style=for-the-badge&logo=windows&logoColor=white"></a>
+  <a href="https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_amd64.AppImage"><img alt="Download for Linux" src="https://img.shields.io/badge/Linux-Download%20AppImage-22D3EE?style=for-the-badge&logo=linux&logoColor=black"></a>
+</p>
+
+<p align="center"><sub>Version 0.2.0-rc.1 (pre-release) · <a href="https://github.com/AINomadDev/evyro/releases">All releases and release notes</a></sub></p>
+
+| System | Desktop app | Command line (`evyro`) |
+|---|---|---|
+| macOS (Apple Silicon and Intel) | [`Evyro_0.2.0-rc.1_universal.dmg`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_universal.dmg) | [Apple Silicon](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-aarch64-apple-darwin.tar.gz) · [Intel](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-x86_64-apple-darwin.tar.gz) |
+| Windows 10 and 11 (x64) | [`Evyro_0.2.0-rc.1_x64-setup.exe`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_x64-setup.exe) | [x64 `.zip`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-x86_64-pc-windows-msvc.zip) |
+| Linux (x64) | [`.AppImage`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_amd64.AppImage) · [`.deb`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_amd64.deb) | [x64](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-x86_64-unknown-linux-gnu.tar.gz) |
+| Linux (ARM64) | — | [ARM64](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-aarch64-unknown-linux-gnu.tar.gz) |
+
+Check a download against [`SHA256SUMS`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/SHA256SUMS) (`shasum -a 256 -c SHA256SUMS --ignore-missing`). Each release also ships an SBOM ([`evyro-sbom.spdx.json`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-sbom.spdx.json)) and signed build provenance.
+
+> **First launch:** the apps are not code-signed yet. On macOS, right-click Evyro.app › **Open** the first time. On Windows, click **More info › Run anyway** in SmartScreen. See [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Features
 
@@ -90,16 +112,17 @@ Evyro is not another place to chat with an agent. It is the layer that remembers
 
 ## Install
 
-**Desktop app:** download the installer for your system from the [latest release](https://github.com/AINomadDev/evyro/releases/latest): a `.dmg` for macOS, a `-setup.exe` for Windows, or a `.deb` or `.AppImage` for Linux. See the [Desktop guide](docs/user-guide/DESKTOP.md).
+**Desktop app:** use the [Download](#download) links above, or pick a file from the [releases page](https://github.com/AINomadDev/evyro/releases). See the [Desktop guide](docs/user-guide/DESKTOP.md).
 
 **CLI only:**
 
 ```bash
+# While only a pre-release exists, name the version (drop EVYRO_VERSION once 0.2.0 is out)
 # macOS and Linux: installs to ~/.local/bin after checking the release checksum
-curl -fsSL https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.sh | EVYRO_VERSION=0.2.0-rc.1 sh
 
 # Windows (PowerShell)
-irm https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.ps1 | iex
+$env:EVYRO_VERSION = "0.2.0-rc.1"; irm https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.ps1 | iex
 
 # From source (Rust 1.80+ and git)
 cargo install --path crates/evyro-cli
