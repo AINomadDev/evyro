@@ -135,7 +135,7 @@ const targetKind = (name) => (state.targets || []).find((t) => t.target.name ===
 
 /**
  * Give work to a target. IDE and chat targets get the hand-over text on the
- * clipboard and the app opened; agents start in a Terminal window.
+ * clipboard and the app opened; agents start in a thread inside the window.
  * Returns true when done, false when drift stopped it (shown in `el`).
  */
 async function handTo(target, taskKey, el, acceptDrift = false, handoffId = null) {
@@ -162,6 +162,11 @@ async function handTo(target, taskKey, el, acceptDrift = false, handoffId = null
     render();
     return true;
   }
+  return startThread({ kind: "agent", target, task: taskKey || null, handoffId });
+}
+
+/** Start `evyro run --to <target>` in a separate Terminal window instead of a thread. */
+async function openInTerminal(target, taskKey, handoffId = null) {
   const r = await act(() => invoke("open_in_terminal", { projectId: state.project.id, target, task: taskKey || null, handoffId }));
   if (r.opened) toast(`Started ${target} in Terminal. It picks up the handoff there.`);
   else { await copy(r.command, "This computer has no Terminal hook. Command copied; run it in a terminal."); }
@@ -246,7 +251,7 @@ function render() {
       h("p", { class: "small" }, "Press ", h("kbd", null, MOD + " K"), " any time for every action. Projects you set up with ", h("code", null, "evyro init"), " appear here automatically.")));
     return;
   }
-  const views = { overview: viewOverview, tasks: viewTasks, changes: viewChanges, handoffs: viewHandoffs, sessions: viewSessions, knowledge: viewKnowledge, agents: viewAgents, settings: viewSettings };
+  const views = { overview: viewOverview, tasks: viewTasks, changes: viewChanges, threads: viewThreads, handoffs: viewHandoffs, sessions: viewSessions, knowledge: viewKnowledge, agents: viewAgents, settings: viewSettings };
   (views[state.view] || viewOverview)(v);
 }
 
@@ -989,13 +994,15 @@ async function updateLiveBadge() {
 
 // ---------- command palette ----------
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
-const TABS = [["overview", "Overview"], ["tasks", "Tasks"], ["changes", "Changes"], ["handoffs", "Handoffs"], ["sessions", "Sessions"], ["knowledge", "Decisions & memory"], ["agents", "AI targets"], ["settings", "Settings"]];
+const TABS = [["overview", "Overview"], ["tasks", "Tasks"], ["changes", "Changes"], ["threads", "Threads"], ["handoffs", "Handoffs"], ["sessions", "Sessions"], ["knowledge", "Decisions & memory"], ["agents", "AI targets"], ["settings", "Settings"]];
 async function paletteActions() {
   const acts = TABS.map(([v, l], i) => ({ label: `Go to ${l}`, hint: `${MOD} ${i + 1}`, run: () => setTab(v) }));
   acts.push({ label: "Add a project", run: addProjectDialog });
   if (state.project) {
     acts.push({ label: "New task", hint: `${MOD} N`, run: () => { setTab("tasks"); newTaskDialog(); } });
     acts.push({ label: "New handoff", run: () => handoffDialog(null) });
+    acts.push({ label: "New agent thread", run: () => { setTab("threads"); newThreadDialog(); } });
+    acts.push({ label: "New shell thread", run: () => startThread({ kind: "shell" }) });
     acts.push({ label: "Copy context for an agent", run: () => copyContext(null) });
     acts.push({ label: "Add an AI target", run: () => { setTab("agents"); addTargetDialog(); } });
     try {
@@ -1041,16 +1048,20 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#add-project-btn").addEventListener("click", addProjectDialog);
   $("#drawer-close").addEventListener("click", closeDrawer);
   document.addEventListener("keydown", (e) => {
+    // Inside a terminal, Ctrl keys belong to the program (Ctrl+K, Ctrl+N...); only ⌘ shortcuts stay global.
+    if (e.target.closest && e.target.closest(".xterm") && !e.metaKey) return;
     const mod = e.metaKey || e.ctrlKey;
     if (e.key === "Escape") { if ($("#palette-root").firstChild) clear($("#palette-root")); else if ($("#modal-root").firstChild) clear($("#modal-root")); else closeDrawer(); return; }
     if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
-    if (mod && /^[1-8]$/.test(e.key)) { e.preventDefault(); setTab(TABS[Number(e.key) - 1][0]); return; }
+    if (mod && /^[1-9]$/.test(e.key)) { e.preventDefault(); setTab(TABS[Number(e.key) - 1][0]); return; }
     if (mod && e.key.toLowerCase() === "n" && state.project) { e.preventDefault(); setTab("tasks"); newTaskDialog(); }
   });
   $("#palette-btn").addEventListener("click", openPalette);
   $("#palette-btn").textContent = `${MOD} K`;
   if (window.__TAURI__ && window.__TAURI__.event) {
     window.__TAURI__.event.listen("evyro-events", (ev) => onLiveEvents(ev.payload || []));
+    window.__TAURI__.event.listen("term-output", (ev) => threadOutput(ev.payload));
+    window.__TAURI__.event.listen("term-exit", (ev) => threadExit(ev.payload));
   }
   invoke("app_info").then((a) => { $("#side-foot").textContent = `v${a.version} · local only`; }).catch(() => {});
   loadProjects();

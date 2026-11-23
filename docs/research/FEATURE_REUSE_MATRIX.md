@@ -9,7 +9,7 @@
 | Agent launch argv | Implement compatible functionality | px0 `agent.go` dispatch patterns, agent docs | Implemented (documented, not run against real installs here) |
 | MCP server | Use existing protocol | MCP spec 2025-11-25; `rmcp` evaluated | Implemented (stdio) |
 | ACP | Use existing protocol (later) | T3 Code `effect-acp`, Goose | Not implemented |
-| Agent threads, model switching UI | Integrate existing tool | T3 Code | Planned integration (MCP) |
+| Agent threads, model switching UI | Implement compatible functionality | T3 Code (threads), `portable-pty` + xterm.js | Implemented: agent and shell threads in the desktop app, each running `evyro run` in a PTY |
 | Review workbench, PR review | Integrate existing tool | px0 | Planned (launch `px0 <worktree>`) |
 | Fuzzy / regex search, symbols | Study architectural ideas | px0 `internal/fuzzy`, `internal/symbols`; tree-sitter | Not implemented |
 | Symbol-level retrieval | Integrate existing tool | Serena as optional MCP server | Not implemented |

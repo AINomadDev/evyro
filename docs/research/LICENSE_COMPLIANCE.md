@@ -15,6 +15,8 @@ No source code from any researched repository is copied into Evyro. Ideas taken 
 | rusqlite (+ bundled SQLite) | MIT (SQLite: public domain) | Storage, FTS5 |
 | serde, serde_json, toml | MIT OR Apache-2.0 | Serialization |
 | clap, clap_complete | MIT OR Apache-2.0 | CLI |
+| portable-pty | MIT | Pseudo-terminals for agent threads (`evyro-term`) |
+| @xterm/xterm 5.5.0, @xterm/addon-fit 0.10.0 (vendored in `crates/evyro-desktop/ui/vendor/xterm/`, license included) | MIT | Terminal view in the desktop app |
 | sha2, hmac | MIT OR Apache-2.0 | Hashing, contract integrity |
 | uuid | MIT OR Apache-2.0 | IDs |
 | time | MIT OR Apache-2.0 | Timestamps |

@@ -321,7 +321,8 @@ The app shows the same data as the CLI. See the [Desktop guide](DESKTOP.md) for 
 | Where | What to do |
 |---|---|
 | **AI targets** | Every target grouped by kind with status and next step. **+ Add target** opens a form for agents, API keys (variable name or Keychain item), IDEs and chat apps. **Switch to** hands the work over. |
-| **Handoffs** | Open a handoff, pick any AI under **Continue with**, then **Start with this AI**. Coding agents open in a new Terminal window; IDEs and chat apps open with the text on your clipboard. **Accept only** starts the session and copies the prompt, and you start the AI yourself. |
+| **Handoffs** | Open a handoff, pick any AI under **Continue with**, then **Start with this AI**. Coding agents start in a thread inside the window; IDEs and chat apps open with the text on your clipboard. **Accept only** starts the session and copies the prompt, and you start the AI yourself. |
+| **Threads** | Every agent you started from the app, each in its own terminal. Type into it as in any terminal. **+ Agent** starts another AI on a task, **+ Shell** opens a shell in the repo, **Hand off** passes a running agent's task on. |
 | **Overview** and **Tasks** | **Hand off** on any task writes a handoff to the AI you pick. |
 
 If the task still belongs to another AI, **Switch to** opens the handoff form instead, so nothing is taken over silently.
