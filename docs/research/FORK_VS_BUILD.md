@@ -2,19 +2,19 @@
 
 ## Weighted evaluation
 
-Scores are 1 to 5. The basis for each score is in the notes below the table. Strategy E's column scores Evyro as built on 2026-11-23, after the parity work (agent threads, review workbench, code search, ACP chat, skills, remote access). A score was raised only where the evidence in [Re-score, 2026-11-23](#re-score-2026-11-23) supports it.
+Scores are 1 to 5. The basis for each score is in the notes below the table. Strategy E's column scores Evyro as built on 2026-11-23, after the parity work (agent threads, review workbench, code search, ACP chat, skills, remote access). A score was raised only where the evidence in the re-scores below supports it. The latest is [Second re-score](#second-re-score-2026-11-23).
 
 | Criterion (weight) | A: Fork T3 Code | B: Fork px0 | C: Fork Paradev | D: Independent core + new shell | E: Independent core + integrate existing frontends |
 |---|---:|---:|---:|---:|---:|
 | Agent interoperability (20%) | 5 | 3 | 4 | 4 | 5 |
 | Continuity and state reliability (20%) | 3 | 1 | 2 | 5 | 5 |
 | Architecture and extensibility (15%) | 4 | 3 | 3 | 5 | 5 |
-| Cross-platform feasibility (10%) | 5 | 4 | 4 | 4 | 4 |
+| Cross-platform feasibility (10%) | 5 | 4 | 4 | 4 | 5 |
 | License and maintenance (10%) | 3 | 4 | 3 | 5 | 5 |
 | Performance and resources (10%) | 4 | 5 | 3 | 5 | 5 |
 | UI and developer experience (10%) | 5 | 4 | 4 | 2 | 5 |
 | Testing and release quality (5%) | 4 | 3 | 3 | 4 | 4 |
-| **Weighted total** | **4.10** | **3.10** | **3.20** | **4.35** | **4.85** |
+| **Weighted total** | **4.10** | **3.10** | **3.20** | **4.35** | **4.95** |
 
 ## Basis
 
@@ -47,3 +47,24 @@ Goal: 5 on every criterion for Strategy E, with evidence. Each row says what the
 
 Result: Strategy E goes from 4.75 to **4.85**. Two criteria are still at 4, cross-platform and testing/release. Neither can honestly reach 5 from code alone: they need a Windows machine, code-signing certificates, and real-agent runs.
 
+
+## Second re-score, 2026-11-23
+
+This round rests on PRs #10 (Windows scenario tests), #11 (release checks and accessibility) and #12 (fixes from the first real-agent runs). The scores assume those three are merged.
+
+| Criterion | Before | Now | New evidence | Missing for 5 |
+|---|---:|---:|---|---|
+| Cross-platform feasibility | 4 | **5** | The end-to-end scenario tests now run on Windows too, with the agents launched through `.cmd` shims the way npm installs them there. That found and fixed a real bug: Windows refused prompts with line breaks for npm-installed agents. In CI, every installer is installed and started on its own system: the .deb and AppImage on Ubuntu, the .dmg on macOS, and the silent NSIS setup on Windows. The .dmg was also installed and opened on a real Mac | Not a gap for the score, but not proven yet: a person using Evyro on a Windows machine |
+| Testing and release quality | 4 | 4 | CI is running again and green on all three systems. `cargo-deny` checks advisories, licenses and sources on every PR. Release builds carry an SBOM and signed build provenance (GitHub attestations, checkable with `gh attestation verify`). Installers are installed and started in CI. The first real-agent runs on a Mac found 5 launch bugs, which are fixed in PR #12. The real Codex CLI finished a task across two sessions and a handoff, and its verification passed | Code-signed and notarized installers, which need an Apple Developer ID and a Windows signing certificate. A real Claude Code run, after the usage reset on 2026-12-01 |
+
+Result: Strategy E goes from 4.85 to **4.95**. Only testing and release is still at 4. It needs signing certificates and a real Claude run, and neither can come from code.
+
+## New criteria (unweighted)
+
+These were added on 2026-11-23. They score Strategy E only and are kept out of the weighted total, so earlier totals stay comparable.
+
+| Criterion | Score | Evidence | Missing for 5 |
+|---|---:|---|---|
+| Security and privacy | 4 | Local-first, with no network calls and no account. Evyro never stores keys: it keeps only env var or Keychain item names. Secrets are redacted from contracts, context, exports, MCP output, search results and logs, and sensitive files are kept out. Agents launch with explicit argv, never a shell. Headless agents get narrow permissions (Claude Code may edit and run `evyro`; Codex may write inside the workspace only). Remote access pairs with one-time codes, stores tokens only as hashes, and has scopes, a rate limit and an audit log. CI audits dependencies, and releases carry an SBOM and signed provenance. [THREAT_MODEL.md](../THREAT_MODEL.md) lists the assets, what is not trusted, each threat with its mitigation and test, and what is left to the person | Private vulnerability reporting, which SECURITY.md points to, is off on the repository, and so are secret scanning and Dependabot alerts. No outside review. Redaction is pattern-based |
+| Docs and onboarding | **5** | A README with a quick start and a five-minute tour, a user guide, a full CLI reference, a desktop guide, and guides for remote access, skills, ACP and agent compatibility. `evyro doctor` explains what is wrong and how to fix it, and now reports a broken project.toml. The desktop app has a first-run setup, covered by the UI smoke test. A test checks that the CLI reference shows the real `--help` of every command, and that every command has a section; it found 4 out-of-date blocks and 19 missing commands, now fixed. CONTRIBUTING covers set-up, checks, layout and rules | Not a gap for the score, but not proven yet: a new user following the quick start |
+| Accessibility | 4 | axe-core checks WCAG 2.1 A and AA on all 10 screens in light and dark themes, on three systems, and CI fails on any serious or critical problem. Contrast was fixed for text, buttons and the terminal (minimum contrast 4.5). Every screen can be reached from the command palette and keyboard shortcuts | No hand test with a screen reader (VoiceOver, NVDA). No recorded keyboard-only run. axe problems rated moderate or minor do not fail CI |
