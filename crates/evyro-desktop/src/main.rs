@@ -864,6 +864,7 @@ fn adopt_login_path() {
 }
 
 fn main() {
+    evyro_core::crash::install_panic_hook("Evyro desktop");
     adopt_login_path();
     let terms: threads::Terms = std::sync::Arc::new(evyro_term::Terminals::new());
     let chats: chat::Chats = chat::new_chats();

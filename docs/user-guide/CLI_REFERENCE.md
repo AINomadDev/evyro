@@ -63,6 +63,7 @@ Commands:
   integrate    Integration helpers (MCP registration, hooks)
   completions  Shell completions
   version      Version information
+  bug-report   Write a bug report: versions, system, doctor checks and recent crash logs, with secrets redacted. Read it before you share it
   help         Print this message or the help of the given subcommand(s)
 
 Options:
@@ -1206,6 +1207,23 @@ Usage: evyro version [OPTIONS]
 
 Options:
       --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro bug-report
+
+```text
+Write a bug report: versions, system, doctor checks and recent crash logs, with secrets redacted. Read it before you share it
+
+Usage: evyro bug-report [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+      --out <OUT>          Write to this file instead of printing
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors
   -C, --dir <DIR>          Run as if started in this directory
