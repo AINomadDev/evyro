@@ -138,6 +138,8 @@ Inside an agent session the agent uses the same commands (the generated `AGENTS.
 | Performance | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) |
 | Backlog | [docs/BACKLOG.md](docs/BACKLOG.md) |
 | Limitations | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) |
+| Security and threat model | [SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) |
+| Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
 | Brand guide | [docs/BRAND.md](docs/BRAND.md) |
 
 ## Layout

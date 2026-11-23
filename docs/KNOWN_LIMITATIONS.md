@@ -2,7 +2,7 @@
 
 Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending.
 
-## Works (tested in CI on Linux and macOS; unit tests and builds also on Windows)
+## Works (tested in CI on Linux, macOS and Windows)
 
 - Project registry, init, move detection, isolation between projects.
 - Task graph with state machine, dependencies, cycle detection, ready work, leases.
@@ -23,6 +23,10 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - Desktop UI smoke test (Playwright): every screen, the add-target form, the command palette, code search and the file viewer, shortcuts, live refresh and first-run setup, on Linux, macOS and Windows.
 - Desktop app builds on Linux, macOS and Windows.
 - Installers build in CI (2026-11-23): a universal macOS .dmg, Windows .msi and .exe, Linux .deb and .AppImage, each with SHA-256 checksums.
+- Each installer is installed and started on its own system in CI: the .deb and AppImage on Ubuntu, the .dmg on macOS, the silent NSIS setup on Windows (PR #11).
+- Release builds carry an SBOM and signed build provenance (GitHub attestations); `cargo-deny` checks advisories, licenses and sources on every PR (PR #11).
+- Accessibility: axe-core checks WCAG 2.1 A and AA on all 10 desktop screens in light and dark themes; CI fails on serious or critical problems (PR #11).
+- End-to-end scenario tests on Windows, with agents launched through npm-style `.cmd` shims (PR #10).
 
 ## Works (checked on a real Mac, 2026-11-23, macOS 27.2 arm64)
 
@@ -31,6 +35,9 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - Keychain check for a missing item, with no password prompt; a pasted key refused.
 - Chat hand-over: clipboard (`pbcopy`) and the browser opened.
 - The desktop app opened with the full UI.
+- The .dmg installed and the app opened (unsigned, so macOS warned first).
+- **Real Codex CLI:** finished a task across two sessions and a handoff; its verification passed. The run found 5 launch bugs, fixed in PR #12: Codex ran read-only (now `--sandbox workspace-write`), Codex waited on an open stdin (headless runs now get none), Gemini stopped at its folder-trust question, Claude Code had no headless permission mode, and a project.toml command in the wrong shape was ignored silently.
+- Real Gemini CLI and Claude Code were blocked by their accounts (Gemini wants a migration to Antigravity; Claude was at its usage limit). In both cases Evyro reopened the handoff correctly.
 
 ## Works (checked by hand on Linux)
 
@@ -44,10 +51,11 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 ## Not yet verified
 
 - **Real ACP agents.** Chat has been run only with a stand-in ACP agent. Its messages matched the official ACP v1 schema in a hand check (2026-11-23). No run with Claude Agent ACP, Codex ACP, Gemini CLI, Goose, OpenCode or Copilot has been recorded; their commands come from their docs.
-- **Real agents.** No real Claude Code, Codex, Gemini or OpenCode run has been recorded. Argv and MCP setup are from docs. The first real run on your Mac is the next acceptance step.
-- **Windows end-to-end.** Unit tests and builds pass on Windows CI, but the end-to-end scenario tests use shell-script stand-ins for agents and run only on Linux and macOS. No one has used Evyro on a Windows machine.
+- **Real agents.** Only Codex has finished a real run. Claude Code (after the usage reset on 2026-12-01), Gemini CLI (after the account migration) and OpenCode have not. Their headless flags in PR #12 come from their docs.
+- **Windows by hand.** Everything runs on Windows in CI, scenario tests included, but no one has used Evyro on a Windows machine.
 - **Notifications, agent threads and the Terminal launch** on a real Mac or Windows desktop. Agent threads were checked by hand on Linux with a real PTY and a stand-in agent.
-- **Installers on real machines.** The installers build in CI but have not been installed on a real Mac, Windows or Linux machine yet. They are not code-signed or notarized (needs an Apple Developer ID and a Windows certificate), so macOS and Windows will warn on first open.
+- **Signed installers.** The installers are installed and started in CI, and the .dmg on a real Mac, but they are not code-signed or notarized (needs an Apple Developer ID and a Windows certificate), so macOS and Windows warn on first open.
+- **Screen readers.** No hand test with VoiceOver or NVDA, and no recorded keyboard-only run.
 - **Sign-in and key checks against real tools.** Login detection is confirmed for Claude Code, Codex and Gemini CLI on a real Mac; the others follow their docs. Opening IDEs from Evyro has not been checked on a real Mac yet.
 - **Remote access on a real phone.** The phone companion has been driven only in automated tests and with curl on Linux. No run on a real phone, over Tailscale, or from the desktop app on a Mac has been recorded.
 - **Real API keys.** No target has been run with a real key; model name mapping per agent follows each agent's docs.
@@ -72,6 +80,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - The contract HMAC key is per install, so contracts moved to another machine verify by content hash only.
 - Redaction is pattern-based and can miss unusual secret formats.
 - Checkpoint progress fields are agent-reported; Evyro verifies Git state and receipts, not prose.
+- A found login file does not prove the account can run (plan, usage limit, forced migration); that shows only when the tool runs.
 - Chat targets cannot apply changes: the person pastes the pack and applies the answer. Readiness for chat targets is "unknown" because a web sign-in cannot be checked.
 - A coding CLI Evyro does not know cannot be launched by `evyro run`; use `evyro resume --agent <name>` and start it yourself.
 - Apps opened from the Dock do not see variables from `~/.zshrc`, so an env-var key target may look unset in the desktop app; use a Keychain target there.

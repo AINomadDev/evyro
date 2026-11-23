@@ -13,3 +13,5 @@
 ## Reporting
 
 Please open a private security advisory on the repository rather than a public issue.
+
+See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for the assets, trust boundaries and each threat with its mitigation.

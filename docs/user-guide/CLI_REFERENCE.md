@@ -47,6 +47,8 @@ Commands:
   decide       Record a decision. Record a decision: `evyro decide "<title>" "<decision>" [--why ...]`
   decisions    Decisions for the project
   search       Search the code: file names, text or regex, symbols, a file's outline
+  serve        Let paired devices (a phone, another computer) follow and approve the work over HTTP: an API, an event stream, MCP over HTTP and a web companion
+  remote       Devices that may use `evyro serve`: pair a new one, list, revoke
   skills       Skills: reusable instructions agents load when a task needs them
   review       Review comments on the working-tree changes: leave them on files and lines, send the open ones to an agent, resolve them when addressed
   memory       Project memory
@@ -58,8 +60,6 @@ Commands:
   restore      Replace the global database with a backup (keeps the old one)
   logs         Event log (timeline)
   mcp          Run the MCP server on stdio for this project
-  serve        Let paired devices (a phone, another computer) follow and approve the work over HTTP: an API, an event stream, MCP over HTTP and a web companion
-  remote       Devices that may use `evyro serve`: pair a new one, list, revoke
   integrate    Integration helpers (MCP registration, hooks)
   completions  Shell completions
   version      Version information
@@ -325,24 +325,62 @@ Chat with a coding agent over ACP (Agent Client Protocol): its reply, plan and t
 Usage: evyro chat [OPTIONS] [PROMPT]
 
 Arguments:
-  [PROMPT]  The first message (after Evyro's task or handoff context)
+  [PROMPT]
+          The first message (after Evyro's task or handoff context)
 
 Options:
-      --json                  Machine-readable JSON output
-      --to <TO>               The coding agent or API target to chat with (see `evyro chat --list`)
-  -q, --quiet                 Suppress non-essential output
-      --task <TASK>           The task to work on (default: a handoff waiting for this agent, or the active task)
-      --debug                 Print debug details on errors
-      --handoff <HANDOFF>     Continue this handoff, even one prepared for a different AI
-      --accept-drift          Continue a handoff even though the repository changed since it was written
-  -C, --dir <DIR>             Run as if started in this directory
-      --model <MODEL>         Model for API targets (passed to the agent's environment as `evyro run` does)
-      --project <PROJECT>     Target a registered project by id or alias instead of the current directory
-      --approve <APPROVE>     Which tool calls to allow without asking [default: ask] [possible values: ask, reads, all, none]
-      --no-mcp                Do not offer Evyro's MCP server to the agent
-      --command <COMMAND>...  Start this ACP command instead of the agent's usual one (program and arguments)
-      --list                  List the agents that can chat over ACP and how to install the missing ones
-  -h, --help                  Print help (see more with '--help')
+      --json
+          Machine-readable JSON output
+
+      --to <TO>
+          The coding agent or API target to chat with (see `evyro chat --list`)
+
+  -q, --quiet
+          Suppress non-essential output
+
+      --task <TASK>
+          The task to work on (default: a handoff waiting for this agent, or the active task)
+
+      --debug
+          Print debug details on errors
+
+      --handoff <HANDOFF>
+          Continue this handoff, even one prepared for a different AI
+
+      --accept-drift
+          Continue a handoff even though the repository changed since it was written
+
+  -C, --dir <DIR>
+          Run as if started in this directory
+
+      --model <MODEL>
+          Model for API targets (passed to the agent's environment as `evyro run` does)
+
+      --project <PROJECT>
+          Target a registered project by id or alias instead of the current directory
+
+      --approve <APPROVE>
+          Which tool calls to allow without asking
+
+          Possible values:
+          - ask:   Ask in the terminal before each tool call (refuse when there is no terminal)
+          - reads: Allow reading, searching and thinking; ask about everything else
+          - all:   Allow every tool call
+          - none:  Refuse every tool call
+          
+          [default: ask]
+
+      --no-mcp
+          Do not offer Evyro's MCP server to the agent
+
+      --command <COMMAND>...
+          Start this ACP command instead of the agent's usual one (program and arguments)
+
+      --list
+          List the agents that can chat over ACP and how to install the missing ones
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ### evyro targets
@@ -677,22 +715,22 @@ evyro search outline src/net/rate_limiter.rs
 ```
 
 ```text
-Find text in files (plain text by default, `--regex` for a pattern)
+Search the code: file names, text or regex, symbols, a file's outline
 
-Usage: evyro search text [OPTIONS] <PATTERN>
+Usage: evyro search [OPTIONS] <COMMAND>
 
-Arguments:
-  <PATTERN>  What to look for
+Commands:
+  files    Fuzzy-find files by name: `evyro search files hndrs` finds handoff.rs
+  text     Find text in files (plain text by default, `--regex` for a pattern)
+  symbols  Find functions, types and other symbols by name across the repository
+  outline  List the symbols in one file
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
       --json               Machine-readable JSON output
-      --regex              Treat the pattern as a regular expression
-      --case               Match case exactly
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors
-      --path <PATH>        Only files whose path contains this
   -C, --dir <DIR>          Run as if started in this directory
-      --limit <LIMIT>      Stop after this many matching lines [default: 100]
       --project <PROJECT>  Target a registered project by id or alias instead of the current directory
   -h, --help               Print help
 ```
@@ -771,10 +809,20 @@ evyro serve --host 0.0.0.0 --allow-lan
 ```
 
 ```text
+Let paired devices (a phone, another computer) follow and approve the work over HTTP: an API, an event stream, MCP over HTTP and a web companion
+
+Usage: evyro serve [OPTIONS]
+
 Options:
       --host <HOST>        Address to listen on. 127.0.0.1 is this computer only; a Tailscale IP reaches your tailnet [default: 127.0.0.1]
+      --json               Machine-readable JSON output
       --port <PORT>        [default: 7420]
+  -q, --quiet              Suppress non-essential output
       --allow-lan          Allow an address that is neither this computer nor Tailscale (plain HTTP, not encrypted)
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
 ```
 
 ### evyro remote
@@ -819,6 +867,345 @@ Arguments:
 Options:
       --json               Machine-readable JSON output
       --root <ROOT>        
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+## More commands
+
+### evyro register
+
+```text
+Register a repository without scaffolding
+
+Usage: evyro register [OPTIONS] [PATH]
+
+Arguments:
+  [PATH]  
+
+Options:
+      --json               Machine-readable JSON output
+      --name <NAME>        
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro projects
+
+```text
+List registered projects (global tracker)
+
+Usage: evyro projects [OPTIONS]
+
+Options:
+      --all                
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --search <SEARCH>    
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro project
+
+```text
+Set project alias / archive / favorite
+
+Usage: evyro project [OPTIONS]
+
+Options:
+      --alias <ALIAS>        
+      --json                 Machine-readable JSON output
+      --archive <ARCHIVE>    [possible values: true, false]
+  -q, --quiet                Suppress non-essential output
+      --debug                Print debug details on errors
+      --favorite <FAVORITE>  [possible values: true, false]
+  -C, --dir <DIR>            Run as if started in this directory
+      --project <PROJECT>    Target a registered project by id or alias instead of the current directory
+  -h, --help                 Print help
+```
+
+### evyro status
+
+```text
+Project status: active task, owner, git state, last checkpoint
+
+Usage: evyro status [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro doctor
+
+```text
+Diagnose installation, database, agents and projects
+
+Usage: evyro doctor [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro tasks
+
+```text
+List tasks
+
+Usage: evyro tasks [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+      --ready              
+  -q, --quiet              Suppress non-essential output
+      --status <STATUS>    
+      --all                
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro agents
+
+```text
+Detected agents and their capabilities
+
+Usage: evyro agents [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro models
+
+```text
+Model selection support per agent
+
+Usage: evyro models [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro sessions
+
+```text
+Agent sessions
+
+Usage: evyro sessions [OPTIONS]
+
+Options:
+      --active             
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro worktrees
+
+```text
+Git worktrees
+
+Usage: evyro worktrees [OPTIONS] <COMMAND>
+
+Commands:
+  list    
+  add     Create a worktree + branch for a task
+  remove  Remove a worktree (refuses with uncommitted changes unless --force)
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro decisions
+
+```text
+Decisions for the project
+
+Usage: evyro decisions [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro handoffs
+
+```text
+Handoff history
+
+Usage: evyro handoffs [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro health
+
+```text
+Evidence-linked project health
+
+Usage: evyro health [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro backup
+
+```text
+Snapshot the global database
+
+Usage: evyro backup [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro restore
+
+```text
+Replace the global database with a backup (keeps the old one)
+
+Usage: evyro restore [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  
+
+Options:
+      --json               Machine-readable JSON output
+      --yes                
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro logs
+
+```text
+Event log (timeline)
+
+Usage: evyro logs [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+      --task <TASK>        
+      --limit <LIMIT>      [default: 50]
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro mcp
+
+```text
+Run the MCP server on stdio for this project
+
+Usage: evyro mcp [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+      --read-only          
+      --agent <AGENT>      
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro completions
+
+```text
+Shell completions
+
+Usage: evyro completions [OPTIONS] <SHELL>
+
+Arguments:
+  <SHELL>  [possible values: bash, elvish, fish, powershell, zsh]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro version
+
+```text
+Version information
+
+Usage: evyro version [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors
   -C, --dir <DIR>          Run as if started in this directory
