@@ -1,0 +1,919 @@
+// Evyro desktop UI. Plain JavaScript, no build step.
+// All text from repositories, agents and the database is inserted with
+// textContent (never innerHTML), because it is untrusted.
+"use strict";
+
+const invoke = (cmd, args = {}) => {
+  if (!window.__TAURI__) return Promise.reject({ code: "no_backend", message: "Evyro backend not available" });
+  return window.__TAURI__.core.invoke(cmd, args);
+};
+
+// ---------- tiny DOM helpers ----------
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  if (attrs) {
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v === undefined || v === null || v === false) continue;
+      if (k === "class") el.className = v;
+      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2), v);
+      else if (k === "value") el.value = v;
+      else if (k === "checked") el.checked = !!v;
+      else el.setAttribute(k, v === true ? "" : v);
+    }
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid === undefined || kid === null || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+const $ = (sel) => document.querySelector(sel);
+const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+
+function ago(iso) {
+  if (!iso) return "";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return `${Math.floor(s)}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+const short = (x, n = 8) => (x ? String(x).slice(0, n) : "-");
+
+function toast(msg, bad = false) {
+  const t = h("div", { class: "toast" + (bad ? " bad" : "") }, msg);
+  $("#toast-root").append(t);
+  setTimeout(() => t.remove(), bad ? 7000 : 3500);
+}
+function errMsg(e) {
+  if (!e) return "Unknown error";
+  if (typeof e === "string") return e;
+  return e.message || JSON.stringify(e);
+}
+async function act(fn, okMsg) {
+  try {
+    const r = await fn();
+    if (okMsg) toast(okMsg);
+    return r;
+  } catch (e) {
+    toast(errMsg(e), true);
+    throw e;
+  }
+}
+async function copy(text, what = "Copied") {
+  try { await navigator.clipboard.writeText(text); toast(what); }
+  catch { toast("Could not copy to the clipboard", true); }
+}
+
+const STATUS_PILL = {
+  backlog: "", ready: "accent", in_progress: "accent", blocked: "warn", in_review: "accent",
+  verified: "ok", done: "ok", cancelled: "", failed: "bad",
+  running: "accent", completed: "ok", paused: "warn", recovering: "warn", handing_off: "accent",
+  prepared: "warn", accepted: "ok", superseded: "", ok: "ok", warn: "warn", fail: "bad",
+  incompatible: "bad", unknown_version: "warn", not_installed: "", fallback_only: "warn",
+  needs_setup: "warn", missing: "bad", unknown: "",
+};
+const PROV = { human_recorded: "checked by you", evyro_verified: "backed by a passing test receipt", agent_reported: "reported by an agent" };
+const pill = (s, label) => h("span", { class: "pill " + (STATUS_PILL[s] ?? "") }, label ?? String(s).replace(/_/g, " "));
+
+// ---------- modal ----------
+function modal(title, bodyNodes, actions) {
+  const root = $("#modal-root");
+  const close = () => clear(root);
+  const back = h("div", { class: "modal-back", onclick: (e) => { if (e.target === back) close(); } },
+    h("div", { class: "modal", role: "dialog", "aria-label": title },
+      h("h2", null, title), bodyNodes,
+      h("div", { class: "actions" },
+        h("button", { class: "btn", onclick: close }, actions.length ? "Cancel" : "Close"),
+        actions.map((a) => h("button", {
+          class: "btn " + (a.primary ? "primary" : ""), onclick: async (ev) => {
+            ev.target.disabled = true;
+            try { if ((await a.run()) !== false) close(); }
+            catch { /* toast already shown */ }
+            finally { ev.target.disabled = false; }
+          },
+        }, a.label)))));
+  clear(root).append(back);
+  const first = back.querySelector("input, textarea, select");
+  if (first) first.focus();
+}
+const field = (label, input, hint) => h("label", { class: "field" }, label, input, hint ? h("div", { class: "hint" }, hint) : null);
+const lines = (s) => String(s || "").split("\n").map((x) => x.trim()).filter(Boolean);
+
+// ---------- state ----------
+const state = {
+  projects: [],
+  project: null,
+  view: "overview",
+  drawerTask: null,
+  timer: null,
+  agents: null,
+  targets: null,
+};
+const KIND_LABEL = { harness: "Coding agent", api: "API key", ide: "AI IDE", chat: "Chat app" };
+
+/** Switch targets with readiness, cached until something changes. */
+async function loadTargets(force) {
+  if (force || !state.targets) state.targets = await invoke("list_targets");
+  return state.targets;
+}
+/** A <select> of every switch target, grouped by kind. */
+async function targetSelect(preferred) {
+  let ts = [];
+  try { ts = await loadTargets(); } catch (e) { toast(errMsg(e), true); }
+  const sel = h("select", null, ["harness", "api", "ide", "chat"].map((k) => {
+    const group = ts.filter((t) => t.target.kind === k);
+    return group.length ? h("optgroup", { label: KIND_LABEL[k] }, group.map((t) =>
+      h("option", { value: t.target.name }, `${t.target.name}${t.state === "needs_setup" ? "  (needs setup)" : ""}`))) : null;
+  }));
+  const names = ts.map((t) => t.target.name);
+  sel.value = names.includes(preferred) ? preferred : (names.includes("codex") ? "codex" : names[0] || "");
+  return sel;
+}
+const targetPill = (st) => pill(st === "ready" ? "ok" : st, st.replace(/_/g, " "));
+const targetKind = (name) => (state.targets || []).find((t) => t.target.name === name)?.target.kind;
+
+/**
+ * Give work to a target. IDE and chat targets get the hand-over text on the
+ * clipboard and the app opened; agents start in a Terminal window.
+ * Returns true when done, false when drift stopped it (shown in `el`).
+ */
+async function handTo(target, taskKey, el, acceptDrift = false, handoffId = null) {
+  await loadTargets();
+  const kind = targetKind(target);
+  if (kind === "ide" || kind === "chat") {
+    let r;
+    try {
+      r = await invoke("handover_to_app", { projectId: state.project.id, target, task: taskKey || null, handoffId, acceptDrift });
+    } catch (e) {
+      if (e && e.code === "conflict" && !handoffId) {
+        // The task is still with another AI: pass it on with a handoff instead.
+        toast("This task is still with another AI. Write a short handoff and Evyro passes it on.");
+        handoffDialog(taskKey, target);
+        return false;
+      }
+      toast(errMsg(e), true);
+      throw e;
+    }
+    if (r.drift) { showDrift(el, r.drift, () => handTo(target, taskKey, el, true, handoffId)); return false; }
+    const x = r.handover;
+    const where = kind === "ide" ? "Paste it into the IDE's AI chat." : "Paste it into a new chat.";
+    toast(`${x.opened ? "Opened " + x.display + ". " : ""}${x.copied_to_clipboard ? "Hand-over text copied. " + where : "Hand-over text saved to " + x.file + ". Copy it from there."}`);
+    render();
+    return true;
+  }
+  const r = await act(() => invoke("open_in_terminal", { projectId: state.project.id, target, task: taskKey || null, handoffId }));
+  if (r.opened) toast(`Started ${target} in Terminal. It picks up the handoff there.`);
+  else { await copy(r.command, "This computer has no Terminal hook. Command copied; run it in a terminal."); }
+  return true;
+}
+
+// ---------- sidebar ----------
+async function loadProjects(selectId) {
+  try {
+    state.projects = await invoke("list_projects", {});
+  } catch (e) {
+    state.projects = [];
+    renderBackendError(e);
+    return;
+  }
+  const nav = clear($("#project-list"));
+  if (!state.projects.length) nav.append(h("div", { class: "muted small", style: "padding:8px 10px" }, "No projects yet."));
+  for (const p of state.projects) {
+    nav.append(h("button", {
+      class: "project-item" + (state.project && state.project.id === p.id ? " active" : ""),
+      onclick: () => selectProject(p.id),
+      title: p.root_path,
+    }, h("span", { class: "name" }, p.alias || p.name), h("span", { class: "path" }, p.root_path)));
+  }
+  const want = selectId || (state.project && state.project.id) || (state.projects[0] && state.projects[0].id);
+  if (want) selectProject(want, true);
+  else render();
+}
+
+function selectProject(id, silent) {
+  const p = state.projects.find((x) => x.id === id);
+  if (!p) return;
+  state.project = p;
+  closeDrawer();
+  for (const el of document.querySelectorAll(".project-item")) el.classList.toggle("active", el.title === p.root_path);
+  $("#project-title").textContent = p.alias || p.name;
+  $("#project-sub").textContent = `${p.root_path}${p.stack && p.stack.length ? " · " + p.stack.join(", ") : ""}`;
+  if (!silent) state.view = "overview";
+  setTab(state.view);
+}
+
+function addProjectDialog() {
+  const input = h("input", { type: "text", placeholder: "/Users/you/Developer/my-app" });
+  modal("Add a project", [
+    field("Repository folder", input, "Paste the full path of a Git repository. Evyro creates .evyro/ there and adds an Evyro section to agent instruction files only where none exists."),
+  ], [{
+    label: "Add project", primary: true, run: async () => {
+      const path = input.value.trim();
+      if (!path) { toast("Enter a folder path", true); return false; }
+      const r = await act(() => invoke("add_project", { path }), "Project added");
+      await loadProjects(r.project.id);
+    },
+  }]);
+}
+
+// ---------- tabs ----------
+function setTab(view) {
+  state.view = view;
+  for (const b of document.querySelectorAll(".tab")) b.classList.toggle("active", b.dataset.view === view);
+  render();
+}
+
+function render() {
+  clearInterval(state.timer);
+  const v = clear($("#view"));
+  if (!state.project && !["agents", "settings"].includes(state.view)) {
+    v.append(h("div", { class: "welcome" },
+      h("img", { src: "logo.png", alt: "" }),
+      h("h1", null, "Welcome to Evyro"),
+      h("p", null, "Evyro keeps AI coding work continuous: tasks, checkpoints, verification and signed handoffs between Claude Code, Codex, Gemini and other agents."),
+      h("button", { class: "btn primary", onclick: addProjectDialog }, "Add your first project"),
+      h("p", { class: "small" }, "Projects you set up with ", h("code", null, "evyro init"), " in a terminal appear here automatically.")));
+    return;
+  }
+  const views = { overview: viewOverview, tasks: viewTasks, handoffs: viewHandoffs, sessions: viewSessions, knowledge: viewKnowledge, agents: viewAgents, settings: viewSettings };
+  (views[state.view] || viewOverview)(v);
+}
+
+function renderBackendError(e) {
+  const v = clear($("#view"));
+  v.append(h("div", { class: "banner bad" }, "Could not open the Evyro database: ", errMsg(e)));
+}
+
+// ---------- overview ----------
+async function viewOverview(v) {
+  const pid = state.project.id;
+  const draw = async () => {
+    let o;
+    try { o = await invoke("overview", { projectId: pid }); }
+    catch (e) { clear(v).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
+    if (state.view !== "overview" || state.project.id !== pid) return;
+    clear(v);
+    if (o.recovered && o.recovered.length) {
+      v.append(h("div", { class: "banner warn" }, `${o.recovered.length} session(s) had exited and were closed out with a recovery checkpoint.`));
+    }
+    if (o.pending_handoff) {
+      const hd = o.pending_handoff;
+      v.append(h("div", { class: "banner info" },
+        h("strong", null, "Handoff waiting"), ` for ${hd.to_harness} (quality ${hd.quality.met}/${hd.quality.total}), prepared ${ago(hd.created_at)}.`,
+        h("span", { class: "spacer" }),
+        h("button", { class: "btn small", onclick: () => openHandoff(hd.id) }, "Review")));
+    }
+    if (!o.project.commands.test.length) {
+      v.append(h("div", { class: "banner warn" }, "No test command is configured, so agents cannot record verification receipts.",
+        h("span", { class: "spacer" }), h("button", { class: "btn small", onclick: () => setTab("settings") }, "Set one up")));
+    }
+
+    const grid = h("div", { class: "grid" });
+    // Active task
+    const t = o.active_task;
+    grid.append(h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, "Active task"), t ? pill(t.status) : null),
+      t ? [
+        h("div", null, h("span", { class: "key" }, t.key), " ", h("strong", null, t.title)),
+        h("dl", { class: "kv", style: "margin-top:10px" },
+          h("dt", null, "Owner"), h("dd", null, o.owner ? `${o.owner.harness} · session ${short(o.owner.id, 12)}` : "nobody"),
+          h("dt", null, "Last checkpoint"), h("dd", null, o.latest_checkpoint ? `${ago(o.latest_checkpoint.created_at)} (${o.latest_checkpoint.trigger})` : "none"),
+          h("dt", null, "Next step"), h("dd", null, (o.latest_checkpoint && o.latest_checkpoint.next_action) || "-")),
+        h("div", { class: "row", style: "margin-top:12px" },
+          h("button", { class: "btn small", onclick: () => openTask(t.key) }, "Open task"),
+          h("button", { class: "btn small", onclick: () => handoffDialog(t.key) }, "Hand off"),
+          h("button", { class: "btn small", onclick: () => copyContext(t.key) }, "Copy context for an agent")),
+      ] : h("div", { class: "empty" }, "Nothing in progress. ", h("button", { class: "btn small", onclick: () => setTab("tasks") }, "Pick a task"))));
+
+    // Repository
+    const g = o.git;
+    grid.append(h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, "Repository"), g ? (g.dirty ? pill("warn", `${g.files.length} changed`) : pill("ok", "clean")) : pill("bad", "not readable")),
+      g ? [
+        h("dl", { class: "kv" },
+          h("dt", null, "Branch"), h("dd", null, g.branch || "(detached)"),
+          h("dt", null, "HEAD"), h("dd", { class: "mono" }, short(g.head, 10)),
+          g.upstream ? [h("dt", null, "Upstream"), h("dd", null, `${g.upstream} (+${g.ahead ?? 0} / -${g.behind ?? 0})`)] : null),
+        g.files.length ? h("ul", { class: "list", style: "margin-top:8px" },
+          g.files.slice(0, 8).map((f) => h("li", null, h("code", null, f.status), h("span", { class: "mono" }, f.path))),
+          g.files.length > 8 ? h("li", { class: "muted" }, `and ${g.files.length - 8} more`) : null) : null,
+      ] : h("div", { class: "muted" }, "Git could not read this folder.")));
+
+    // Health
+    const counts = o.health.task_counts || {};
+    grid.append(h("div", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", null, "Health"), o.health.findings.length ? pill("warn", `${o.health.findings.length} finding(s)`) : pill("ok", "all clear")),
+      h("div", { class: "stat-row" },
+        ["in_progress", "ready", "blocked", "verified", "done"].map((k) => h("div", { class: "stat" }, h("span", { class: "n" }, counts[k] || 0), h("span", { class: "l" }, k.replace("_", " "))))),
+      o.health.findings.length ? h("ul", { class: "list", style: "margin-top:10px" },
+        o.health.findings.slice(0, 6).map((f) => h("li", null, pill("warn", f.kind.replace(/_/g, " ")), h("span", null, f.detail)))) : null));
+
+    // Activity
+    grid.append(h("div", { class: "card wide" },
+      h("div", { class: "card-head" }, h("h2", null, "Recent activity"), h("span", { class: "muted small" }, "refreshes every few seconds")),
+      o.events.length ? h("ul", { class: "timeline" }, o.events.slice().reverse().map((e) => h("li", null, h("span", { class: "when" }, ago(e.created_at)), h("span", null, describeEvent(e))))) : h("div", { class: "empty" }, "No activity yet.")));
+    v.append(grid);
+  };
+  v.append(h("div", { class: "muted" }, "Loading…"));
+  await draw();
+  state.timer = setInterval(draw, 4000);
+}
+
+function describeEvent(e) {
+  const p = e.payload || {};
+  switch (e.kind) {
+    case "task.created": return `Task created: ${p.title || ""}`;
+    case "task.status_changed": return `Task moved ${p.from} → ${p.to} by ${p.actor || "?"}${p.override_reason ? " (override: " + p.override_reason + ")" : ""}`;
+    case "task.criterion_checked": return `Acceptance criterion ${p.index} marked ${p.met ? "met" : "not met"} (${p.provenance})`;
+    case "handoff.prepared": return `Handoff prepared ${p.from || "?"} → ${p.to} (quality ${p.quality})`;
+    case "handoff.accepted": return `Handoff accepted by ${p.agent}${p.drift ? " with drift accepted" : ""}`;
+    case "handoff.reopened": return `Handoff reopened: ${p.reason}`;
+    case "handoff.drift_detected": return `Resume blocked by drift: ${p.summary}`;
+    case "verification.completed": return `Verification ${p.passed ? "passed" : "failed"}: ${(p.command || []).join(" ")}`;
+    case "checkpoint.created": return `Checkpoint (${p.trigger || "manual"})`;
+    case "session.status_changed": return `Session ${p.from} → ${p.to}${p.reason ? " (" + p.reason + ")" : ""}`;
+    case "agent.started": return `Agent launched (${p.mode})`;
+    case "agent.stopped": return `Agent exited (code ${p.exit_code ?? "signal"})`;
+    default: return e.kind.replace(/[._]/g, " ");
+  }
+}
+
+async function copyContext(taskKey) {
+  const r = await act(() => invoke("context_packet", { projectId: state.project.id, task: taskKey, budget: "large" }));
+  copy(r.text, `Context copied (about ${r.packet.approx_tokens} tokens)`);
+}
+
+// ---------- tasks ----------
+const COLUMNS = [
+  ["backlog", "Backlog"], ["ready", "Ready"], ["in_progress", "In progress"], ["blocked", "Blocked"],
+  ["in_review", "In review"], ["verified", "Verified"], ["done", "Done"],
+];
+
+async function viewTasks(v) {
+  const pid = state.project.id;
+  const head = h("div", { class: "row", style: "margin-bottom:14px" },
+    h("button", { class: "btn primary", onclick: newTaskDialog }, "+ New task"),
+    h("span", { class: "spacer" }),
+    h("span", { class: "muted small" }, "Click a task to see criteria, checkpoints and receipts."));
+  v.append(head);
+  const board = h("div", { class: "board" });
+  v.append(board);
+  const draw = async () => {
+    let rows;
+    try { rows = await invoke("list_tasks", { projectId: pid, includeClosed: true }); }
+    catch (e) { clear(board).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
+    if (state.view !== "tasks" || state.project.id !== pid) return;
+    clear(board);
+    for (const [st, label] of COLUMNS) {
+      const items = rows.filter((r) => r.task.status === st);
+      board.append(h("div", { class: "column" },
+        h("div", { class: "column-head" }, h("span", null, label), h("span", null, items.length)),
+        items.map(taskCard)));
+    }
+    const other = rows.filter((r) => !COLUMNS.some(([s]) => s === r.task.status));
+    if (other.length) board.append(h("div", { class: "column" }, h("div", { class: "column-head" }, h("span", null, "Closed"), h("span", null, other.length)), other.map(taskCard)));
+  };
+  await draw();
+  state.timer = setInterval(draw, 5000);
+}
+
+function taskCard(r) {
+  const t = r.task;
+  const pct = r.criteria_total ? Math.round((100 * r.criteria_met) / r.criteria_total) : 0;
+  return h("button", { class: "task-card", onclick: () => openTask(t.key) },
+    h("div", { class: "meta" }, h("span", { class: "key" }, t.key), h("span", { class: "pill" }, t.kind), h("span", { class: "pill" }, "P" + t.priority)),
+    h("div", { class: "t" }, t.title),
+    r.criteria_total ? [h("div", { class: "progress", title: `${r.criteria_met}/${r.criteria_total} criteria met` }, h("span", { style: `width:${pct}%` })),
+      h("div", { class: "muted small" }, `${r.criteria_met}/${r.criteria_total} criteria met`)] : h("div", { class: "muted small" }, "No acceptance criteria"),
+    h("div", { class: "meta" },
+      r.owner ? pill("running", r.owner) : null,
+      r.blocked_by.length ? pill("blocked", "blocked by " + r.blocked_by.join(", ")) : null));
+}
+
+function newTaskDialog() {
+  const title = h("input", { type: "text", placeholder: "Add rate limiting to the API" });
+  const desc = h("textarea", { placeholder: "What and why (optional)" });
+  const acc = h("textarea", { placeholder: "One criterion per line, e.g.\n429 returned after 100 requests/min\nIntegration test covers the limit" });
+  const kind = h("select", null, ["task", "feature", "bug", "tech_debt", "spike", "docs", "security", "maintenance"].map((k) => h("option", { value: k }, k)));
+  const prio = h("select", null, [0, 1, 2, 3, 4].map((p) => h("option", { value: p, selected: p === 2 }, "P" + p)));
+  const ready = h("input", { type: "checkbox", checked: true });
+  modal("New task", [
+    field("Title", title),
+    field("Description", desc),
+    field("Acceptance criteria", acc, "The task can only reach Verified once every criterion is checked off and a test run passes."),
+    h("div", { class: "row" }, field("Kind", kind), field("Priority", prio)),
+    h("label", { class: "row small" }, ready, "Mark as ready to pick up"),
+  ], [{
+    label: "Create task", primary: true, run: async () => {
+      if (!title.value.trim()) { toast("Give the task a title", true); return false; }
+      const t = await act(() => invoke("create_task", {
+        projectId: state.project.id,
+        input: { title: title.value.trim(), description: desc.value.trim(), kind: kind.value, priority: Number(prio.value), acceptance: lines(acc.value), ready: ready.checked },
+      }), "Task created");
+      if (state.view === "tasks") render();
+      openTask(t.key);
+    },
+  }]);
+}
+
+// ---------- task drawer ----------
+function closeDrawer() {
+  state.drawerTask = null;
+  $("#drawer").classList.add("hidden");
+  $("#drawer").setAttribute("aria-hidden", "true");
+}
+
+async function openTask(key) {
+  state.drawerTask = key;
+  const dr = $("#drawer");
+  dr.classList.remove("hidden");
+  dr.setAttribute("aria-hidden", "false");
+  const body = clear($("#drawer-body"));
+  body.append(h("div", { class: "muted" }, "Loading…"));
+  let d;
+  try { d = await invoke("task_detail", { projectId: state.project.id, task: key }); }
+  catch (e) { clear(body).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
+  if (state.drawerTask !== key) return;
+  const t = d.task;
+  const title = clear($("#drawer-title"));
+  title.append(h("span", { class: "key" }, t.key), " ", t.title);
+  clear(body);
+  const refresh = () => { openTask(key); if (state.view === "tasks" || state.view === "overview") render(); };
+
+  // Status
+  const statusSel = h("select", { style: "width:auto" }, h("option", { value: "" }, "Move to…"), d.allowed_next.filter((s) => s !== t.status).map((s) => h("option", { value: s }, s.replace(/_/g, " "))));
+  statusSel.addEventListener("change", async () => {
+    const to = statusSel.value;
+    if (!to) return;
+    try {
+      await act(() => invoke("set_task_status", { projectId: state.project.id, task: t.key, status: to }), `${t.key} moved to ${to.replace(/_/g, " ")}`);
+      refresh();
+    } catch (e) {
+      statusSel.value = "";
+      if (e && e.code === "verification_required" && to === "verified") overrideDialog(t.key, errMsg(e), refresh);
+    }
+  });
+  body.append(h("div", { class: "row" }, pill(t.status), h("span", { class: "pill" }, t.kind), h("span", { class: "pill" }, "P" + t.priority),
+    d.owner ? pill("running", "owned by " + d.owner.harness) : h("span", { class: "pill" }, "no owner"),
+    h("span", { class: "spacer" }), statusSel));
+  if (d.blocked_by.length) body.append(h("div", { class: "banner warn", style: "margin-top:10px" }, "Blocked by unfinished tasks: " + d.blocked_by.join(", ")));
+  if (d.pending_handoff) body.append(h("div", { class: "banner info", style: "margin-top:10px" }, `Open handoff for ${d.pending_handoff.to_harness}.`, h("span", { class: "spacer" }), h("button", { class: "btn small", onclick: () => openHandoff(d.pending_handoff.id) }, "Review")));
+  if (t.description) body.append(h("p", { style: "white-space:pre-wrap" }, t.description));
+
+  // Criteria
+  const met = d.criteria.filter((c) => c.met && c.counts).length;
+  body.append(h("h3", null, `Acceptance criteria · ${met}/${d.criteria.length}`));
+  if (!d.criteria.length) body.append(h("div", { class: "muted small" }, "None yet. Without criteria, Verified only needs a passing test run."));
+  body.append(h("ul", { class: "criteria" }, d.criteria.map((c) => {
+    const box = h("input", { type: "checkbox", checked: c.met && c.counts, "aria-label": "Criterion " + c.index });
+    box.addEventListener("change", async () => {
+      try { await act(() => invoke("check_criterion", { projectId: state.project.id, task: t.key, index: c.index, met: box.checked, note: "" })); refresh(); }
+      catch { box.checked = !box.checked; }
+    });
+    return h("li", null, box, h("div", { class: "ctext" }, c.text,
+      c.provenance ? h("div", { class: "muted small" }, c.counts ? `${c.met ? "met" : "not met"} · ${PROV[c.provenance] || c.provenance} ${ago(c.checked_at)}` : `${c.actor} says this is met; check it to confirm`, c.note ? ` · ${c.note}` : "") : null));
+  })));
+  const newCrit = h("input", { type: "text", placeholder: "Add a criterion" });
+  body.append(h("div", { class: "row", style: "margin-top:8px" }, newCrit, h("button", {
+    class: "btn small", onclick: async () => {
+      if (!newCrit.value.trim()) return;
+      await act(() => invoke("add_criterion", { projectId: state.project.id, task: t.key, text: newCrit.value }));
+      refresh();
+    },
+  }, "Add")));
+
+  // Actions
+  body.append(h("h3", null, "Actions"));
+  body.append(h("div", { class: "row" },
+    h("button", { class: "btn small", onclick: () => runVerify(t.key, refresh) }, "Run tests"),
+    h("button", { class: "btn small", onclick: () => handoffDialog(t.key) }, "Hand off"),
+    h("button", { class: "btn small", onclick: () => copyContext(t.key) }, "Copy context"),
+    h("button", { class: "btn small", onclick: () => copy(`evyro run --agent claude-code --task ${t.key}`, "Command copied") }, "Copy run command")));
+
+  // Verification receipts
+  body.append(h("h3", null, "Verification receipts"));
+  if (!d.verifications.length) body.append(h("div", { class: "muted small" }, "No test runs recorded for this task."));
+  else body.append(h("ul", { class: "list" }, d.verifications.slice().reverse().slice(0, 8).map((r) => h("li", null,
+    pill(r.passed ? "ok" : "fail", r.passed ? "pass" : "fail"), h("code", null, r.command.join(" ")), h("span", { class: "spacer" }), h("span", { class: "muted small" }, ago(r.started_at))))));
+
+  // Checkpoints
+  body.append(h("h3", null, "Checkpoints"));
+  if (!d.checkpoints.length) body.append(h("div", { class: "muted small" }, "None yet."));
+  else body.append(h("ul", { class: "list" }, d.checkpoints.map((c) => h("li", { style: "flex-direction:column;align-items:stretch;gap:2px" },
+    h("div", { class: "row" }, h("strong", null, c.trigger.replace(/_/g, " ")), h("span", { class: "spacer" }), h("span", { class: "muted small" }, ago(c.created_at))),
+    c.summary ? h("div", null, c.summary) : null,
+    c.next_action ? h("div", { class: "small" }, "Next: ", c.next_action) : null,
+    h("div", { class: "muted small" }, `${c.git.branch || "detached"} @ ${short(c.git.head, 8)} · ${c.git.files.length} changed file(s)`)))));
+
+  // Comments
+  body.append(h("h3", null, "Notes"));
+  for (const [author, text, at] of d.comments) body.append(h("div", { class: "small", style: "margin-bottom:6px" }, h("strong", null, author), ` · ${ago(at)}`, h("div", { style: "white-space:pre-wrap" }, text)));
+  const note = h("textarea", { placeholder: "Add a note for the next agent or for yourself" });
+  body.append(note, h("div", { class: "row", style: "margin-top:6px" }, h("button", {
+    class: "btn small", onclick: async () => {
+      if (!note.value.trim()) return;
+      await act(() => invoke("add_comment", { projectId: state.project.id, task: t.key, body: note.value }), "Note added");
+      refresh();
+    },
+  }, "Add note")));
+}
+
+function overrideDialog(key, reason, done) {
+  const why = h("textarea", { placeholder: "Why this task is verified without the usual evidence" });
+  modal("Verify with a human override?", [
+    h("div", { class: "banner warn" }, reason),
+    field("Reason (logged in the task history)", why),
+  ], [{
+    label: "Override and verify", primary: true, run: async () => {
+      if (!why.value.trim()) { toast("A reason is required", true); return false; }
+      await act(() => invoke("set_task_status", { projectId: state.project.id, task: key, status: "verified", overrideReason: why.value.trim() }), `${key} verified with override`);
+      done();
+    },
+  }]);
+}
+
+async function runVerify(key, done) {
+  toast("Running tests…");
+  try {
+    const r = await invoke("run_verification", { projectId: state.project.id, task: key, kind: "test", index: 0 });
+    const ok = r.receipt.passed;
+    modal(ok ? "Tests passed" : "Tests failed", [
+      h("div", { class: "banner " + (ok ? "ok" : "bad") }, `${r.receipt.command.join(" ")} exited ${r.receipt.exit_code ?? "by signal"} in ${(r.receipt.duration_ms / 1000).toFixed(1)}s`),
+      h("pre", null, r.output_tail || "(no output)"),
+    ], []);
+    done && done();
+  } catch (e) {
+    toast(errMsg(e), true);
+    if (e && /no test command/.test(errMsg(e))) setTab("settings");
+  }
+}
+
+// ---------- handoffs ----------
+async function handoffDialog(taskKey, preferred) {
+  const to = await targetSelect(preferred || "codex");
+  const summary = h("textarea", { placeholder: "What happened so far (optional; Git state is captured automatically)" });
+  const done = h("textarea", { placeholder: "Completed items, one per line" });
+  const remaining = h("textarea", { placeholder: "Remaining items, one per line" });
+  const next = h("input", { type: "text", placeholder: "The very next step for the receiving AI" });
+  modal(`Hand off ${taskKey || "work"}`, [
+    field("Continue with", to, "Any AI: a coding agent, an API key, an AI IDE or a chat app. Add more under AI targets."),
+    field("Summary", summary),
+    field("Completed", done),
+    field("Remaining", remaining),
+    field("Next action", next),
+    h("div", { class: "hint" }, "Evyro writes a signed continuation contract. Open the handoff afterwards to start the receiving AI."),
+  ], [{
+    label: "Prepare handoff", primary: true, run: async () => {
+      const r = await act(() => invoke("prepare_handoff", {
+        projectId: state.project.id,
+        input: { task: taskKey || null, to: to.value, summary: summary.value, completed: lines(done.value), remaining: lines(remaining.value), next_action: next.value },
+      }), "Handoff prepared");
+      openHandoff(r.record.id);
+    },
+  }]);
+}
+
+async function viewHandoffs(v) {
+  const pid = state.project.id;
+  v.append(h("div", { class: "row", style: "margin-bottom:14px" }, h("button", { class: "btn primary", onclick: () => handoffDialog(null) }, "+ New handoff")));
+  let hs;
+  try { hs = await invoke("list_handoffs", { projectId: pid }); } catch (e) { v.append(h("div", { class: "banner bad" }, errMsg(e))); return; }
+  if (!hs.length) { v.append(h("div", { class: "card" }, h("div", { class: "empty" }, "No handoffs yet. Prepare one from a task when you want another agent to continue."))); return; }
+  v.append(h("div", { class: "card" }, h("table", null,
+    h("thead", null, h("tr", null, ["Created", "From", "To", "Quality", "Status", "Accepted"].map((x) => h("th", null, x)))),
+    h("tbody", null, hs.map((x) => h("tr", { class: "clickable", onclick: () => openHandoff(x.id) },
+      h("td", null, ago(x.created_at)), h("td", null, x.from_harness || "human"), h("td", null, x.to_harness),
+      h("td", null, `${x.quality.met}/${x.quality.total}`), h("td", null, pill(x.status)), h("td", null, x.accepted_at ? ago(x.accepted_at) : "-")))))));
+}
+
+async function openHandoff(id) {
+  let d;
+  try { d = await invoke("handoff_detail", { handoffId: id }); } catch (e) { toast(errMsg(e), true); return; }
+  const rec = d.record;
+  const agent = await targetSelect(rec.to_harness);
+  const result = h("div");
+  const nodes = [
+    h("div", { class: "row" }, pill(rec.status), h("span", null, `${rec.from_harness || "human"} → ${rec.to_harness}`), h("span", { class: "spacer" }),
+      d.integrity_ok ? pill("ok", "signature valid") : pill("bad", "signature invalid")),
+    d.integrity_error ? h("div", { class: "banner bad", style: "margin-top:8px" }, d.integrity_error) : null,
+    h("h3", null, "Quality " + `${rec.quality.met}/${rec.quality.total}`),
+    h("ul", { class: "list" }, rec.quality.criteria.map((c) => h("li", null, pill(c.met ? "ok" : "warn", c.met ? "yes" : "no"), h("span", null, c.name), h("span", { class: "muted small" }, c.detail)))),
+    h("h3", null, "Contract"),
+    h("pre", null, d.markdown),
+    h("div", { class: "row", style: "margin-top:10px" },
+      h("button", { class: "btn small", onclick: () => copy(d.resume_prompt, "Resume prompt copied") }, "Copy resume prompt"),
+      h("button", { class: "btn small", onclick: () => copy(`evyro run --to ${agent.value}`, "Command copied") }, "Copy launch command")),
+    result,
+  ];
+  const actions = rec.status === "prepared" ? [{
+    label: "Start with this AI", primary: true, run: () => handTo(agent.value, null, result, false, rec.id),
+  }, {
+    label: "Accept only", run: async () => {
+      const r = await act(() => invoke("resume_handoff", { projectId: state.project.id, handoffId: rec.id, agent: agent.value, acceptDrift: false }));
+      if (r.accepted) { toast(`Accepted for ${agent.value}. Start it yourself with the copied prompt.`); copy(d.resume_prompt, "Resume prompt copied"); render(); return true; }
+      showDrift(result, r, async () => {
+        const r2 = await act(() => invoke("resume_handoff", { projectId: state.project.id, handoffId: rec.id, agent: agent.value, acceptDrift: true }), `Accepted for ${agent.value} with drift`);
+        return r2.accepted;
+      });
+      return false;
+    },
+  }] : [];
+  if (rec.status === "prepared") nodes.splice(4, 0, field("Continue with", agent,
+    "Start with this AI: coding agents open in a Terminal window; IDEs and chat apps open with the hand-over text on your clipboard. Accept only: start the session and copy the prompt, and launch the AI yourself."));
+  modal("Handoff " + short(rec.id, 14), nodes, actions);
+}
+
+/** Show what changed since the handoff, with an "accept anyway" button. */
+function showDrift(el, r, acceptAnyway) {
+  const d = r.drift;
+  clear(el).append(h("div", { class: "banner warn", style: "margin-top:10px;flex-direction:column;align-items:flex-start" },
+    h("strong", null, "The repository changed since this handoff was prepared."),
+    h("div", null, `HEAD: ${d.head_relation}`),
+    d.modified_since.length ? h("div", null, "Modified: " + d.modified_since.join(", ")) : null,
+    d.newly_dirty.length ? h("div", null, "Newly changed: " + d.newly_dirty.join(", ")) : null,
+    h("button", {
+      class: "btn small", onclick: async () => {
+        if ((await acceptAnyway()) !== false) { clear($("#modal-root")); render(); }
+      },
+    }, "Accept anyway")));
+}
+
+// ---------- sessions ----------
+async function viewSessions(v) {
+  const pid = state.project.id;
+  v.append(h("div", { class: "row", style: "margin-bottom:14px" },
+    h("button", {
+      class: "btn", onclick: async () => {
+        const r = await act(() => invoke("recover_sessions", { projectId: pid, includeUnknown: true }));
+        toast(r.length ? `Recovered ${r.length} session(s)` : "No stale sessions");
+        render();
+      },
+    }, "Recover stale sessions"),
+    h("span", { class: "muted small" }, "Closes sessions whose agent is no longer running, saving a recovery checkpoint.")));
+  let ss;
+  try { ss = await invoke("list_sessions", { projectId: pid, activeOnly: false }); } catch (e) { v.append(h("div", { class: "banner bad" }, errMsg(e))); return; }
+  if (!ss.length) { v.append(h("div", { class: "card" }, h("div", { class: "empty" }, "No sessions yet."))); return; }
+  v.append(h("div", { class: "card" }, h("table", null,
+    h("thead", null, h("tr", null, ["Agent", "Status", "Started", "Ended", "Reason", "Session"].map((x) => h("th", null, x)))),
+    h("tbody", null, ss.map((s) => h("tr", null,
+      h("td", null, s.harness, s.model ? h("div", { class: "muted small" }, s.model) : null), h("td", null, pill(s.status)),
+      h("td", null, ago(s.started_at)), h("td", null, s.ended_at ? ago(s.ended_at) : "-"), h("td", { class: "small" }, s.exit_reason || "-"),
+      h("td", { class: "mono" }, short(s.id, 16))))))));
+}
+
+// ---------- decisions & memory ----------
+async function viewKnowledge(v) {
+  const pid = state.project.id;
+  const grid = h("div", { class: "grid" });
+  v.append(grid);
+  const dCard = h("div", { class: "card" });
+  const mCard = h("div", { class: "card" });
+  grid.append(dCard, mCard);
+
+  const drawDecisions = async () => {
+    const ds = await invoke("list_decisions", { projectId: pid }).catch((e) => { toast(errMsg(e), true); return []; });
+    clear(dCard).append(h("div", { class: "card-head" }, h("h2", null, "Decisions"), h("button", { class: "btn small", onclick: decisionDialog }, "+ Record")),
+      ds.length ? h("ul", { class: "list" }, ds.slice().reverse().map((d) => h("li", { style: "flex-direction:column;align-items:stretch;gap:2px" },
+        h("div", { class: "row" }, h("strong", null, d.title), h("span", { class: "spacer" }), h("span", { class: "muted small" }, `${d.source} · ${ago(d.created_at)}`)),
+        h("div", null, d.decision), d.rationale ? h("div", { class: "muted small" }, "Why: " + d.rationale) : null))) : h("div", { class: "empty" }, "No decisions recorded."));
+  };
+  const decisionDialog = () => {
+    const title = h("input", { type: "text", placeholder: "Storage engine" });
+    const decision = h("input", { type: "text", placeholder: "Use SQLite with WAL" });
+    const why = h("textarea", { placeholder: "Rationale" });
+    modal("Record a decision", [field("Title", title), field("Decision", decision), field("Why", why)], [{
+      label: "Record", primary: true, run: async () => {
+        if (!title.value.trim() || !decision.value.trim()) { toast("Title and decision are required", true); return false; }
+        await act(() => invoke("add_decision", { projectId: pid, title: title.value.trim(), decision: decision.value.trim(), rationale: why.value.trim(), task: null }), "Decision recorded");
+        drawDecisions();
+      },
+    }]);
+  };
+
+  const q = h("input", { type: "text", placeholder: "Search memory" });
+  const mList = h("div");
+  const drawMemory = async () => {
+    const ms = await invoke("search_memory", { projectId: pid, query: q.value }).catch((e) => { toast(errMsg(e), true); return []; });
+    clear(mList).append(ms.length ? h("ul", { class: "list" }, ms.map((m) => h("li", { style: "flex-direction:column;align-items:stretch;gap:2px" },
+      h("div", { class: "row" }, h("span", { class: "pill accent" }, m.category), m.verification !== "verified" ? h("span", { class: "pill" }, m.verification) : null, h("span", { class: "spacer" }), h("span", { class: "muted small" }, `${m.source} · ${ago(m.created_at)}`)),
+      h("div", null, m.content)))) : h("div", { class: "empty" }, q.value ? "No matches." : "No memory saved."));
+  };
+  q.addEventListener("input", () => { clearTimeout(q._t); q._t = setTimeout(drawMemory, 250); });
+  const memoryDialog = async () => {
+    const cats = await invoke("memory_categories").catch(() => ["note"]);
+    const cat = h("select", null, cats.map((c) => h("option", { value: c, selected: c === "note" }, c)));
+    const content = h("textarea", { placeholder: "Something every agent working here should know" });
+    modal("Save to project memory", [field("Category", cat), field("Content", content, "Secrets are redacted before saving.")], [{
+      label: "Save", primary: true, run: async () => {
+        if (!content.value.trim()) { toast("Write something to save", true); return false; }
+        await act(() => invoke("add_memory", { projectId: pid, category: cat.value, content: content.value.trim() }), "Saved");
+        drawMemory();
+      },
+    }]);
+  };
+  mCard.append(h("div", { class: "card-head" }, h("h2", null, "Project memory"), h("button", { class: "btn small", onclick: memoryDialog }, "+ Add")), q, h("div", { style: "height:8px" }), mList);
+  await Promise.all([drawDecisions(), drawMemory()]);
+}
+
+// ---------- AI targets ----------
+async function viewAgents(v) {
+  v.append(h("div", { class: "muted", style: "margin-bottom:12px" },
+    "Every AI you can switch to: coding agents (signed in or with an API key), API keys through an agent, AI IDEs and chat apps. Evyro stores which environment variable or Keychain item holds a key, never the key itself."));
+  const tcard = h("div", { class: "card" }, h("div", { class: "muted" }, "Checking AI targets…"));
+  const dcard = h("div", { class: "card", style: "margin-top:16px" }, h("div", { class: "muted" }, "Checking installed agents…"));
+  v.append(tcard, dcard);
+
+  let ts;
+  try { ts = await loadTargets(true); } catch (e) { clear(tcard).append(h("div", { class: "banner bad" }, errMsg(e))); ts = null; }
+  if (ts) {
+    const groups = ["harness", "api", "ide", "chat"].map((k) => [k, ts.filter((t) => t.target.kind === k)]).filter(([, g]) => g.length);
+    clear(tcard).append(
+      h("div", { class: "card-head" }, h("h2", null, "AI targets"),
+        h("div", { class: "row" },
+          h("button", { class: "btn small", onclick: () => render() }, "Re-check"),
+          h("button", { class: "btn small primary", onclick: () => addTargetDialog() }, "+ Add target"))),
+      ...groups.flatMap(([k, g]) => [
+        h("h3", null, KIND_LABEL[k]),
+        h("table", null,
+          h("thead", null, h("tr", null, ["Target", "Status", "Uses", "Next step", ""].map((x) => h("th", null, x)))),
+          h("tbody", null, g.map((t) => h("tr", { class: "clickable", onclick: () => targetDialog(t) },
+            h("td", null, h("strong", { class: "mono" }, t.target.name), t.target.description ? h("div", { class: "muted small" }, t.target.description) : null),
+            h("td", null, targetPill(t.state)),
+            h("td", { class: "small" }, t.display),
+            h("td", { class: "small" }, t.next_step || "-"),
+            h("td", null, state.project ? h("button", {
+              class: "btn small", style: "white-space:nowrap", onclick: (e) => { e.stopPropagation(); handTo(t.target.name, null, h("div")); },
+            }, "Switch to") : null))))),
+      ]));
+  }
+
+  let ds;
+  try { ds = state.agents || (state.agents = await invoke("detect_agents")); } catch (e) { clear(dcard).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
+  clear(dcard).append(h("div", { class: "card-head" }, h("h2", null, "Coding agents on this computer"), h("button", { class: "btn small", onclick: () => { state.agents = null; render(); } }, "Re-check")),
+    h("table", null,
+      h("thead", null, h("tr", null, ["Agent", "Status", "Version", "Can do", "Instruction file"].map((x) => h("th", null, x)))),
+      h("tbody", null, ds.map((d) => h("tr", null,
+        h("td", null, h("strong", null, d.display_name), h("div", { class: "muted small mono" }, d.id)),
+        h("td", null, pill(d.compatibility), d.diagnostic ? h("div", { class: "muted small" }, d.diagnostic) : null),
+        h("td", { class: "mono" }, d.version || "-"),
+        h("td", { class: "small" }, Object.entries(d.capabilities).filter(([, on]) => on === true).map(([k]) => k.replace(/_/g, " ")).join(", ") || "-"),
+        h("td", { class: "mono small" }, d.instruction_file))))));
+}
+
+function targetDialog(t) {
+  const x = t.target;
+  const rows = [["Kind", KIND_LABEL[x.kind]], ["Uses", t.display], ["Sign-in", x.auth.replace(/_/g, " ")],
+    ["Provider", x.provider], ["Model", x.model], ["Key variable", x.key_env], ["Keychain item", x.key_keychain], ["Base URL", x.base_url]]
+    .filter(([, val]) => val);
+  const actions = [];
+  if (state.project) actions.push({ label: "Switch to this AI", primary: true, run: () => handTo(x.name, null, h("div")) });
+  if (!t.builtin) actions.push({
+    label: "Remove", run: async () => {
+      if (!confirmInline.has(x.name)) { confirmInline.add(x.name); toast(`Press Remove again to delete target ${x.name}.`); return false; }
+      confirmInline.delete(x.name);
+      await act(() => invoke("remove_target", { name: x.name }), `Removed ${x.name}`);
+      state.targets = null; render(); return true;
+    },
+  });
+  modal("Target " + x.name, [
+    h("div", { class: "row" }, targetPill(t.state)),
+    h("table", null, h("tbody", null, rows.map(([k, val]) => h("tr", null, h("td", { class: "muted" }, k), h("td", { class: "mono small" }, val))))),
+    h("h3", null, "Checks"),
+    h("ul", { class: "list" }, t.checks.map((c) => h("li", null, pill(c.state === "ok" ? "ok" : c.state), h("span", null, c.name), h("span", { class: "muted small" }, c.detail)))),
+    t.next_step ? h("div", { class: "banner warn", style: "margin-top:10px" }, t.next_step) : null,
+    t.builtin ? h("div", { class: "hint" }, "Built-in target. Add your own to pick a model, provider or key.") : null,
+  ], actions);
+}
+const confirmInline = new Set();
+
+async function addTargetDialog() {
+  let opt;
+  try { opt = await invoke("target_options"); } catch (e) { toast(errMsg(e), true); return; }
+  const name = h("input", { type: "text", placeholder: "e.g. claude-work, gpt5-key, my-cursor" });
+  const kind = h("select", null, Object.entries(KIND_LABEL).map(([k, l]) => h("option", { value: k }, l)));
+  const harness = h("select", null, opt.harnesses.map((a) => h("option", { value: a.id }, a.display_name)));
+  const app = h("select");
+  const auth = h("select", null, [["auto", "The tool's own setup"], ["app_login", "Signed-in app account (no API key)"], ["api_key", "API key"], ["local", "Local model (Ollama, LM Studio)"]]
+    .map(([k, l]) => h("option", { value: k }, l)));
+  const provider = h("select", null, h("option", { value: "" }, "(tool default)"), opt.providers.map((p) => h("option", { value: p.id }, p.display_name)));
+  const model = h("input", { type: "text", placeholder: "Model id, optional" });
+  const keyEnv = h("input", { type: "text", placeholder: "Variable name, e.g. OPENROUTER_API_KEY (not the key)" });
+  const keychain = h("input", { type: "text", placeholder: "Keychain service name, optional (macOS)" });
+  const baseUrl = h("input", { type: "text", placeholder: "https://… (only for compatible or self-hosted endpoints)" });
+  const desc = h("input", { type: "text", placeholder: "Optional note" });
+  const fHarness = field("Coding agent", harness, "The CLI that does the work. API-key targets default to OpenCode, which supports most providers.");
+  const fApp = field("App", app);
+  const fAuth = field("Sign-in", auth);
+  const fProvider = field("Provider", provider);
+  const fModel = field("Model", model);
+  const fKey = field("API key from", keyEnv, "Put the key in your shell profile or the Keychain. Evyro reads it only when it starts the agent, and never saves it.");
+  const fKeychain = field("Or from the Keychain", keychain, "Store it with: security add-generic-password -s <name> -a evyro -w");
+  const fBase = field("Base URL", baseUrl);
+  const sync = () => {
+    const k = kind.value;
+    const show = (el, on) => { el.style.display = on ? "" : "none"; };
+    if (k === "ide" || k === "chat") {
+      const list = k === "ide" ? opt.ides : opt.chat_apps;
+      clear(app).append(...list.map((a) => h("option", { value: a.id }, a.display_name)));
+    }
+    if (k === "api") { auth.value = provider.value && opt.providers.find((p) => p.id === provider.value)?.local ? "local" : "api_key"; }
+    const agentKind = k === "harness" || k === "api";
+    const needsKey = agentKind && auth.value === "api_key";
+    show(fHarness, agentKind); show(fApp, !agentKind); show(fAuth, agentKind); show(fProvider, agentKind);
+    show(fModel, agentKind); show(fKey, needsKey); show(fKeychain, needsKey); show(fBase, agentKind && auth.value !== "app_login");
+    const p = opt.providers.find((x) => x.id === provider.value);
+    model.placeholder = p ? `e.g. ${p.example_model}` : "Model id, optional";
+    keyEnv.placeholder = p && p.key_env ? `e.g. ${p.key_env} (the variable name, not the key)` : "Variable name (not the key)";
+  };
+  [kind, auth, provider, harness].forEach((el) => el.addEventListener("change", sync));
+  sync();
+  modal("Add an AI target", [
+    field("Name", name), field("Kind", kind), fHarness, fApp, fAuth, fProvider, fModel, fKey, fKeychain, fBase, field("Note", desc),
+  ], [{
+    label: "Add target", primary: true, run: async () => {
+      const k = kind.value;
+      const agentKind = k === "harness" || k === "api";
+      const blank = (x) => (x.trim() ? x.trim() : null);
+      const target = {
+        name: name.value.trim(), kind: k,
+        harness: agentKind ? harness.value : null, app: agentKind ? null : app.value,
+        auth: agentKind ? auth.value : "auto",
+        provider: agentKind ? (provider.value || null) : null, model: agentKind ? blank(model.value) : null,
+        key_env: agentKind && auth.value === "api_key" ? blank(keyEnv.value) : null,
+        key_keychain: agentKind && auth.value === "api_key" ? blank(keychain.value) : null,
+        base_url: agentKind ? blank(baseUrl.value) : null,
+        description: desc.value.trim(), builtin: false,
+      };
+      await act(() => invoke("add_target", { target }), `Added ${target.name}`);
+      state.targets = null; render(); return true;
+    },
+  }]);
+}
+
+// ---------- settings ----------
+async function viewSettings(v) {
+  const grid = h("div", { class: "grid" });
+  v.append(grid);
+  if (state.project) {
+    const p = state.project;
+    const toText = (list) => list.map((argv) => argv.join(" ")).join("\n");
+    // Each line is a command; words split on spaces, "quoted words" stay together. No shell.
+    const parse = (text) => lines(text).map((l) => (l.match(/"[^"]*"|\S+/g) || []).map((w) => w.replace(/^"|"$/g, "")));
+    const test = h("textarea", { value: toText(p.commands.test), placeholder: "cargo test\nnpm test" });
+    const lint = h("textarea", { value: toText(p.commands.lint), placeholder: "cargo clippy -- -D warnings" });
+    const build = h("textarea", { value: toText(p.commands.build), placeholder: "cargo build" });
+    grid.append(h("div", { class: "card" },
+      h("h2", null, "Verification commands"),
+      h("div", { class: "muted small", style: "margin-bottom:10px" }, "Saved to .evyro/project.toml. One command per line. Commands run directly, without a shell."),
+      field("Test", test), field("Lint", lint), field("Build", build),
+      h("div", { class: "row" }, h("button", {
+        class: "btn primary", onclick: async () => {
+          const updated = await act(() => invoke("save_commands", { projectId: p.id, commands: { test: parse(test.value), lint: parse(lint.value), build: parse(build.value) } }), "Commands saved");
+          state.project = updated;
+          const i = state.projects.findIndex((x) => x.id === updated.id);
+          if (i >= 0) state.projects[i] = updated;
+        },
+      }, "Save"))));
+    grid.append(h("div", { class: "card" },
+      h("h2", null, "This project"),
+      h("dl", { class: "kv" }, h("dt", null, "Name"), h("dd", null, p.name), h("dt", null, "Folder"), h("dd", { class: "mono" }, p.root_path),
+        h("dt", null, "Main branch"), h("dd", null, p.main_branch || "-"), h("dt", null, "Project id"), h("dd", { class: "mono" }, p.id)),
+      h("div", { class: "row", style: "margin-top:12px" }, h("button", {
+        class: "btn danger small", onclick: () => modal(`Archive ${p.name}?`, [h("p", null, "The project is hidden from the list. Its tasks and history stay in the database, and you can register the folder again later.")], [{
+          label: "Archive", primary: true, run: async () => {
+            await act(() => invoke("set_project_archived", { projectId: p.id, archived: true }), "Archived");
+            state.project = null;
+            loadProjects();
+          },
+        }]),
+      }, "Archive project"))));
+  }
+  const info = h("div", { class: "card" }, h("h2", null, "Evyro"), h("div", { class: "muted" }, "Loading…"));
+  const doc = h("div", { class: "card wide" }, h("h2", null, "Doctor"), h("div", { class: "muted" }, "Running checks…"));
+  grid.append(info, doc);
+  invoke("app_info").then((a) => {
+    clear(info).append(h("h2", null, "Evyro"), h("dl", { class: "kv" },
+      h("dt", null, "Version"), h("dd", null, a.version), h("dt", null, "Data folder"), h("dd", { class: "mono" }, a.data_dir),
+      h("dt", null, "Schema"), h("dd", null, "v" + a.schema_version), h("dt", null, "Git"), h("dd", null, a.git || "not found")),
+      h("div", { class: "row", style: "margin-top:12px" }, h("button", {
+        class: "btn small", onclick: async () => { const r = await act(() => invoke("backup_now")); toast("Backup saved to " + r.path); },
+      }, "Back up database")));
+  }).catch((e) => clear(info).append(h("div", { class: "banner bad" }, errMsg(e))));
+  invoke("run_doctor", { projectId: state.project ? state.project.id : null }).then((cs) => {
+    clear(doc).append(h("h2", null, "Doctor"), h("ul", { class: "list" }, cs.map((c) => h("li", null, pill(c.status), h("strong", null, c.name), h("span", null, c.detail),
+      c.remediation ? h("span", { class: "muted small" }, "· " + c.remediation) : null))));
+  }).catch((e) => clear(doc).append(h("div", { class: "banner bad" }, errMsg(e))));
+}
+
+// ---------- boot ----------
+document.addEventListener("DOMContentLoaded", () => {
+  for (const b of document.querySelectorAll(".tab")) b.addEventListener("click", () => setTab(b.dataset.view));
+  $("#add-project-btn").addEventListener("click", addProjectDialog);
+  $("#drawer-close").addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { if ($("#modal-root").firstChild) clear($("#modal-root")); else closeDrawer(); }
+  });
+  invoke("app_info").then((a) => { $("#side-foot").textContent = `v${a.version} · local only`; }).catch(() => {});
+  loadProjects();
+});

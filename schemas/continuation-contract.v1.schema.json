@@ -1,0 +1,499 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://evyro.dev/schemas/continuation-contract.v1.schema.json",
+  "title": "Evyro continuation contract v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "contract_id",
+    "created_at",
+    "project",
+    "source",
+    "target",
+    "objective",
+    "completed",
+    "remaining",
+    "do_not_redo",
+    "files",
+    "git",
+    "verification",
+    "next_action",
+    "resume_protocol",
+    "redaction",
+    "quality",
+    "integrity"
+  ],
+  "$defs": {
+    "fact": {
+      "type": "object",
+      "required": [
+        "text",
+        "provenance"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "provenance": {
+          "enum": [
+            "evyro_captured",
+            "evyro_verified",
+            "agent_reported",
+            "human_recorded"
+          ]
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "required": [
+        "harness"
+      ],
+      "properties": {
+        "harness": {
+          "type": "string"
+        },
+        "model": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "session_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  },
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^1\\."
+    },
+    "contract_id": {
+      "type": "string",
+      "pattern": "^hnd_"
+    },
+    "event_id": {
+      "type": "string"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "type": "string"
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "root"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      }
+    },
+    "task": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "constraints": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "source": {
+      "$ref": "#/$defs/agent"
+    },
+    "target": {
+      "$ref": "#/$defs/agent"
+    },
+    "parent_checkpoint_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "objective": {
+      "type": "string"
+    },
+    "summary": {
+      "$ref": "#/$defs/fact"
+    },
+    "completed": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fact"
+      }
+    },
+    "remaining": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fact"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fact"
+      }
+    },
+    "do_not_redo": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "decision"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "rationale": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "status",
+          "sensitive"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "sensitive": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "required": [
+        "root",
+        "commit",
+        "dirty",
+        "fingerprint"
+      ],
+      "properties": {
+        "root": {
+          "type": "string"
+        },
+        "branch": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dirty": {
+          "type": "boolean"
+        },
+        "upstream": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ahead": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "behind": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "fingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "recent_commits": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "diff_stat": {
+          "type": "string"
+        }
+      }
+    },
+    "verification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "receipt_id",
+          "command",
+          "passed",
+          "matches_handoff_state"
+        ],
+        "properties": {
+          "receipt_id": {
+            "type": "string"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "at": {
+            "type": "string"
+          },
+          "commit": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "matches_handoff_state": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "next_action": {
+      "$ref": "#/$defs/fact"
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "os": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string"
+        },
+        "build_commands": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "test_commands": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "lint_commands": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "ownership": {
+      "type": "object"
+    },
+    "resume_protocol": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "required": [
+        "applied",
+        "findings"
+      ],
+      "properties": {
+        "applied": {
+          "type": "boolean"
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string"
+              },
+              "count": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      }
+    },
+    "quality": {
+      "type": "object",
+      "required": [
+        "met",
+        "total",
+        "criteria"
+      ],
+      "properties": {
+        "met": {
+          "type": "integer"
+        },
+        "total": {
+          "type": "integer"
+        },
+        "criteria": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "met",
+              "detail"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "met": {
+                "type": "boolean"
+              },
+              "detail": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "required": [
+        "algorithm",
+        "content_sha256",
+        "signature"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "hmac-sha256"
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  }
+}

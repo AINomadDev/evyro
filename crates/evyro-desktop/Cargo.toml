@@ -1,0 +1,28 @@
+[package]
+name = "evyro-desktop"
+description = "Evyro desktop app (Tauri 2) over evyro-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "evyro-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+evyro-core = { path = "../evyro-core" }
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[features]
+# Serve the bundled `ui/` folder. The Tauri CLI sets this for release builds;
+# it is on by default so plain `cargo run -p evyro-desktop` works too.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

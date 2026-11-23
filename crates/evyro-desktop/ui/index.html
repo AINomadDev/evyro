@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Evyro</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="logo.png" alt="" width="28" height="28">
+        <span>Evyro</span>
+      </div>
+      <div class="side-label">Projects</div>
+      <nav id="project-list" class="project-list"></nav>
+      <button id="add-project-btn" class="btn ghost small side-add">+ Add project</button>
+      <div class="side-foot" id="side-foot"></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="title-wrap">
+          <h1 id="project-title">No project selected</h1>
+          <div id="project-sub" class="muted small"></div>
+        </div>
+        <nav class="tabs" id="tabs">
+          <button data-view="overview" class="tab active">Overview</button>
+          <button data-view="tasks" class="tab">Tasks</button>
+          <button data-view="handoffs" class="tab">Handoffs</button>
+          <button data-view="sessions" class="tab">Sessions</button>
+          <button data-view="knowledge" class="tab">Decisions &amp; memory</button>
+          <button data-view="agents" class="tab">AI targets</button>
+          <button data-view="settings" class="tab">Settings</button>
+        </nav>
+      </header>
+      <section id="view" class="view"></section>
+    </main>
+
+    <aside id="drawer" class="drawer hidden" aria-hidden="true">
+      <div class="drawer-head">
+        <div id="drawer-title" class="drawer-title"></div>
+        <button id="drawer-close" class="btn ghost small" aria-label="Close">✕</button>
+      </div>
+      <div id="drawer-body" class="drawer-body"></div>
+    </aside>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" class="toast-root"></div>
+  <script src="app.js"></script>
+</body>
+</html>

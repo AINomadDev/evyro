@@ -1,0 +1,25 @@
+[package]
+name = "evyro-cli"
+description = "evyro command-line interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "evyro"
+path = "src/main.rs"
+
+[dependencies]
+evyro-core = { path = "../evyro-core" }
+evyro-mcp = { path = "../evyro-mcp" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+clap_complete.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true

@@ -1,0 +1,25 @@
+[package]
+name = "evyro-core"
+description = "Evyro continuity engine: projects, tasks, sessions, checkpoints, handoff contracts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+rusqlite.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+uuid.workspace = true
+time.workspace = true
+directories.workspace = true
+regex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

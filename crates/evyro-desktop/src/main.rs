@@ -1,0 +1,754 @@
+//! Evyro desktop: a Tauri 2 shell over `evyro-core`.
+//!
+//! The window is a thin client. Every command opens the same SQLite store the
+//! CLI and MCP server use, so the three always agree. Commands run on a
+//! blocking thread so Git and test runs never freeze the window.
+
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+use evyro_core::handoff::HandoffRequest;
+use evyro_core::init::InitOptions;
+use evyro_core::memory::NewMemory;
+use evyro_core::projects::Commands;
+use evyro_core::targets::{self, Target};
+use evyro_core::tasks::{Actor, NewTask, TaskStatus, TaskUpdate};
+use evyro_core::{adapters, backup, brand, doctor, git, Error, Store};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use std::path::PathBuf;
+
+type CmdResult = Result<Value, Value>;
+
+fn err(e: Error) -> Value {
+    json!({"code": e.code(), "message": e.to_string()})
+}
+
+/// Run `f` with a fresh store on a blocking thread.
+async fn with_store<F>(f: F) -> CmdResult
+where
+    F: FnOnce(&Store) -> evyro_core::Result<Value> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = Store::open_default().map_err(err)?;
+        f(&store).map_err(err)
+    })
+    .await
+    .map_err(|e| json!({"code": "internal", "message": e.to_string()}))?
+}
+
+fn human() -> Actor {
+    Actor::Human {
+        override_reason: None,
+    }
+}
+
+#[tauri::command]
+async fn app_info() -> CmdResult {
+    with_store(|s| {
+        Ok(json!({
+            "product": brand::PRODUCT_NAME,
+            "version": env!("CARGO_PKG_VERSION"),
+            "data_dir": s.paths.data_dir.display().to_string(),
+            "schema_version": s.schema_version()?,
+            "git": git::version().ok(),
+        }))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_projects(include_archived: Option<bool>) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(
+            s.list_projects(include_archived.unwrap_or(false), None)?
+        ))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn add_project(path: String) -> CmdResult {
+    with_store(move |s| {
+        let r = evyro_core::init::init_project(
+            s,
+            &PathBuf::from(path),
+            &InitOptions {
+                name: None,
+                append_agent_files: false,
+                agent_files: true,
+            },
+        )?;
+        Ok(json!(r))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_project_archived(project_id: String, archived: bool) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(s.set_project_flags(
+            &project_id,
+            None,
+            Some(archived),
+            None
+        )?))
+    })
+    .await
+}
+
+/// Everything the dashboard shows, in one call.
+#[tauri::command]
+async fn overview(project_id: String) -> CmdResult {
+    with_store(move |s| {
+        let p = s.get_project(&project_id)?;
+        let p = s.sync_project_file(p)?;
+        // Close out sessions whose process is gone, like `evyro status`.
+        let recovered = s.recover_stale_sessions(&p.id, false)?;
+        let active = s.active_task(&p.id)?;
+        let owner = match &active {
+            Some(t) => s.active_session_for_task(&t.id)?,
+            None => None,
+        };
+        let git = git::snapshot(&p.root()).ok();
+        let health = s.project_health(&p.id)?;
+        let pending = s.pending_handoff(&p.id, None)?;
+        let sessions = s.list_sessions(&p.id, true)?;
+        let events = s.list_events(&p.id, None, 25)?;
+        let latest = match &active {
+            Some(t) => s.latest_checkpoint(&p.id, Some(&t.id))?,
+            None => None,
+        };
+        Ok(json!({
+            "project": p,
+            "active_task": active,
+            "owner": owner,
+            "git": git,
+            "health": health,
+            "pending_handoff": pending,
+            "active_sessions": sessions,
+            "events": events,
+            "latest_checkpoint": latest,
+            "recovered": recovered,
+        }))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_tasks(project_id: String, include_closed: Option<bool>) -> CmdResult {
+    with_store(move |s| {
+        let ts = s.list_tasks(&project_id, None, include_closed.unwrap_or(true))?;
+        let mut out = Vec::new();
+        for t in ts {
+            let criteria = s.criteria(&t)?;
+            let met = criteria.iter().filter(|c| c.satisfied()).count();
+            let owner = s.active_session_for_task(&t.id)?;
+            let blockers = s.open_blockers(&t.id)?;
+            out.push(json!({
+                "task": t,
+                "criteria_met": met,
+                "criteria_total": criteria.len(),
+                "owner": owner.map(|o| o.harness),
+                "blocked_by": blockers.iter().map(|b| b.key.clone()).collect::<Vec<_>>(),
+            }));
+        }
+        Ok(json!(out))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn task_detail(project_id: String, task: String) -> CmdResult {
+    with_store(move |s| {
+        let t = s.resolve_task(&project_id, &task)?;
+        Ok(json!({
+            "task": t,
+            "criteria": s.criteria(&t)?,
+            "dependencies": s.dependencies(&t.id)?,
+            "blocked_by": s.open_blockers(&t.id)?.iter().map(|b| b.key.clone()).collect::<Vec<_>>(),
+            "owner": s.active_session_for_task(&t.id)?,
+            "checkpoints": s.list_checkpoints(&project_id, Some(&t.id), 10)?,
+            "verifications": s.list_verifications(&project_id, Some(&t.id))?,
+            "comments": s.comments(&t.id)?,
+            "pending_handoff": s.pending_handoff_for_task(&t.id)?,
+            "events": s.list_events(&project_id, Some(&t.id), 30)?,
+            "allowed_next": TaskStatus::ALL.iter().filter(|to| t.status.can_transition_to(**to)).map(|x| x.as_str()).collect::<Vec<_>>(),
+        }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct CreateTaskArgs {
+    title: String,
+    #[serde(default)]
+    description: String,
+    kind: Option<String>,
+    priority: Option<i64>,
+    #[serde(default)]
+    acceptance: Vec<String>,
+    #[serde(default)]
+    ready: bool,
+}
+
+#[tauri::command]
+async fn create_task(project_id: String, input: CreateTaskArgs) -> CmdResult {
+    with_store(move |s| {
+        let acceptance = input
+            .acceptance
+            .into_iter()
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty())
+            .collect();
+        let t = s.create_task(
+            &project_id,
+            NewTask {
+                title: input.title,
+                description: input.description,
+                kind: input.kind,
+                priority: input.priority,
+                acceptance,
+                status: input.ready.then_some(TaskStatus::Ready),
+                ..Default::default()
+            },
+        )?;
+        Ok(json!(t))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_task_status(
+    project_id: String,
+    task: String,
+    status: String,
+    override_reason: Option<String>,
+) -> CmdResult {
+    with_store(move |s| {
+        let t = s.resolve_task(&project_id, &task)?;
+        let to: TaskStatus = status.parse()?;
+        let actor = Actor::Human {
+            override_reason: override_reason.filter(|r| !r.trim().is_empty()),
+        };
+        Ok(json!(s.update_task(
+            &t.id,
+            TaskUpdate {
+                status: Some(to),
+                ..Default::default()
+            },
+            &actor
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn add_criterion(project_id: String, task: String, text: String) -> CmdResult {
+    with_store(move |s| {
+        let t = s.resolve_task(&project_id, &task)?;
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            return Err(Error::Invalid("criterion text is empty".into()));
+        }
+        Ok(json!(s.update_task(
+            &t.id,
+            TaskUpdate {
+                add_acceptance: vec![text],
+                ..Default::default()
+            },
+            &human()
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn check_criterion(
+    project_id: String,
+    task: String,
+    index: usize,
+    met: bool,
+    note: Option<String>,
+) -> CmdResult {
+    with_store(move |s| {
+        let t = s.resolve_task(&project_id, &task)?;
+        Ok(json!(s.check_criterion(
+            &t.id,
+            index,
+            met,
+            note.as_deref().unwrap_or(""),
+            None,
+            &human()
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn add_comment(project_id: String, task: String, body: String) -> CmdResult {
+    with_store(move |s| {
+        let t = s.resolve_task(&project_id, &task)?;
+        let body = evyro_core::redact::redact(&body).0;
+        Ok(json!(s.add_comment(&t.id, "human", &body)?))
+    })
+    .await
+}
+
+/// Runs one of the project's configured commands. Arbitrary commands are not
+/// accepted from the window, the same rule the MCP server follows.
+#[tauri::command]
+async fn run_verification(
+    project_id: String,
+    task: Option<String>,
+    kind: String,
+    index: Option<usize>,
+) -> CmdResult {
+    with_store(move |s| {
+        let p = s.sync_project_file(s.get_project(&project_id)?)?;
+        let list = match kind.as_str() {
+            "test" => &p.commands.test,
+            "lint" => &p.commands.lint,
+            "build" => &p.commands.build,
+            _ => return Err(Error::Invalid("kind must be test, lint or build".into())),
+        };
+        let argv = list.get(index.unwrap_or(0)).cloned().ok_or_else(|| {
+            Error::Invalid(format!("no {kind} command configured; add one in Settings"))
+        })?;
+        let t = match &task {
+            Some(r) => Some(s.resolve_task(&p.id, r)?),
+            None => None,
+        };
+        let cwd = match &t {
+            Some(t) => s.task_root(t)?,
+            None => p.root(),
+        };
+        let r = s.run_verification(&p.id, t.as_ref().map(|t| t.id.as_str()), None, &argv, &cwd)?;
+        Ok(json!({"receipt": r.receipt, "output_tail": r.output_tail}))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_sessions(project_id: String, active_only: Option<bool>) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(s.list_sessions(
+            &project_id,
+            active_only.unwrap_or(false)
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn recover_sessions(project_id: String, include_unknown: bool) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(
+            s.recover_stale_sessions(&project_id, include_unknown)?
+        ))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_handoffs(project_id: String) -> CmdResult {
+    with_store(move |s| Ok(json!(s.list_handoffs(&project_id, 100)?))).await
+}
+
+#[tauri::command]
+async fn handoff_detail(handoff_id: String) -> CmdResult {
+    with_store(move |s| {
+        let h = s.get_handoff(&handoff_id)?;
+        let c = evyro_core::contract::load(std::path::Path::new(&h.contract_path))?;
+        let integrity = c.verify_integrity(&s.paths.key_path());
+        Ok(json!({
+            "record": h,
+            "markdown": c.to_markdown(),
+            "resume_prompt": evyro_core::handoff::resume_prompt(&c),
+            "integrity_ok": integrity.is_ok(),
+            "integrity_error": integrity.err().map(|e| e.to_string()),
+            "contract": c,
+        }))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct PrepareArgs {
+    task: Option<String>,
+    to: String,
+    model: Option<String>,
+    #[serde(default)]
+    summary: String,
+    #[serde(default)]
+    completed: Vec<String>,
+    #[serde(default)]
+    remaining: Vec<String>,
+    #[serde(default)]
+    next_action: String,
+}
+
+#[tauri::command]
+async fn prepare_handoff(project_id: String, input: PrepareArgs) -> CmdResult {
+    with_store(move |s| {
+        let clean = |v: Vec<String>| -> Vec<String> {
+            v.into_iter()
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect()
+        };
+        let remaining = clean(input.remaining);
+        let h = s.prepare_handoff(
+            &project_id,
+            HandoffRequest {
+                task: input.task,
+                to: input.to,
+                to_model: input.model,
+                summary: input.summary,
+                completed: clean(input.completed),
+                remaining: (!remaining.is_empty()).then_some(remaining),
+                next_action: input.next_action,
+                actor: Some("human".into()),
+            },
+        )?;
+        Ok(json!(h))
+    })
+    .await
+}
+
+/// Accept a handoff for an agent the person will start themselves. The
+/// window shows drift and checks; nothing launches from here.
+#[tauri::command]
+async fn resume_handoff(
+    project_id: String,
+    handoff_id: String,
+    agent: String,
+    accept_drift: bool,
+) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(s.resume_handoff(
+            &project_id,
+            Some(&handoff_id),
+            &agent,
+            accept_drift,
+            None
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn context_packet(
+    project_id: String,
+    task: Option<String>,
+    budget: Option<String>,
+) -> CmdResult {
+    with_store(move |s| {
+        let p = s.get_project(&project_id)?;
+        let t = match &task {
+            Some(r) => Some(s.resolve_task(&p.id, r)?),
+            None => s.active_task(&p.id)?,
+        };
+        let b =
+            evyro_core::context::budget_for(budget.as_deref().unwrap_or("large")).unwrap_or(12000);
+        let c = s.context_packet(&p, t.as_ref(), b)?;
+        let text = c
+            .sections
+            .iter()
+            .filter(|x| x.included)
+            .map(|x| x.content.clone())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        Ok(json!({"packet": c, "text": text}))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn list_decisions(project_id: String) -> CmdResult {
+    with_store(move |s| Ok(json!(s.list_decisions(&project_id, None)?))).await
+}
+
+#[tauri::command]
+async fn add_decision(
+    project_id: String,
+    title: String,
+    decision: String,
+    rationale: String,
+    task: Option<String>,
+) -> CmdResult {
+    with_store(move |s| {
+        let t = match task.filter(|t| !t.is_empty()) {
+            Some(r) => Some(s.resolve_task(&project_id, &r)?.id),
+            None => None,
+        };
+        Ok(json!(s.record_decision(
+            &project_id,
+            t.as_deref(),
+            &title,
+            &decision,
+            &rationale,
+            "human"
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn search_memory(project_id: String, query: Option<String>) -> CmdResult {
+    with_store(move |s| {
+        let q = query.filter(|q| !q.trim().is_empty());
+        Ok(json!(s.search_memory(
+            &project_id,
+            q.as_deref(),
+            None,
+            100
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn add_memory(project_id: String, category: String, content: String) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(s.add_memory(
+            &project_id,
+            NewMemory {
+                category,
+                content,
+                files: vec![],
+                task_id: None,
+                confidence: None,
+                global: false,
+            },
+            "human"
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn memory_categories() -> CmdResult {
+    Ok(json!(evyro_core::memory::CATEGORIES))
+}
+
+#[tauri::command]
+async fn detect_agents() -> CmdResult {
+    tauri::async_runtime::spawn_blocking(|| json!(adapters::detect_all()))
+        .await
+        .map_err(|e| json!({"code": "internal", "message": e.to_string()}))
+}
+
+#[tauri::command]
+async fn run_doctor(project_id: Option<String>) -> CmdResult {
+    with_store(move |s| {
+        let cwd = match project_id {
+            Some(id) => s.get_project(&id)?.root(),
+            None => std::env::current_dir().unwrap_or_default(),
+        };
+        Ok(json!(doctor::run(s, &cwd)))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn save_commands(project_id: String, commands: Commands) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(evyro_core::init::save_project_commands(
+            s,
+            &project_id,
+            &commands
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn backup_now() -> CmdResult {
+    with_store(|s| {
+        let dir = s.paths.data_dir.join("backups");
+        std::fs::create_dir_all(&dir)?;
+        let dest = dir.join(format!(
+            "evyro-{}.db",
+            evyro_core::util::now().replace([':', '.'], "-")
+        ));
+        backup::backup_db(s, &dest)?;
+        Ok(json!({"path": dest.display().to_string()}))
+    })
+    .await
+}
+
+// ---------- switch targets ----------
+
+/// Every switch target with its readiness. Checks look for evidence only and
+/// never read key values.
+#[tauri::command]
+async fn list_targets() -> CmdResult {
+    with_store(|s| {
+        let all = targets::list_targets(&s.paths)?;
+        Ok(json!(all
+            .into_iter()
+            .map(|t| {
+                let builtin = t.builtin;
+                let mut v = json!(targets::check_target(&t));
+                v["builtin"] = json!(builtin);
+                v
+            })
+            .collect::<Vec<_>>()))
+    })
+    .await
+}
+
+/// Choices for the "add target" form.
+#[tauri::command]
+async fn target_options() -> CmdResult {
+    let harnesses: Vec<Value> = adapters::registry()
+        .into_iter()
+        .map(|a| {
+            json!({
+                "id": a.id,
+                "display_name": a.display_name,
+                "providers": targets::harness_providers(a.id),
+                "app_login": targets::supports_app_login(a.id),
+            })
+        })
+        .collect();
+    Ok(json!({
+        "harnesses": harnesses,
+        "providers": targets::providers(),
+        "ides": targets::ides(),
+        "chat_apps": targets::chat_apps(),
+    }))
+}
+
+#[tauri::command]
+async fn add_target(target: Target) -> CmdResult {
+    with_store(move |s| Ok(json!(targets::add_target(&s.paths, target)?))).await
+}
+
+#[tauri::command]
+async fn remove_target(name: String) -> CmdResult {
+    with_store(move |s| {
+        targets::remove_target(&s.paths, &name)?;
+        Ok(json!({"removed": name}))
+    })
+    .await
+}
+
+/// Hand work to an IDE or chat target: save the hand-over text, copy it and
+/// open the app. Returns `{handover}` or, when the repository drifted,
+/// `{drift}` with nothing changed.
+#[tauri::command]
+async fn handover_to_app(
+    project_id: String,
+    target: String,
+    task: Option<String>,
+    handoff_id: Option<String>,
+    accept_drift: bool,
+) -> CmdResult {
+    with_store(move |s| {
+        let p = s.get_project(&project_id)?;
+        let t = targets::resolve_target(&s.paths, &target)?;
+        match s.handover_to_app(
+            &p,
+            &t,
+            task.as_deref(),
+            handoff_id.as_deref(),
+            accept_drift,
+            false,
+        )? {
+            Ok(h) => {
+                let mut v = json!(h);
+                v.as_object_mut().map(|m| m.remove("text"));
+                Ok(json!({"handover": v}))
+            }
+            Err(r) => Ok(json!({"drift": r})),
+        }
+    })
+    .await
+}
+
+/// Start `evyro run --to <target>` in a new Terminal window (macOS). Agents
+/// need a real terminal, so the window never runs them itself.
+#[tauri::command]
+async fn open_in_terminal(
+    project_id: String,
+    target: String,
+    task: Option<String>,
+    handoff_id: Option<String>,
+) -> CmdResult {
+    with_store(move |s| {
+        let p = s.get_project(&project_id)?;
+        let t = targets::resolve_target(&s.paths, &target)?;
+        let q = |x: &str| format!("'{}'", x.replace('\'', "'\\''"));
+        let mut line = format!(
+            "cd {} && {} run --to {}",
+            q(&p.root().to_string_lossy()),
+            brand::CLI_NAME,
+            q(&t.name)
+        );
+        if let Some(k) = task.as_deref().filter(|k| !k.is_empty()) {
+            line.push_str(&format!(" --task {}", q(k)));
+        }
+        if let Some(h) = handoff_id.as_deref().filter(|h| !h.is_empty()) {
+            line.push_str(&format!(" --handoff {}", q(h)));
+        }
+        if !cfg!(target_os = "macos") {
+            return Ok(json!({"opened": false, "command": line}));
+        }
+        let script = format!(
+            "tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell",
+            line.replace('\\', "\\\\").replace('"', "\\\"")
+        );
+        let ok = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(script)
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false);
+        Ok(json!({"opened": ok, "command": line}))
+    })
+    .await
+}
+
+fn main() {
+    tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![
+            app_info,
+            list_projects,
+            add_project,
+            set_project_archived,
+            overview,
+            list_tasks,
+            task_detail,
+            create_task,
+            set_task_status,
+            add_criterion,
+            check_criterion,
+            add_comment,
+            run_verification,
+            list_sessions,
+            recover_sessions,
+            list_handoffs,
+            handoff_detail,
+            prepare_handoff,
+            resume_handoff,
+            context_packet,
+            list_decisions,
+            add_decision,
+            search_memory,
+            add_memory,
+            memory_categories,
+            detect_agents,
+            run_doctor,
+            save_commands,
+            backup_now,
+            list_targets,
+            target_options,
+            add_target,
+            remove_target,
+            handover_to_app,
+            open_in_terminal,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Evyro desktop");
+}
