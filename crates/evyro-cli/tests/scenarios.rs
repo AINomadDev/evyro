@@ -1264,6 +1264,113 @@ fn switch_to_any_kind_of_ai() {
     }
 }
 
+/// Review comments: leave them on lines, hand them to an agent as one prompt,
+/// see them in the context packet, resolve them by short id.
+#[test]
+fn review_comments_reach_the_next_agent() {
+    let mut env = Env::new();
+    let repo = env.repo("review");
+    env.init(&repo);
+    std::fs::write(
+        repo.join("limit.rs"),
+        "fn limit() -> u32 {\n    100 // api_key=sk-abcdefghijklmnopqrstuvwxyz123456\n}\n",
+    )
+    .unwrap();
+    let c = env.json(
+        &repo,
+        &["review", "comment", "limit.rs:2", "Read this from config"],
+    );
+    assert_eq!(c["line"], 2);
+    assert_eq!(c["author"], "human");
+    let snippet = c["snippet"].as_str().unwrap();
+    assert!(snippet.contains("100"), "{snippet}");
+    assert!(
+        !snippet.contains("sk-abcdefghijklmnop"),
+        "secret kept in snippet: {snippet}"
+    );
+    env.ok(
+        &repo,
+        &["review", "comment", "README.md", "Document the limit"],
+    );
+    assert!(!env
+        .run(&repo, &["review", "comment", "../outside.rs:1", "no"])
+        .status
+        .success());
+
+    let p = env.json(&repo, &["review", "prompt", "--mark-sent"]);
+    assert_eq!(p["count"], 2);
+    let text = p["prompt"].as_str().unwrap();
+    assert!(
+        text.contains("limit.rs:2") && text.contains("Read this from config"),
+        "{text}"
+    );
+    let pending = env.json(&repo, &["review"]);
+    assert!(pending
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|c| c["status"] == "sent"));
+    // Nothing open is left to send again.
+    assert_eq!(env.json(&repo, &["review", "prompt"])["count"], 0);
+
+    let ctx = env.ok(&repo, &["context"]);
+    assert!(
+        ctx.contains("## Open review comments") && ctx.contains("Read this from config"),
+        "{ctx}"
+    );
+
+    let id = c["id"].as_str().unwrap();
+    let short = &id[id.len() - 8..];
+    env.ok(&repo, &["review", "resolve", short]);
+    let left = env.json(&repo, &["review"]);
+    assert_eq!(left.as_array().unwrap().len(), 1);
+    assert_eq!(
+        env.json(&repo, &["review", "list", "--all"])
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    env.ok(&repo, &["review", "reopen", short]);
+    assert_eq!(env.json(&repo, &["review"]).as_array().unwrap().len(), 2);
+
+    // An agent reads and resolves them over MCP.
+    let mut child = env
+        .cmd(&repo, &["mcp", "--agent", "codex"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    let mut stdin = child.stdin.take().unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"2025-06-18","capabilities":{{}},"clientInfo":{{"name":"test","version":"1"}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"get_review_comments","arguments":{{}}}}}}"#).unwrap();
+    writeln!(stdin, r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"resolve_review_comment","arguments":{{"id":"{short}"}}}}}}"#).unwrap();
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    let lines: Vec<Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let got = &lines[1]["result"]["structuredContent"]["result"];
+    assert_eq!(got["comments"].as_array().unwrap().len(), 2, "{got}");
+    assert!(got["text"]
+        .as_str()
+        .unwrap()
+        .contains("Read this from config"));
+    assert_eq!(lines[2]["result"]["isError"], false, "{}", lines[2]);
+    let left = env.json(&repo, &["review"]);
+    assert_eq!(left.as_array().unwrap().len(), 1);
+    let all = env.json(&repo, &["review", "list", "--all"]);
+    let resolved = all
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["status"] == "resolved")
+        .unwrap();
+    assert_eq!(resolved["id"], c["id"]);
+}
+
 /// Code search: file names, text, symbols and outlines through the CLI and the
 /// read-only MCP server. Ignored, binary and sensitive files stay out, and
 /// secrets in matched lines are redacted.

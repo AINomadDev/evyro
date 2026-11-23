@@ -43,6 +43,11 @@ search_json=$("$EVYRO" --json search text "exit 0")
 if grep -q '"test.sh"' <<<"$search_json"; then ok "search text"; else echo "FAIL  search text"; exit 1; fi
 step "search files" "$EVYRO" search files test
 step "search symbols" "$EVYRO" search symbols main
+step "review comment" "$EVYRO" review comment test.sh:1 "Explain this line"
+review_json=$("$EVYRO" --json review prompt --mark-sent)
+if grep -q "Explain this line" <<<"$review_json"; then ok "review prompt"; else echo "FAIL  review prompt"; exit 1; fi
+review_id=$("$EVYRO" --json review | sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' | head -1)
+step "review resolve" "$EVYRO" review resolve "$review_id"
 step "export" "$EVYRO" export --out "$TMP/export.json"
 step "backup" "$EVYRO" backup "$TMP/backup.db"
 echo "CLI end-to-end passed."

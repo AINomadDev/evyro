@@ -397,9 +397,70 @@ pub fn diff_text(root: &Path, max_bytes: usize) -> String {
     s
 }
 
+/// New, untracked text files as "added" diffs, so they can be reviewed like
+/// any other change. Sensitive paths, binary files and files over
+/// `max_file_bytes` are skipped. The caller must still redact the text.
+pub fn untracked_diff(root: &Path, files: &[FileState], max_file_bytes: u64) -> String {
+    let mut out = String::new();
+    for f in files.iter().filter(|f| f.status == "??") {
+        if crate::redact::is_sensitive_path(&f.path) || f.size.map_or(true, |n| n > max_file_bytes)
+        {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(root.join(&f.path)) else {
+            continue;
+        };
+        if bytes.contains(&0) {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&bytes);
+        let lines: Vec<&str> = text.lines().collect();
+        out.push_str(&format!(
+            "diff --git a/{p} b/{p}\nnew file mode 100644\n--- /dev/null\n+++ b/{p}\n@@ -0,0 +1,{n} @@\n",
+            p = f.path,
+            n = lines.len()
+        ));
+        for l in lines {
+            out.push('+');
+            out.push_str(l);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn untracked_text_files_become_added_diffs() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("new.rs"), "fn a() {}\nfn b() {}\n").unwrap();
+        std::fs::write(dir.path().join(".env"), "TOKEN=x\n").unwrap();
+        std::fs::write(dir.path().join("bin.dat"), [0u8, 1, 2]).unwrap();
+        let st = |p: &str, size: u64| FileState {
+            path: p.into(),
+            status: "??".into(),
+            sha256: None,
+            size: Some(size),
+        };
+        let files = [
+            st("new.rs", 20),
+            st(".env", 8),
+            st("bin.dat", 3),
+            st("big.txt", 10_000_000),
+        ];
+        let d = untracked_diff(dir.path(), &files, 1_000_000);
+        assert!(
+            d.contains("+++ b/new.rs\n@@ -0,0 +1,2 @@\n+fn a() {}\n+fn b() {}\n"),
+            "{d}"
+        );
+        assert!(
+            !d.contains(".env") && !d.contains("bin.dat") && !d.contains("big.txt"),
+            "{d}"
+        );
+    }
     #[test]
     fn redacts_credentials_in_urls() {
         assert_eq!(

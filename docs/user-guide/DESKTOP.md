@@ -17,7 +17,7 @@ Requirements: Rust 1.80+ and Git. On Linux, the WebKitGTK 4.1 development packag
 | Screen | What it shows | What you can do |
 |---|---|---|
 | Overview | Active task and owner, last checkpoint and next step, Git branch and changed files, health findings, recent activity (refreshes every few seconds) | Open the task, hand it off, copy a context packet for any agent |
-| Changes | Files changed since the last commit and their diff, with secrets hidden | Review what an AI changed before you hand off or verify; copy the diff |
+| Changes | Files changed since the last commit (new files included) with line numbers, secrets hidden, and review comments inline | Comment on any line or file, **Send comments to agent** (into a running thread, or copied as a prompt), resolve or delete comments, copy the diff |
 | Threads | Coding agents and shells running inside the window, one terminal each, with status and exit code | **+ Agent** starts any coding agent or API target on a task through `evyro run`; **+ Shell** opens a shell in the repository; type straight into the terminal, **Hand off** from a running agent, **Stop** or **Close** a thread |
 | Tasks | Board by status with criteria progress, owner and blockers | Create tasks with acceptance criteria; open a task to tick criteria, change status, run tests, add notes |
 | Handoffs | Every handoff with quality score and status | Prepare a handoff to any AI, read the signed contract, see drift, then **Start with this AI** or **Accept only** |
