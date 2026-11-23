@@ -136,6 +136,16 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
         .current_dir(&cwd)
         .env("EVYRO_SESSION_ID", &session.id)
         .env("EVYRO_PROJECT_ID", &p.id);
+    if opts.headless {
+        // Nobody types into a headless run. An open stdin makes some CLIs
+        // (Codex among them) wait for more prompt text forever.
+        cmd.stdin(std::process::Stdio::null());
+        if spec.id == "gemini" {
+            // Gemini asks whether to trust a new folder before it will edit
+            // there; headless runs have nobody to answer.
+            cmd.env("GEMINI_CLI_TRUST_WORKSPACE", "true");
+        }
+    }
     for k in &plan.env_remove {
         cmd.env_remove(k);
     }

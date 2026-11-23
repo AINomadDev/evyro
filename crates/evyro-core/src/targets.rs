@@ -710,7 +710,13 @@ fn login_evidence(harness: &str) -> Check {
         _ => &[],
     };
     if let Some(f) = files.iter().find(|f| h.join(f).exists()) {
-        return ck("app sign-in", "ok", format!("found ~/{f}"));
+        // A login file says someone signed in once, not that the account can
+        // run now (expired plan, usage limit, a forced account migration).
+        return ck(
+            "app sign-in",
+            "ok",
+            format!("found ~/{f}; the account itself is checked only when the tool runs"),
+        );
     }
     if harness == "claude-code" {
         if let Some(true) = keychain_has("Claude Code-credentials") {

@@ -134,6 +134,14 @@ pub fn run(store: &Store, cwd: &Path) -> Vec<Check> {
             format!("{} ({})", p.name, p.id),
             None,
         ));
+        if let Err(e) = crate::projects::project_file_problem(&p.root()) {
+            out.push(c(
+                "project.toml",
+                "fail",
+                e,
+                Some("fix the file; until then Evyro keeps the last commands it read"),
+            ));
+        }
         if p.commands.test.is_empty() {
             out.push(c(
                 "test command",
