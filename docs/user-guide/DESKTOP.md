@@ -54,6 +54,14 @@ Everything works from the keyboard alone. Tab reaches every button, row and card
 
 **First run.** With no projects yet, the welcome screen walks through adding a project (with a folder picker), checking your AIs and handing work over.
 
+## Menu bar and tray
+
+Evyro puts an icon in the macOS menu bar, or the Windows or Linux tray. Click it to bring the window back. Its menu has **Show Evyro** and **Quit Evyro**.
+
+If you close the window while agent threads or chats are still running, Evyro hides the window instead of stopping them, and a notification says so. On macOS, clicking the Dock icon also brings it back. Quitting from the menu stops every running agent and closes their sessions with a checkpoint. With nothing running, closing the window quits as before.
+
+On Linux the icon needs `libayatana-appindicator3-1`. The `.deb` installs it. Without it, Evyro runs with no tray icon, and closing the window always quits.
+
 ## Rules the app follows
 
 - **Verified needs evidence.** Moving a task to Verified needs every acceptance criterion ticked and a passing test run on the current code. If that is missing, the app offers a human override, which asks for a reason and logs it.
