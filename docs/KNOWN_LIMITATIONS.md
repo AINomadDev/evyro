@@ -2,7 +2,7 @@
 
 Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending.
 
-## Works (tested in CI on Linux)
+## Works (tested in CI on Linux and macOS; unit tests and builds also on Windows)
 
 - Project registry, init, move detection, isolation between projects.
 - Task graph with state machine, dependencies, cycle detection, ready work, leases.
@@ -16,21 +16,33 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - A receiving agent that fails to launch reopens its handoff instead of stranding the task.
 - Switch targets of every kind, with simulated binaries: an API target (key from an env var, model mapped for OpenCode), refusal before any state change when the key is missing, `app_login` removing `ANTHROPIC_API_KEY`, an IDE launch, a redacted chat pack, and continuing a handoff with a different AI than it named.
 
+- Desktop UI smoke test (Playwright): every screen, the add-target form, the command palette, shortcuts, live refresh and first-run setup, on Linux, macOS and Windows.
+- Desktop app builds on Linux, macOS and Windows.
+
+## Works (checked on a real Mac, 2026-11-23, macOS 27.2 arm64)
+
+- Workspace and desktop build, clippy and fmt, and every step of `scripts/mac-smoke-test.sh`.
+- Detection of installed, signed-in Claude Code, Codex and Gemini CLI (version and login evidence).
+- Keychain check for a missing item, with no password prompt; a pasted key refused.
+- Chat hand-over: clipboard (`pbcopy`) and the browser opened.
+- The desktop app opened with the full UI.
+
 ## Works (checked by hand on Linux)
 
-- Desktop app: every screen opened against a real database under Xvfb on Linux; creating a task, checking criteria, running tests, accepting a handoff with drift, and saving commands all worked. On 2026-11-23: the AI targets screen, adding an API-key target from the form, and switching to a chat app through a handoff. There are no automated UI tests yet.
+- Desktop app under Xvfb: creating a task, checking criteria, running tests, accepting a handoff with drift, saving commands, the AI targets screen, adding a target, switching to a chat app through a handoff, the Changes view, the palette and live refresh after a CLI checkpoint.
 
 ## Not yet verified
 
 - **Real agents.** No real Claude Code, Codex, Gemini or OpenCode run has been recorded. Argv and MCP setup are from docs. The first real run on your Mac is the next acceptance step.
-- **macOS and Windows.** Code is cross-platform by design (paths, PATHEXT, `tasklist` for pid checks) but only Linux has been built and tested. CI config for macOS and Windows exists and has not run yet. Pratik ran the CLI by hand on macOS on 2026-11-22 and the main flows worked.
-- **Desktop app on macOS.** Built and used on Linux (WebKitGTK) only. macOS uses WKWebView; layout differences are possible.
-- **Sign-in and key checks against real tools.** Login detection looks for each tool's credential file or Keychain item by name; the locations come from the tools' docs and have not been checked against real installs. Opening IDEs and chat apps, the clipboard (`pbcopy`), Keychain reads (`security`) and the Terminal launch use macOS commands that have not run on a Mac yet.
+- **Windows end-to-end.** Unit tests and builds pass on Windows CI, but the end-to-end scenario tests use shell-script stand-ins for agents and run only on Linux and macOS. No one has used Evyro on a Windows machine.
+- **Notifications and the Terminal launch** on a real desktop.
+- **Installers.** The CI job that builds .dmg, .exe, .deb and .AppImage is configured; see the backlog for its first run. Builds are not code-signed or notarized (needs an Apple Developer ID and a Windows certificate).
+- **Sign-in and key checks against real tools.** Login detection is confirmed for Claude Code, Codex and Gemini CLI on a real Mac; the others follow their docs. Opening IDEs from Evyro has not been checked on a real Mac yet.
 - **Real API keys.** No target has been run with a real key; model name mapping per agent follows each agent's docs.
 
 ## Not implemented
 
-- Desktop: embedded terminal, native folder picker, notifications, tray icon, auto-update.
+- Desktop: embedded terminal, tray icon, auto-update.
 - Web UI, mobile companion, remote access.
 - Terminal/PTY, diff viewer, review workflow, inline comments (planned via px0 integration).
 - Code search, symbol index, LSP, codebase map.
