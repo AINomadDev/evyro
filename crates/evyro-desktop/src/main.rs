@@ -23,6 +23,7 @@ mod review;
 mod search;
 mod skills;
 mod threads;
+mod tray;
 
 type CmdResult = Result<Value, Value>;
 
@@ -954,17 +955,32 @@ fn main() {
             move |app| {
                 chat::attach(&chats, app.handle().clone());
                 start_event_watcher(app.handle().clone());
+                // A missing tray (some Linux desktops) is not fatal.
+                if let Err(e) = tray::install(app.handle()) {
+                    eprintln!("evyro: no tray icon: {e}");
+                }
                 Ok(())
             }
         })
+        .on_window_event({
+            let terms = terms.clone();
+            let chats = chats.clone();
+            move |w, e| tray::on_window_event(w, e, &terms, &chats)
+        })
         .build(tauri::generate_context!())
         .expect("error while running Evyro desktop")
-        .run(move |_, event| {
+        .run(move |app, event| match event {
             // Agents started in the window stop with it.
-            if let tauri::RunEvent::Exit = event {
+            tauri::RunEvent::Exit => {
                 terms.close_all();
                 remote::stop(&remote);
                 chat::close_all(&chats);
+            }
+            // macOS: clicking the Dock icon brings a hidden window back.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen { .. } => tray::show_main(app),
+            _ => {
+                let _ = app;
             }
         });
 }

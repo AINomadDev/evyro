@@ -27,6 +27,11 @@
     "targets": ["app", "dmg", "nsis", "deb", "appimage"],
     "category": "DeveloperTool",
     "shortDescription": "Keep AI coding work continuous across agents",
+    "linux": {
+      "deb": {
+        "depends": ["libayatana-appindicator3-1"]
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
