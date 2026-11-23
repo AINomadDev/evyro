@@ -7,7 +7,7 @@ set -euo pipefail
 tag="${1:?usage: check-version.sh <tag>}"
 want="${tag#v}"
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-cargo=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' "$root/Cargo.toml" | head -1)
+cargo=$(awk -F'"' '/^\[workspace.package\]/{f=1;next} /^\[/{f=0} f&&/^version *=/{print $2; exit}' "$root/Cargo.toml" | head -1)
 tauri=$(sed -n 's/^ *"version": *"\(.*\)",*$/\1/p' "$root/crates/evyro-desktop/tauri.conf.json" | head -1)
 ok=1
 [[ "$want" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "tag $tag is not v<major>.<minor>.<patch>[-pre]"; ok=0; }

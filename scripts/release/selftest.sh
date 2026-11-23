@@ -5,7 +5,7 @@
 #   cargo build -p evyro-cli && bash scripts/release/selftest.sh
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-v=$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' "$root/Cargo.toml" | head -1)
+v=$(awk -F'"' '/^\[workspace.package\]/{f=1;next} /^\[/{f=0} f&&/^version *=/{print $2; exit}' "$root/Cargo.toml" | head -1)
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 bash "$root/scripts/release/check-version.sh" "v$v"

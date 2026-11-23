@@ -269,7 +269,7 @@ jobs:
         shell: bash
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then tag="$GITHUB_REF_NAME"
-          else tag="v$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml | head -1)"; fi
+          else tag="v$(awk -F'"' '/^\[workspace.package\]/{f=1;next} /^\[/{f=0} f&&/^version *=/{print $2; exit}' Cargo.toml | head -1)"; fi
           echo "EVYRO_VERSION=${tag#v}" >> "$GITHUB_ENV"
           bash scripts/release/check-version.sh "$tag"
       - uses: dtolnay/rust-toolchain@stable
