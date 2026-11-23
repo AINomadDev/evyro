@@ -12,6 +12,20 @@ The Evyro desktop app is a window over the same local database the `evyro` CLI a
 
 Requirements: Rust 1.80+ and Git. On Linux, the WebKitGTK 4.1 development packages (`libwebkit2gtk-4.1-dev`, `libsoup-3.0-dev`). macOS and Windows need nothing extra.
 
+### First launch of a downloaded build
+
+The release builds aren't code-signed yet.
+
+**macOS:** you'll see "Apple could not verify Evyro is free of malware". Recent versions of macOS no longer let you right-click and choose Open to get past this. Do this instead:
+
+1. Drag Evyro to Applications, try to open it once, and click **Done**.
+2. Open **System Settings › Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to the Evyro message.
+3. Open Evyro again, click **Open Anyway**, and enter your password.
+
+Or run `xattr -dr com.apple.quarantine /Applications/Evyro.app` once in Terminal. Either way, macOS asks only the first time. Before you do, check the download against `SHA256SUMS` if you want to be sure it's the real file.
+
+**Windows:** in the SmartScreen box, click **More info**, then **Run anyway**.
+
 ## Screens
 
 | Screen | What it shows | What you can do |

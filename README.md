@@ -54,7 +54,19 @@ Your AI hits a usage limit halfway through a feature. A different AI would be fa
 
 Check a download against [`SHA256SUMS`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/SHA256SUMS) (`shasum -a 256 -c SHA256SUMS --ignore-missing`). Each release also ships an SBOM ([`evyro-sbom.spdx.json`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-sbom.spdx.json)) and signed build provenance.
 
-> **First launch:** the apps are not code-signed yet. On macOS, right-click Evyro.app › **Open** the first time. On Windows, click **More info › Run anyway** in SmartScreen. See [Known limitations](docs/KNOWN_LIMITATIONS.md).
+> **First launch:** the apps aren't code-signed yet, so your system warns the first time you open Evyro.
+>
+> **macOS:** you'll see "Apple could not verify Evyro is free of malware". To open it anyway:
+>
+> 1. Drag Evyro to Applications, try to open it once, and click **Done**.
+> 2. Open **System Settings › Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to the Evyro message.
+> 3. Open Evyro again, click **Open Anyway**, and enter your password.
+>
+> Or run this once in Terminal: `xattr -dr com.apple.quarantine /Applications/Evyro.app`. Either way, macOS only asks the first time.
+>
+> **Windows:** in the SmartScreen box, click **More info**, then **Run anyway**.
+>
+> See [Known limitations](docs/KNOWN_LIMITATIONS.md).
 
 ## Features
 
@@ -127,7 +139,7 @@ irm https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.ps1 
 cargo install --path crates/evyro-cli
 ```
 
-Then run `evyro doctor`. Every release file is listed in `SHA256SUMS` and has signed build provenance (`gh attestation verify <file> --repo AINomadDev/evyro`). Until signing certificates are in place, macOS and Windows warn the first time you open the app; see [Known limitations](docs/KNOWN_LIMITATIONS.md).
+Then run `evyro doctor`. Every release file is listed in `SHA256SUMS` and has signed build provenance (`gh attestation verify <file> --repo AINomadDev/evyro`). Until signing certificates are in place, macOS and Windows warn the first time you open the app; see [First launch](#download) above.
 
 ## Quick start
 
