@@ -71,7 +71,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - Skills: matching a skill to a task is word matching on names and tags, not a model. Skills hold one `SKILL.md`; extra files in a skill folder (scripts, references) are not imported or synced. Single-project `evyro export` does not include on/off choices (a full `evyro backup` does).
 - ACP: `terminal/*`, `authenticate`, `session/load`, session modes, and image or audio prompts (see [ACP](protocols/ACP.md)).
 - Handoff benchmark suite (fresh vs. transcript vs. summary vs. contract) with real agents.
-- Code signing and notarization, Homebrew/winget, published releases.
+- Windows code signing and winget. macOS signing and notarization are wired into the release pipeline but switch on only once the Apple Developer ID secrets are set; the Homebrew tap needs its repository and token (see [Releasing](RELEASING.md)). No release has been published yet.
 - Storing keys. By design Evyro never stores keys; targets can read one from the macOS Keychain at launch (`--key-keychain`).
 
 ## Known gaps in what exists

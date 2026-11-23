@@ -88,15 +88,26 @@ Evyro is not another place to chat with an agent. It is the layer that remembers
 
 <sub>✓ has it · partly: some of it · — not its focus. Based on our source review in <a href="docs/research/OPEN_SOURCE_RESEARCH.md">docs/research</a>, November 2026. "Planned" items are in the <a href="docs/BACKLOG.md">backlog</a>; Evyro does not have them yet.</sub>
 
-## Quick start
+## Install
+
+**Desktop app:** download the installer for your system from the [latest release](https://github.com/AINomadDev/evyro/releases/latest): a `.dmg` for macOS, a `-setup.exe` for Windows, or a `.deb` or `.AppImage` for Linux. See the [Desktop guide](docs/user-guide/DESKTOP.md).
+
+**CLI only:**
 
 ```bash
-# Rust 1.80+ and git required
+# macOS and Linux: installs to ~/.local/bin after checking the release checksum
+curl -fsSL https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.sh | sh
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.ps1 | iex
+
+# From source (Rust 1.80+ and git)
 cargo install --path crates/evyro-cli
-evyro doctor
 ```
 
-Desktop app: `cargo run --release -p evyro-desktop`, or download the installer for your OS from the latest CI run (unsigned for now; see [Known limitations](docs/KNOWN_LIMITATIONS.md)). See the [Desktop guide](docs/user-guide/DESKTOP.md).
+Then run `evyro doctor`. Every release file is listed in `SHA256SUMS` and has signed build provenance (`gh attestation verify <file> --repo AINomadDev/evyro`). Until signing certificates are in place, macOS and Windows warn the first time you open the app; see [Known limitations](docs/KNOWN_LIMITATIONS.md).
+
+## Quick start
 
 ### Five-minute tour
 
@@ -140,6 +151,8 @@ Inside an agent session the agent uses the same commands (the generated `AGENTS.
 | Limitations | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) |
 | Security and threat model | [SECURITY.md](SECURITY.md), [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) |
 | Contributing | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| Releasing | [docs/RELEASING.md](docs/RELEASING.md) |
+| Changelog | [CHANGELOG.md](CHANGELOG.md) |
 | Brand guide | [docs/BRAND.md](docs/BRAND.md) |
 
 ## Layout
