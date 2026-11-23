@@ -1197,7 +1197,7 @@ dependencies = [
 
 [[package]]
 name = "evyro-acp"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "evyro-core",
  "serde",
@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "evyro-cli"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1224,7 +1224,7 @@ dependencies = [
 
 [[package]]
 name = "evyro-core"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "directories",
@@ -1243,7 +1243,7 @@ dependencies = [
 
 [[package]]
 name = "evyro-desktop"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "evyro-acp",
  "evyro-core",
@@ -1260,7 +1260,7 @@ dependencies = [
 
 [[package]]
 name = "evyro-mcp"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "evyro-core",
@@ -1271,7 +1271,7 @@ dependencies = [
 
 [[package]]
 name = "evyro-remote"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "evyro-acp",
  "evyro-core",
@@ -1283,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "evyro-term"
-version = "0.1.0"
+version = "0.2.0-rc.1"
 dependencies = [
  "anyhow",
  "portable-pty",
