@@ -131,6 +131,8 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
             session.id
         );
     }
+    // Windows: npm `.cmd` shims cannot carry the prompt's line breaks.
+    let argv = evyro_core::adapters::launchable_argv(argv);
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..])
         .current_dir(&cwd)
