@@ -26,6 +26,8 @@ allow = [
     "MPL-2.0",
     "0BSD",
     "ISC",
+    # Mozilla's root certificates (webpki-root-certs), used by the updater's HTTPS client.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 

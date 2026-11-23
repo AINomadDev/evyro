@@ -24,6 +24,7 @@ mod search;
 mod skills;
 mod threads;
 mod tray;
+mod updater;
 
 type CmdResult = Result<Value, Value>;
 
@@ -873,8 +874,11 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             app_info,
+            updater::check_update,
+            updater::install_update,
             list_projects,
             add_project,
             set_project_archived,

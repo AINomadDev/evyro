@@ -121,6 +121,9 @@ const FIX = {
           if (cmd === "skill_text") { const k = sk.find((x) => x.name === args.name); return { skill: k, text: "# " + k.name + "\n\nSteps for " + k.name + "." }; }
           if (cmd === "set_skill_enabled") { const k = sk.find((x) => x.name === args.name); k.enabled = args.enabled; k.enabled_by = args.global ? "global" : "project"; return k; }
           if (cmd === "sync_skills") return { harness: args.harness, written: [], unchanged: [], removed: [], skipped: [{ name: "AGENTS.md", reason: "AGENTS.md has instructions someone wrote and no Evyro section, so it was not changed" }] };
+          // Updates: a newer version is published.
+          if (cmd === "check_update") return { configured: true, available: true, current: "0.1.0", version: "0.2.0", notes: "Tray icon and auto-update.", date: null };
+          if (cmd === "install_update") { window.__installed = true; return null; }
           // Remote access, kept in memory.
           const rm = (window.__rm = window.__rm || { running: false, devices: [] });
           if (cmd === "remote_status") return rm.running ? { running: true, url: "http://" + rm.host + ":" + rm.port + "/", reach: "loopback" } : { running: false };
@@ -341,6 +344,14 @@ const FIX = {
     await page.click(".modal .actions .btn");
   });
   await step("settings", async () => { await tab("settings"); await page.waitForSelector("text=Doctor"); });
+  await step("updates: a newer version is offered and installs on request", async () => {
+    await page.waitForSelector(".card >> text=Evyro 0.2.0 is available");
+    await page.waitForSelector("#side-foot .update-btn");
+    await page.click(".card >> text=Install and restart");
+    await page.waitForSelector(".modal >> text=Tray icon and auto-update.");
+    await page.click(".modal .actions .btn.primary");
+    await page.waitForFunction(() => window.__installed === true);
+  });
   await step("remote access: start serving, pair a device, revoke it", async () => {
     await page.waitForSelector("h2:text-is('Remote access')");
     await page.click("text=Start serving");
