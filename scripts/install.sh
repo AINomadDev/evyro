@@ -67,8 +67,18 @@ esac
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
+# Before the first stable release, releases/latest has nothing in it: fall
+# back to the newest release, pre-releases included.
+if [ "$version" = "latest" ] && [ -z "${EVYRO_DOWNLOAD_BASE:-}" ] && ! fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" 2>/dev/null; then
+  fetch "https://api.github.com/repos/$REPO/releases?per_page=1" "$tmp/releases.json" || die "could not list the releases of $REPO"
+  tag="$(grep -m1 '"tag_name"' "$tmp/releases.json" | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+  [ -n "$tag" ] || die "$REPO has no releases yet"
+  version="${tag#v} (pre-release)"
+  base="https://github.com/$REPO/releases/download/$tag"
+fi
+
 say "downloading the $version release for $target"
-fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" || die "could not download SHA256SUMS from $base"
+[ -s "$tmp/SHA256SUMS" ] || fetch "$base/SHA256SUMS" "$tmp/SHA256SUMS" || die "could not download SHA256SUMS from $base"
 archive="$(grep -E "evyro-[^ ]*-$target\.tar\.gz\$" "$tmp/SHA256SUMS" | awk '{print $2}' | sed 's|^\*||' | head -1)"
 [ -n "$archive" ] || die "this release has no CLI for $target"
 fetch "$base/$archive" "$tmp/$archive" || die "could not download $archive"

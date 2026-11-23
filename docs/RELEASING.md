@@ -6,8 +6,9 @@ A version tag publishes a release. CI builds and checks everything, then creates
 
 1. Set the version in two places: `version` under `[workspace.package]` in `Cargo.toml`, and `version` in `crates/evyro-desktop/tauri.conf.json`. Run `cargo check` so `Cargo.lock` follows.
 2. In `CHANGELOG.md`, rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` and start a new empty `## [Unreleased]` above it.
-3. Run `bash scripts/release/check-version.sh vX.Y.Z`, then open a PR with these changes and merge it once CI is green.
-4. Tag the merge commit on `main` and push the tag:
+3. Point the README's Download links at the new version: `sed -i.bak 's/OLD_VERSION/X.Y.Z/g' README.md && rm README.md.bak`, with OLD_VERSION being the version the links name now. The version check fails if the README links don't name the tag.
+4. Run `bash scripts/release/check-version.sh vX.Y.Z`, then open a PR with these changes and merge it once CI is green.
+5. Tag the merge commit on `main` and push the tag:
 
    ```bash
    git tag vX.Y.Z && git push origin vX.Y.Z
