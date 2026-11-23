@@ -130,13 +130,15 @@ async function viewChanges(v) {
     const det = h("details", { class: "diff-file", open: files.length <= 6 || fileComments.length ? true : null },
       h("summary", null, pill(st ? st[0] : "", st ? st[1] : f.status.trim()),
         h("span", { class: "mono" }, f.path), d ? h("span", { class: "muted small" }, `+${d.add} −${d.del}`) : null,
-        fileComments.length ? pill("warn", `${fileComments.length} comment${fileComments.length === 1 ? "" : "s"}`) : null,
-        h("span", { class: "spacer" }),
-        h("button", { class: "btn ghost small", onclick: (e) => { e.preventDefault(); det.open = true; body.prepend(commentForm(f.path, null, null, refresh, () => refresh())); } }, "Comment on file")),
+        fileComments.length ? pill("warn", `${fileComments.length} comment${fileComments.length === 1 ? "" : "s"}`) : null),
       body);
+    // Outside <summary>: a button inside it would be a control within a control.
+    const tools = h("div", { class: "diff-tools" },
+      h("button", { class: "btn ghost small", onclick: () => { tools.after(commentForm(f.path, null, null, refresh, () => refresh())); } }, "Comment on file"));
+    body.append(tools);
     for (const x of fileComments.filter((x) => !x.line)) body.append(commentBox(x, refresh));
     if (d) {
-      const pre = h("div", { class: "diff", role: "table" });
+      const pre = h("div", { class: "diff", role: "group", "aria-label": `Changes in ${f.path}` });
       for (const ln of d.lines) {
         const here = ln.n ? fileComments.filter((x) => x.line === ln.n) : [];
         const add = () => {

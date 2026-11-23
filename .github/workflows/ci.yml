@@ -22,6 +22,15 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  # Known vulnerabilities (RustSec), licenses and dependency sources.
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
+
   test:
     strategy:
       fail-fast: false
@@ -84,12 +93,16 @@ jobs:
           git config --global user.name CI
       - run: cargo build -p evyro-cli
       - name: playwright
-        run: npm install --no-save playwright@1.49.1 && npx playwright install chromium
+        run: npm install --no-save playwright@1.49.1 axe-core@4.10.2 && npx playwright install chromium
       - run: node crates/evyro-desktop/tests/ui-smoke.cjs
 
   bundle:
-    needs: [lint, test, cli-e2e, ui-smoke]
+    needs: [lint, audit, test, cli-e2e, ui-smoke]
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -119,6 +132,81 @@ jobs:
           find . -path '*/release/bundle/*' -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) > files.txt
           cat files.txt
           while read f; do (shasum -a 256 "$f" 2>/dev/null || sha256sum "$f") >> SHA256SUMS-${{ runner.os }}.txt; done < files.txt
+      # Install each installer on this fresh machine and start the app from
+      # it: it must still be running after 20 seconds.
+      - name: install the .deb and .AppImage and start the app
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get install -y xvfb
+          deb=$(find target -path '*/release/bundle/deb/*.deb' | head -1)
+          pkg=$(dpkg-deb -f "$deb" Package)
+          sudo apt-get install -y "./$deb"
+          bin=$(dpkg -L "$pkg" | grep -E '^/usr/bin/' | head -1)
+          echo "installed $pkg: $bin"
+          test -x "$bin"
+          set +e
+          HOME=$(mktemp -d) timeout 20 xvfb-run -a "$bin"; s=$?
+          [ $s -eq 124 ] || { echo "the app from the .deb exited early ($s)"; exit 1; }
+          img=$(find target -path '*/release/bundle/appimage/*.AppImage' | head -1)
+          chmod +x "$img"
+          HOME=$(mktemp -d) APPIMAGE_EXTRACT_AND_RUN=1 timeout 20 xvfb-run -a "$img"; s=$?
+          [ $s -eq 124 ] || { echo "the AppImage exited early ($s)"; exit 1; }
+          echo "both stayed running"
+      - name: install from the .dmg and start the app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          dmg=$(find target -path '*/release/bundle/dmg/*.dmg' | head -1)
+          hdiutil attach "$dmg" -mountpoint /Volumes/evyro-check -nobrowse
+          cp -R /Volumes/evyro-check/*.app "$RUNNER_TEMP/"
+          hdiutil detach /Volumes/evyro-check
+          app=$(find "$RUNNER_TEMP" -maxdepth 4 -path '*.app/Contents/MacOS/*' -type f | head -1)
+          echo "installed: $app"; lipo -archs "$app"
+          HOME=$(mktemp -d) "$app" & pid=$!
+          sleep 20
+          kill -0 $pid || { echo "the app from the .dmg exited early"; exit 1; }
+          kill $pid
+          echo "stayed running"
+      - name: run the installer silently and start the app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem target -Recurse -Filter *-setup.exe | Where-Object { $_.FullName -match 'bundle\\nsis' } | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList '/S' -Wait
+          $app = Get-ChildItem "$env:LOCALAPPDATA\Evyro", "$env:ProgramFiles\Evyro" -Recurse -Filter *.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch 'uninstall' } | Select-Object -First 1
+          if (-not $app) { throw "the installed app was not found" }
+          Write-Host "installed: $($app.FullName)"
+          $p = Start-Process $app.FullName -PassThru
+          Start-Sleep 20
+          if ($p.HasExited) { throw "the installed app exited early ($($p.ExitCode))" }
+          Stop-Process -Id $p.Id -Force
+          Write-Host "stayed running"
+      - name: software bill of materials (Rust and npm dependencies)
+        if: runner.os == 'Linux'
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: target/evyro-sbom.spdx.json
+          upload-artifact: false
+      - name: signed build provenance for the installers
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            target/**/release/bundle/**/*.dmg
+            target/**/release/bundle/**/*.exe
+            target/**/release/bundle/**/*.deb
+            target/**/release/bundle/**/*.AppImage
+      - name: signed SBOM attestation for the Linux installers
+        if: runner.os == 'Linux'
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: |
+            target/**/release/bundle/**/*.deb
+            target/**/release/bundle/**/*.AppImage
+          sbom-path: target/evyro-sbom.spdx.json
       - uses: actions/upload-artifact@v4
         with:
           name: evyro-desktop-${{ runner.os }}
@@ -129,10 +217,15 @@ jobs:
             target/**/release/bundle/**/*.deb
             target/**/release/bundle/**/*.AppImage
             target/SHA256SUMS-*.txt
+            target/evyro-sbom.spdx.json
 
   release-build:
-    needs: [lint, test]
+    needs: [lint, audit, test]
     if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         include:
@@ -153,6 +246,10 @@ jobs:
           cd target/${{ matrix.target }}/release
           f=evyro; [ -f evyro.exe ] && f=evyro.exe
           shasum -a 256 $f > $f.sha256 || sha256sum $f > $f.sha256
+      - name: signed build provenance for the CLI
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: target/${{ matrix.target }}/release/evyro*
       - uses: actions/upload-artifact@v4
         with:
           name: evyro-${{ matrix.target }}

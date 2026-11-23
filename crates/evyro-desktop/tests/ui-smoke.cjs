@@ -356,6 +356,34 @@ const FIX = {
     await page.click(".card >> text=Stop");
     await page.waitForSelector("text=Start serving");
   });
+  // Accessibility: axe-core (WCAG 2 A and AA rules) on every screen. Serious
+  // and critical problems fail the run. Runs when axe-core is installed.
+  let axePath = null;
+  try { axePath = require.resolve("axe-core/axe.min.js", { paths: [process.cwd(), ...(process.env.AXE_DIR ? [process.env.AXE_DIR] : [])] }); } catch {}
+  if (axePath) {
+    await step("accessibility: no serious WCAG problems on any screen, light and dark", async () => {
+      const found = [];
+      for (const scheme of ["light", "dark"]) {
+      await page.emulateMedia({ colorScheme: scheme });
+      for (const v of ["overview", "tasks", "changes", "threads", "handoffs", "sessions", "knowledge", "skills", "agents", "settings"]) {
+        await tab(v);
+        await page.waitForTimeout(250);
+        if (!(await page.evaluate(() => !!window.axe))) await page.addScriptTag({ path: axePath });
+        const res = await page.evaluate(async () => {
+          const r = await window.axe.run(document, { preload: false, runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] } });
+          return r.violations.map((x) => ({ id: x.id, impact: x.impact, help: x.help, nodes: x.nodes.slice(0, 3).map((n) => { const d = n.any[0] && n.any[0].data; return n.target.join(" ") + (d && d.fgColor ? ` ${d.fgColor} on ${d.bgColor} = ${d.contrastRatio}` : ""); }) }));
+        });
+        for (const x of res) found.push({ screen: `${v}, ${scheme}`, ...x });
+      }
+      }
+      await page.emulateMedia({ colorScheme: "light" });
+      for (const x of found) console.log(`  a11y ${x.impact}: [${x.screen}] ${x.id}: ${x.help} (${x.nodes.join(", ")})`);
+      const bad = found.filter((x) => x.impact === "serious" || x.impact === "critical");
+      if (bad.length) throw new Error(`${bad.length} serious or critical accessibility problems`);
+    });
+  } else {
+    console.log("SKIP  accessibility (axe-core not installed)");
+  }
   await step("command palette filters and runs", async () => {
     await page.keyboard.press("Control+k");
     await page.waitForSelector(".palette input");

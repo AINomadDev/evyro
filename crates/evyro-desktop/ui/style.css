@@ -4,12 +4,13 @@
   --panel-2: #f1f2f6;
   --border: #e3e4ea;
   --text: #1b1d24;
-  --muted: #6b6f7d;
+  --muted: #5c606d;
   --accent: #4f46e5;
   --accent-soft: #eceafd;
-  --ok: #16803c;
+  --on-accent: #ffffff;
+  --ok: #11692f;
   --ok-soft: #e3f5e9;
-  --warn: #a15c00;
+  --warn: #8a4f00;
   --warn-soft: #fdf1dc;
   --bad: #c2261d;
   --bad-soft: #fde7e5;
@@ -28,6 +29,7 @@
     --muted: #9298a7;
     --accent: #8b85ff;
     --accent-soft: #272552;
+    --on-accent: #111318;
     --ok: #4cc47a;
     --ok-soft: #173525;
     --warn: #e5a33b;
@@ -118,7 +120,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--panel-2);
 /* Buttons and forms */
 .btn { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 8px; padding: 7px 12px; font: inherit; font-weight: 550; cursor: pointer; }
 .btn:hover { background: var(--panel-2); }
-.btn.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .btn.primary:hover { filter: brightness(1.08); }
 .btn.danger { color: var(--bad); }
 .btn.ghost { border-color: transparent; background: none; }
@@ -181,7 +183,7 @@ input:focus, textarea:focus, select:focus, .btn:focus-visible { outline: 2px sol
 /* Toast */
 .toast-root { position: fixed; bottom: 18px; right: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 30; }
 .toast { background: var(--text); color: var(--bg); padding: 9px 14px; border-radius: 8px; box-shadow: var(--shadow); max-width: 420px; font-size: 13px; }
-.toast.bad { background: var(--bad); color: #fff; }
+.toast.bad { background: var(--bad); color: var(--on-accent); }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th { text-align: left; color: var(--muted); font-weight: 600; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
@@ -198,6 +200,7 @@ tr.clickable:hover td { background: var(--panel-2); }
 .diff-file { border-bottom: 1px solid var(--border); }
 .diff-file:last-child { border-bottom: 0; }
 .diff-file summary { cursor: pointer; padding: 8px 4px; display: flex; gap: 10px; align-items: center; }
+.diff-tools { display: flex; justify-content: flex-end; padding: 0 4px 6px; }
 .diff { margin: 0 0 10px; font: 12px/1.55 var(--mono); overflow-x: auto; }
 .diff .dl { display: grid; grid-template-columns: 44px 44px 1fr 26px; align-items: stretch; }
 .diff .ln { color: var(--muted); text-align: right; padding: 0 8px 0 0; user-select: none; opacity: .7; }
@@ -209,7 +212,7 @@ tr.clickable:hover td { background: var(--panel-2); }
 .diff .del { background: var(--bad-soft); }
 .diff .del .code { color: var(--bad); }
 .diff .hunk { color: var(--accent); background: var(--accent-soft); }
-.diff .cbtn { visibility: hidden; border: 0; border-radius: 5px; background: var(--accent); color: #fff; font: 600 12px/1 var(--mono); width: 20px; height: 18px; margin: 1px 0; cursor: pointer; }
+.diff .cbtn { visibility: hidden; border: 0; border-radius: 5px; background: var(--accent); color: var(--on-accent); font: 600 12px/1 var(--mono); width: 20px; height: 18px; margin: 1px 0; cursor: pointer; }
 .diff .dl:hover .cbtn, .diff .cbtn:focus { visibility: visible; }
 .rv-bar { margin-bottom: 10px; }
 .rv-comment { margin: 6px 26px 8px 88px; border: 1px solid var(--border); border-left: 3px solid var(--warn); border-radius: 8px; background: var(--panel); padding: 8px 10px; font-family: inherit; }
@@ -345,3 +348,7 @@ label.check input { width: auto; margin: 0; padding: 0; border: 0; accent-color:
 /* Remote access */
 .pair-code { font: 700 34px/1.2 var(--mono); letter-spacing: .08em; text-align: center; padding: 18px; background: var(--panel-2); border-radius: 10px; margin-bottom: 10px; }
 .stack { display: flex; flex-direction: column; gap: 8px; }
+
+/* Faint terminal text (ANSI dim) uses the muted color, which stays above
+   WCAG AA contrast (4.5:1); xterm's own dim is half-transparent (3.3:1). */
+.xterm .xterm-rows span.xterm-dim { color: var(--muted) !important; }

@@ -53,6 +53,8 @@ function ensureXterm(id, fresh = false) {
   const term = new Terminal({
     fontFamily: '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace',
     fontSize: 13, cursorBlink: true, scrollback: 5000, allowProposedApi: false, theme: termTheme(),
+    // Keep agent output readable: xterm raises any color below WCAG AA (4.5:1).
+    minimumContrastRatio: 4.5,
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
