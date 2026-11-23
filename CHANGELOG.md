@@ -4,6 +4,8 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ## [Unreleased]
 
+## [0.2.0-rc.1] - 2026-11-23
+
 ### Added
 
 - Agent threads: run an agent or a shell in a terminal inside the desktop app.
