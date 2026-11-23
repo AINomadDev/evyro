@@ -5,12 +5,110 @@
 //! `claude`, `codex`, `gemini` placed first on PATH. They exercise Evyro's
 //! launch, session, checkpoint, handoff and verification plumbing exactly as a
 //! real CLI would see it; they do not test model behaviour.
-#![cfg(unix)]
+//!
+//! On Windows each script gets a `.cmd` shim that runs it with Git's `sh`,
+//! the same shape as the `claude.cmd` / `codex.cmd` shims npm installs there,
+//! so Evyro's Windows lookup (PATHEXT) and batch-file launch are exercised too.
 
 use serde_json::Value;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+/// An executable script `name` in `dir` running `body` with `sh`. Returns the
+/// command that runs it from `dir`: `./name` on Unix, `./name.cmd` on Windows.
+fn script(dir: &Path, name: &str, body: &str) -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join(name);
+        std::fs::write(&p, format!("#!/bin/sh\n{body}")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        format!("./{name}")
+    }
+    #[cfg(windows)]
+    {
+        std::fs::write(dir.join(format!("{name}.sh")), body).unwrap();
+        std::fs::write(
+            dir.join(format!("{name}.cmd")),
+            format!(
+                "@\"{}\" \"%~dp0{name}.sh\" %*\r\n@exit /b %ERRORLEVEL%\r\n",
+                git_sh().display()
+            ),
+        )
+        .unwrap();
+        format!("./{name}.cmd")
+    }
+}
+
+/// What a script made by [`script`] is called from inside another script.
+fn script_call(name: &str) -> String {
+    if cfg!(windows) {
+        format!("./{name}.cmd")
+    } else {
+        format!("./{name}")
+    }
+}
+
+/// A program on the test runner's own PATH (not the restricted one Evyro gets).
+fn on_path(names: &[&str]) -> Option<PathBuf> {
+    let exts: &[&str] = if cfg!(windows) { &[".exe", ""] } else { &[""] };
+    for name in names {
+        for d in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+            // Skip the Microsoft Store stubs, which only open the Store.
+            if d.to_string_lossy().contains("WindowsApps") {
+                continue;
+            }
+            for e in exts {
+                let p = d.join(format!("{name}{e}"));
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Git for Windows' `sh`, which runs the stand-in scripts there.
+#[cfg(windows)]
+fn git_sh() -> PathBuf {
+    let git = on_path(&["git"]).expect("git on PATH");
+    let root = git.parent().unwrap().parent().unwrap();
+    [root.join("bin/sh.exe"), root.join("usr/bin/sh.exe")]
+        .into_iter()
+        .find(|p| p.is_file())
+        .expect("Git for Windows sh.exe")
+}
+
+fn python() -> PathBuf {
+    let names: &[&str] = if cfg!(windows) {
+        &["python", "python3"]
+    } else {
+        &["python3", "python"]
+    };
+    on_path(names).expect("python on PATH")
+}
+
+/// The stand-in ACP agent (`fake_acp_agent.py`) as one executable, for
+/// `EVYRO_ACP_BIN_*` (a path with no arguments).
+fn fake_acp_bin(env: &Env) -> PathBuf {
+    let py = Path::new(env!("CARGO_MANIFEST_DIR")).join("../evyro-acp/tests/fake_acp_agent.py");
+    if cfg!(windows) {
+        let p = env.bin.path().join("fake-acp.cmd");
+        std::fs::write(
+            &p,
+            format!(
+                "@\"{}\" \"{}\" %*\r\n@exit /b %ERRORLEVEL%\r\n",
+                python().display(),
+                py.display()
+            ),
+        )
+        .unwrap();
+        p
+    } else {
+        py
+    }
+}
 
 struct Env {
     home: tempfile::TempDir,
@@ -50,9 +148,11 @@ impl Env {
         sh(&p, &["git", "config", "user.name", "Test"]);
         std::fs::create_dir_all(p.join("src")).unwrap();
         std::fs::write(p.join("src/lib.txt"), "// calculator\n").unwrap();
-        std::fs::write(p.join("test.sh"), "#!/bin/sh\ngrep -q 'fn add' src/lib.txt && grep -q 'fn sub' src/lib.txt && grep -q 'test_sub' src/lib.txt\n").unwrap();
-        std::fs::set_permissions(p.join("test.sh"), std::fs::Permissions::from_mode(0o755))
-            .unwrap();
+        script(
+            &p,
+            "test.sh",
+            "grep -q 'fn add' src/lib.txt && grep -q 'fn sub' src/lib.txt && grep -q 'test_sub' src/lib.txt\n",
+        );
         sh(&p, &["git", "add", "-A"]);
         sh(&p, &["git", "commit", "-qm", "init"]);
         self.repos.push(d);
@@ -60,27 +160,25 @@ impl Env {
     }
 
     fn agent(&self, name: &str, version: &str, body: &str) {
-        let script = format!(
-            "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo \"{name} {version}\"; exit 0; fi\necho \"$@\" > \"$PWD/.agent-{name}-args\"\n{body}\n"
+        let body = format!(
+            "if [ \"$1\" = \"--version\" ]; then echo \"{name} {version}\"; exit 0; fi\necho \"$@\" > \"$PWD/.agent-{name}-args\"\n{body}\n"
         );
-        let p = self.bin.path().join(name);
-        std::fs::write(&p, script).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        script(self.bin.path(), name, &body);
     }
 
     fn cmd(&self, dir: &Path, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_evyro"));
         // Only the fake agents, the evyro binary and system tools: real agents
         // and IDE launchers on a developer machine must never be found.
-        let path = format!(
-            "{}:{}:{}",
-            self.bin.path().display(),
+        let mut dirs = vec![
+            self.bin.path().to_path_buf(),
             Path::new(env!("CARGO_BIN_EXE_evyro"))
                 .parent()
                 .unwrap()
-                .display(),
-            system_path()
-        );
+                .to_path_buf(),
+        ];
+        dirs.extend(system_path());
+        let path = std::env::join_paths(dirs).unwrap();
         c.args(args)
             .current_dir(dir)
             .env("EVYRO_HOME", self.home.path())
@@ -119,34 +217,41 @@ impl Env {
         let pt = dir.join(".evyro/project.toml");
         let s = std::fs::read_to_string(&pt).unwrap();
         assert!(s.contains("test = []"), "{s}");
-        let s = s.replace("test = []", "test = [[\"./test.sh\"]]");
+        let test = script_call("test.sh");
+        let s = s.replace("test = []", &format!("test = [[\"{test}\"]]"));
         std::fs::write(&pt, s).unwrap();
         // project.toml is re-read on every project resolution.
         let st = self.json(dir, &["status"]);
-        assert_eq!(st["project"]["commands"]["test"][0][0], "./test.sh");
+        assert_eq!(st["project"]["commands"]["test"][0][0], test.as_str());
         sh(dir, &["git", "add", "-A"]);
         sh(dir, &["git", "commit", "-qm", "evyro init"]);
     }
 }
 
 /// System tool directories plus the directory holding `git`, nothing else.
-fn system_path() -> String {
-    let mut dirs = vec![
-        "/usr/bin".to_string(),
-        "/bin".to_string(),
-        "/usr/sbin".to_string(),
-        "/sbin".to_string(),
-    ];
-    for d in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
-        if d.join("git").is_file() {
-            let d = d.display().to_string();
-            if !dirs.contains(&d) {
-                dirs.push(d);
-            }
-            break;
+fn system_path() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = if cfg!(windows) {
+        let root =
+            PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()));
+        vec![root.join("System32"), root.clone()]
+    } else {
+        ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+            .iter()
+            .map(PathBuf::from)
+            .collect()
+    };
+    if let Some(git) = on_path(&["git"]) {
+        let d = git.parent().unwrap().to_path_buf();
+        if !dirs.contains(&d) {
+            dirs.push(d);
         }
     }
-    dirs.join(":")
+    // Git for Windows' own tools (grep, printf, sh) for the stand-in scripts.
+    #[cfg(windows)]
+    if let Some(root) = git_sh().parent().and_then(|b| b.parent()) {
+        dirs.push(root.join("usr").join("bin"));
+    }
+    dirs
 }
 
 fn read(p: &Path) -> String {
@@ -206,15 +311,16 @@ evyro checkpoint --done "implemented sub()" --next "add test_sub and run verific
 exit 0
 "#);
     // Gemini adds the test, then verifies through Evyro.
-    env.agent("gemini", "0.12.0", r#"
+    env.agent("gemini", "0.12.0", &r#"
 evyro context > "$PWD/.gemini-context.txt"
 grep -q "implemented sub()" "$PWD/.gemini-context.txt" || { echo "gemini: codex progress missing" >&2; exit 4; }
 if [ "$(grep -c 'fn sub' src/lib.txt)" != "1" ]; then exit 3; fi
 printf '#[test] fn test_sub() { assert(sub(3,1)==2) }\n' >> src/lib.txt
-evyro verify -- ./test.sh || exit 5
+evyro verify -- TEST_CMD || exit 5
 evyro checkpoint --done "added test_sub" --remaining "" --next "ready for review"
 exit 0
-"#);
+"#
+    .replace("TEST_CMD", &script_call("test.sh")));
 
     // --- Claude session
     env.ok(
@@ -362,7 +468,9 @@ fn abrupt_agent_exit_is_recovered() {
     assert!(!o.status.success());
     let s = env.json(&repo, &["sessions"]);
     assert_eq!(s[0]["status"], "failed");
-    assert_eq!(s[0]["exit_reason"], "terminated_by_signal");
+    if cfg!(unix) {
+        assert_eq!(s[0]["exit_reason"], "terminated_by_signal");
+    }
     let show = env.json(&repo, &["task", "show", "T-1"]);
     let cp = &show["checkpoints"][0];
     assert_eq!(cp["trigger"], "process_exit");
@@ -394,7 +502,14 @@ fn recover_detects_dead_pid() {
     env.ok(&repo, &["task", "add", "Work"]);
     env.ok(&repo, &["task", "start", "T-1", "--agent", "claude"]);
     // Simulate a tracked process that died: record a pid that no longer exists.
-    let mut child = Command::new("true").spawn().unwrap();
+    let mut child = if cfg!(windows) {
+        Command::new("cmd")
+            .args(["/c", "exit", "0"])
+            .spawn()
+            .unwrap()
+    } else {
+        Command::new("true").spawn().unwrap()
+    };
     let pid = child.id();
     child.wait().unwrap();
     let db = env.home.path().join("data/evyro.db");
@@ -424,7 +539,7 @@ fn rusqlite_free_update(db: &Path, pid: u32) -> bool {
             .unwrap_or(false);
     }
     // Fall back to python's sqlite3 module.
-    Command::new("python3")
+    Command::new(python())
         .args([
             "-c",
             &format!(
@@ -619,9 +734,8 @@ fn secrets_are_redacted_everywhere() {
             "x",
         ],
     );
-    std::fs::write(repo.join("t.sh"), format!("#!/bin/sh\necho token {gh}\n")).unwrap();
-    std::fs::set_permissions(repo.join("t.sh"), std::fs::Permissions::from_mode(0o755)).unwrap();
-    env.run(&repo, &["verify", "--", "./t.sh"]);
+    let t = script(&repo, "t.sh", &format!("echo token {gh}\n"));
+    env.run(&repo, &["verify", "--", &t]);
     let h = env.json(&repo, &["handoff", "--to", "codex"]);
     let contract = read(Path::new(h["record"]["contract_path"].as_str().unwrap()));
     let md = read(Path::new(h["markdown_path"].as_str().unwrap()));
@@ -1520,7 +1634,7 @@ fn acp_chat_runs_under_an_evyro_session() {
             "--ready",
         ],
     );
-    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("../evyro-acp/tests/fake_acp_agent.py");
+    let fake = fake_acp_bin(&env);
     let log = repo.join(".agent-acp.log");
     let chat = |args: &[&str], input: &str| -> Output {
         use std::io::Write;
@@ -2064,7 +2178,7 @@ fn remote_access_pairs_approves_and_revokes() {
         "// calculator\nfn add() {}\nlet api_key = \"sk_live_abcdefghijklmnopqrstuv\";\n",
     )
     .unwrap();
-    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("../evyro-acp/tests/fake_acp_agent.py");
+    let fake = fake_acp_bin(&env);
 
     // Only loopback or Tailscale without --allow-lan.
     let lan = env.run(&repo, &["serve", "--host", "0.0.0.0", "--port", "0"]);
