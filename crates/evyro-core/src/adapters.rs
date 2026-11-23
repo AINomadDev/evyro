@@ -396,24 +396,30 @@ pub fn launchable_argv_for_batch(argv: Vec<String>, node_on_path: Option<PathBuf
         .map(|rel| dir.join(rel.replace('\\', std::path::MAIN_SEPARATOR_STR)))
         .filter(|p| p.is_file());
     if let Some(t) = target {
-        let is_js = t
+        let ext = t
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "js" | "cjs" | "mjs"));
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default();
         let mut out = Vec::with_capacity(argv.len() + 1);
-        if is_js {
-            let local = dir.join("node.exe");
-            let node = if local.is_file() {
-                Some(local)
-            } else {
-                node_on_path
-            };
-            match node {
-                Some(n) => out.push(n.to_string_lossy().into_owned()),
-                None => return flatten_line_breaks(argv),
+        match ext.as_str() {
+            // A Node script: run it with the shim's node.exe, or node on PATH.
+            "js" | "cjs" | "mjs" => {
+                let local = dir.join("node.exe");
+                let node = if local.is_file() {
+                    Some(local)
+                } else {
+                    node_on_path
+                };
+                match node {
+                    Some(n) => out.push(n.to_string_lossy().into_owned()),
+                    None => return flatten_line_breaks(argv),
+                }
             }
-        } else if is_batch_file(&t) {
-            return flatten_line_breaks(argv);
+            // A native binary: run it directly.
+            "exe" | "com" => {}
+            // Anything else needs the shim's own interpreter: keep the shim.
+            _ => return flatten_line_breaks(argv),
         }
         out.push(t.to_string_lossy().into_owned());
         out.extend(argv.into_iter().skip(1));
@@ -566,6 +572,19 @@ mod tests {
             ["exec".to_string(), prompt.clone()],
             "arguments unchanged"
         );
+
+        // A shim that runs a script with another interpreter keeps the shim.
+        std::fs::write(d.path().join("agent.sh"), "").unwrap();
+        let sh_shim = d.path().join("agent.cmd");
+        std::fs::write(
+            &sh_shim,
+            "@\"C:\\Git\\bin\\sh.exe\" \"%~dp0agent.sh\" %*\r\n",
+        )
+        .unwrap();
+        let out =
+            launchable_argv_for_batch(vec![sh_shim.to_string_lossy().into(), prompt.clone()], None);
+        assert_eq!(out[0], sh_shim.to_string_lossy());
+        assert_eq!(out[1], "Work on T-1. Read the handoff first.");
 
         // Any other batch file: line breaks become spaces.
         let other = d.path().join("agent.bat");
