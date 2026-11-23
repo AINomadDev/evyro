@@ -14,6 +14,8 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 - Remote access (`evyro serve`): pair a phone or another computer, follow the work, approve agents, chat.
 - Release pipeline: a version tag publishes installers, CLI archives for macOS, Linux and Windows, `SHA256SUMS`, an SBOM and a Homebrew formula, with signed build provenance. macOS signing and notarization switch on once the certificate secrets are set.
 - Desktop auto-update: the app checks for a newer release at startup and in Settings, and installs it on request after checking its signature.
+- `evyro bug-report`: a Markdown report (versions, `evyro doctor`, recent crashes, with home paths and secrets hidden) to paste into an issue. The CLI and the desktop app write a crash log when they panic.
+- Evyro copies the database aside before upgrading its schema, and keeps the last 5 copies.
 - Install scripts for the CLI (`scripts/install.sh`, `scripts/install.ps1`) that check the release checksum before installing.
 
 ### Changed
@@ -24,6 +26,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ### Fixed
 
+- A session whose process is gone no longer looks alive when the system reuses its process id.
 - npm-installed agents (`.cmd` shims) launch on Windows.
 - The CLI exits quietly when a reader closes its output early.
 
