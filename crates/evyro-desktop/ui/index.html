@@ -25,9 +25,14 @@
           <h1 id="project-title">No project selected</h1>
           <div id="project-sub" class="muted small"></div>
         </div>
+        <div class="top-actions">
+          <span id="live-badge" class="live-badge" aria-live="polite"></span>
+          <button id="palette-btn" class="btn small ghost" title="Command palette"></button>
+        </div>
         <nav class="tabs" id="tabs">
           <button data-view="overview" class="tab active">Overview</button>
           <button data-view="tasks" class="tab">Tasks</button>
+          <button data-view="changes" class="tab">Changes</button>
           <button data-view="handoffs" class="tab">Handoffs</button>
           <button data-view="sessions" class="tab">Sessions</button>
           <button data-view="knowledge" class="tab">Decisions &amp; memory</button>
@@ -48,6 +53,7 @@
   </div>
 
   <div id="modal-root"></div>
+  <div id="palette-root"></div>
   <div id="toast-root" class="toast-root"></div>
   <script src="app.js"></script>
 </body>

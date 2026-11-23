@@ -879,7 +879,7 @@ pub fn check_target(t: &Target) -> TargetStatus {
                         next = Some(format!("Install {} (or its shell command)", i.display_name));
                     }
                 }
-                checks.push(ck("Evyro MCP", "unknown", i.mcp_setup));
+                checks.push(ck("Evyro MCP (optional)", "unknown", i.mcp_setup));
             }
         }
         TargetKind::Chat => {
@@ -900,7 +900,10 @@ pub fn check_target(t: &Target) -> TargetStatus {
     }
     let state = if checks.iter().any(|c| c.state == "missing") {
         "needs_setup"
-    } else if checks.iter().all(|c| c.state == "ok") {
+    } else if checks
+        .iter()
+        .all(|c| c.state == "ok" || c.name.ends_with("(optional)"))
+    {
         "ready"
     } else {
         "unknown"
@@ -921,7 +924,11 @@ pub fn check_target(t: &Target) -> TargetStatus {
 }
 
 fn mac_app_installed(name: &str) -> Option<bool> {
-    if !cfg!(target_os = "macos") || name.is_empty() {
+    // EVYRO_NO_APP_LOOKUP keeps tests from finding (and opening) real apps.
+    if !cfg!(target_os = "macos")
+        || name.is_empty()
+        || std::env::var_os("EVYRO_NO_APP_LOOKUP").is_some()
+    {
         return None;
     }
     let mut dirs = vec![PathBuf::from("/Applications")];

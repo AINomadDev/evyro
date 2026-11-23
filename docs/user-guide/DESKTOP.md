@@ -17,12 +17,28 @@ Requirements: Rust 1.80+ and Git. On Linux, the WebKitGTK 4.1 development packag
 | Screen | What it shows | What you can do |
 |---|---|---|
 | Overview | Active task and owner, last checkpoint and next step, Git branch and changed files, health findings, recent activity (refreshes every few seconds) | Open the task, hand it off, copy a context packet for any agent |
+| Changes | Files changed since the last commit and their diff, with secrets hidden | Review what an AI changed before you hand off or verify; copy the diff |
 | Tasks | Board by status with criteria progress, owner and blockers | Create tasks with acceptance criteria; open a task to tick criteria, change status, run tests, add notes |
 | Handoffs | Every handoff with quality score and status | Prepare a handoff to any AI, read the signed contract, see drift, then **Start with this AI** or **Accept only** |
 | Sessions | Every agent session with status and exit reason | Recover sessions whose agent is gone |
 | Decisions & memory | Recorded decisions and project memory with search | Record a decision, save a memory |
 | AI targets | Every AI you can switch to, grouped as coding agents, API keys, AI IDEs and chat apps, with status and next step; installed agent versions below | **+ Add target** (agent, API key by variable name or Keychain item, IDE, chat app), **Switch to**, open a target to see its checks or remove it |
 | Settings | Verification commands, project details, Evyro data folder, doctor checks | Edit test/lint/build commands (saved to `.evyro/project.toml`), archive a project, back up the database |
+
+## Working faster
+
+| Shortcut | Does |
+|---|---|
+| ⌘K / Ctrl+K | Command palette: every screen, new task, new handoff, switch to any AI, open any project |
+| ⌘1 to ⌘8 / Ctrl+1 to Ctrl+8 | Jump to a screen |
+| ⌘N / Ctrl+N | New task |
+| Esc | Close a dialog, the palette or the task drawer |
+
+**Live updates.** The app watches Evyro's database. When an agent, the CLI or MCP records a checkpoint, a handoff or a test run, the open screen refreshes within about two seconds. The top bar shows which AI is working on the project.
+
+**Notifications.** While the window is in the background, Evyro shows a desktop notification when an agent stops, a handoff is prepared, accepted or reopened, or tests fail. macOS asks once for permission.
+
+**First run.** With no projects yet, the welcome screen walks through adding a project (with a folder picker), checking your AIs and handing work over.
 
 ## Rules the app follows
 
@@ -35,7 +51,6 @@ Requirements: Rust 1.80+ and Git. On Linux, the WebKitGTK 4.1 development packag
 
 ## Known gaps
 
-- No native folder picker yet: paste the repository path when adding a project.
-- No embedded terminal, diff viewer, notifications or tray icon.
+- No embedded terminal or tray icon. Agents run in your own terminal; the app opens one for you on macOS.
 - "Start with this AI" for coding agents uses macOS Terminal through AppleScript; it has not been run on a Mac yet. macOS may ask once to let Evyro control Terminal.
-- Tested by hand on Linux only. macOS uses a different web engine (WKWebView), so small layout differences are possible.
+- Checked by hand on Linux; opened on a real Mac (macOS 27.2) on 2026-11-23 with every screen rendering. An automated UI smoke test runs in CI on Linux, macOS and Windows. Notifications have not been checked on a real desktop yet.

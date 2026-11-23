@@ -70,6 +70,8 @@ impl Env {
 
     fn cmd(&self, dir: &Path, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_evyro"));
+        // Only the fake agents, the evyro binary and system tools: real agents
+        // and IDE launchers on a developer machine must never be found.
         let path = format!(
             "{}:{}:{}",
             self.bin.path().display(),
@@ -77,12 +79,13 @@ impl Env {
                 .parent()
                 .unwrap()
                 .display(),
-            std::env::var("PATH").unwrap_or_default()
+            system_path()
         );
         c.args(args)
             .current_dir(dir)
             .env("EVYRO_HOME", self.home.path())
             .env("PATH", path)
+            .env("EVYRO_NO_APP_LOOKUP", "1")
             .env_remove("EVYRO_SESSION_ID");
         c
     }
@@ -124,6 +127,26 @@ impl Env {
         sh(dir, &["git", "add", "-A"]);
         sh(dir, &["git", "commit", "-qm", "evyro init"]);
     }
+}
+
+/// System tool directories plus the directory holding `git`, nothing else.
+fn system_path() -> String {
+    let mut dirs = vec![
+        "/usr/bin".to_string(),
+        "/bin".to_string(),
+        "/usr/sbin".to_string(),
+        "/sbin".to_string(),
+    ];
+    for d in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+        if d.join("git").is_file() {
+            let d = d.display().to_string();
+            if !dirs.contains(&d) {
+                dirs.push(d);
+            }
+            break;
+        }
+    }
+    dirs.join(":")
 }
 
 fn read(p: &Path) -> String {
@@ -1169,9 +1192,15 @@ fn switch_to_any_kind_of_ai() {
     env.ok(&repo, &["handoff", "--to", "cursor-ide", "--task", "T-1"]);
     let r = env.json(&repo, &["run", "--agent", "cursor-ide"]);
     assert_eq!(r["opened"], true, "{r}");
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    assert!(read(&repo.join(".agent-cursor-args"))
-        .contains(repo.file_name().unwrap().to_str().unwrap()));
+    // The IDE is started detached; wait for the fake launcher to write.
+    let want = repo.file_name().unwrap().to_str().unwrap().to_string();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !read(&repo.join(".agent-cursor-args")).contains(&want)
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(read(&repo.join(".agent-cursor-args")).contains(&want));
     assert!(read(&repo.join(".evyro/HANDOFF_PROMPT.md")).contains("evyro resume"));
     assert_eq!(env.json(&repo, &["handoffs"])[0]["status"], "accepted");
 
