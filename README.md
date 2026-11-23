@@ -55,7 +55,7 @@ Your AI hits a usage limit halfway through a feature. A different AI would be fa
 
 ### Local-first, everywhere you work
 - **CLI, MCP server and a desktop app** on macOS, Windows and Linux, all on one local SQLite database.
-- **Desktop app:** overview, task board, **agent threads** (run Claude Code, Codex or any coding agent in a terminal inside the window), **chat threads over ACP** (the agent's plan and tool calls as a conversation, and you approve each tool call), a Changes view with the diff, **code search** (⌘P for files, text and regex, symbols, with a file viewer and outline), handoff review, sessions, decisions, AI targets, a command palette (⌘K) and live refresh.
+- **Desktop app:** overview, task board, **agent threads** (run Claude Code, Codex or any coding agent in a terminal inside the window), **chat threads over ACP** (the agent's plan and tool calls as a conversation, and you approve each tool call), a Changes view with the diff, **code search** (⌘P for files, text and regex, symbols, with a file viewer and outline), a **skills library** (15 built-in skills plus your own, offered to each agent when they fit its task), handoff review, sessions, decisions, AI targets, a command palette (⌘K) and live refresh.
 - **No cloud account.** Nothing leaves your machine unless you hand it to an AI.
 
 <table>
@@ -129,6 +129,8 @@ Inside an agent session the agent uses the same commands (the generated `AGENTS.
 | Desktop app | [docs/user-guide/DESKTOP.md](docs/user-guide/DESKTOP.md) |
 | Handoff protocol | [docs/protocols/HANDOFF_PROTOCOL.md](docs/protocols/HANDOFF_PROTOCOL.md) |
 | MCP server | [docs/protocols/MCP_INTEGRATION.md](docs/protocols/MCP_INTEGRATION.md) |
+| ACP chat | [docs/protocols/ACP.md](docs/protocols/ACP.md) |
+| Skills | [docs/SKILLS_SYSTEM.md](docs/SKILLS_SYSTEM.md) |
 | Agent support | [docs/AGENT_COMPATIBILITY.md](docs/AGENT_COMPATIBILITY.md) |
 | Architecture decisions | [docs/decisions/ARCHITECTURE_DECISIONS.md](docs/decisions/ARCHITECTURE_DECISIONS.md) |
 | Research and fork-vs-build | [docs/research/](docs/research/) |

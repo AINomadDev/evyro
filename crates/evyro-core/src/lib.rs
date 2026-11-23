@@ -29,6 +29,7 @@ pub mod redact;
 pub mod review;
 pub mod search;
 pub mod sessions;
+pub mod skills;
 pub mod targets;
 pub mod tasks;
 pub mod util;

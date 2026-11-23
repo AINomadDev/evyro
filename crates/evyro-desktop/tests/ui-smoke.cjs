@@ -92,6 +92,8 @@ const FIX = {
   find_files: evj("search", "files", "lim"),
   search_text: evj("search", "text", "allow"),
   find_symbols: evj("search", "symbols", "allow"),
+  // Skills come from the real CLI too.
+  skills_list: evj("skills", "list"),
   view_file: { path: "src/limiter.rs", text: LIMITER, lines: LIMITER.split("\n").length - 1, redactions: 0, symbols: evj("search", "outline", "src/limiter.rs") },
 };
 
@@ -112,6 +114,13 @@ const FIX = {
           window.__mockLog(cmd);
           if (cmd in fix) return JSON.parse(JSON.stringify(fix[cmd]));
           if (cmd === "add_target") return args.target;
+          // Skills: the real list, with on/off kept in memory.
+          const sk = (window.__skills = window.__skills || fix.skills_list);
+          if (cmd === "list_skills") return { skills: JSON.parse(JSON.stringify(sk)), project_dir: "/repo/.evyro/skills", global_dir: "/home/.config/evyro/skills",
+            sync_targets: [{ harness: "claude-code", file: ".claude/skills/<name>/SKILL.md" }, { harness: "codex", file: "AGENTS.md" }] };
+          if (cmd === "skill_text") { const k = sk.find((x) => x.name === args.name); return { skill: k, text: "# " + k.name + "\n\nSteps for " + k.name + "." }; }
+          if (cmd === "set_skill_enabled") { const k = sk.find((x) => x.name === args.name); k.enabled = args.enabled; k.enabled_by = args.global ? "global" : "project"; return k; }
+          if (cmd === "sync_skills") return { harness: args.harness, written: [], unchanged: [], removed: [], skipped: [{ name: "AGENTS.md", reason: "AGENTS.md has instructions someone wrote and no Evyro section, so it was not changed" }] };
           // Review comments, kept in memory.
           const rv = (window.__rv = window.__rv || []);
           if (cmd === "list_review_comments") return rv.filter((c) => args.all || c.status !== "resolved");
@@ -300,6 +309,25 @@ const FIX = {
     await page.click("text=End chat");
     await page.click(".modal >> text=Stop it");
     await page.waitForFunction(() => !document.querySelector(".chat"));
+  });
+  await step("skills: read one, turn it off, sync to an agent", async () => {
+    await tab("skills");
+    await page.waitForSelector(".skill-row >> text=debugging");
+    if ((await page.$$(".skill-row")).length !== 15) throw new Error("expected 15 skills");
+    await page.click(".skill-row >> text=debugging");
+    await page.waitForSelector(".modal pre.skill-text >> text=Steps for debugging");
+    await page.click(".modal .actions .btn");
+    const row = page.locator(".skill-row", { hasText: "test-driven-development" });
+    await row.locator("button", { hasText: "Turn off" }).click();
+    await page.click(".modal .actions .btn.primary");
+    await page.waitForSelector(".skill-row:has-text('test-driven-development') .pill:text-is('off')");
+    await page.fill(".card input[type=text]", "release");
+    await page.waitForFunction(() => document.querySelectorAll(".skill-row").length < 15);
+    await page.click("text=Add to agent files…");
+    await page.selectOption(".modal select", "codex");
+    await page.click(".modal .actions .btn.primary");
+    await page.waitForSelector(".modal >> text=Skipped AGENTS.md");
+    await page.click(".modal .actions .btn");
   });
   await step("settings", async () => { await tab("settings"); await page.waitForSelector("text=Doctor"); });
   await step("command palette filters and runs", async () => {

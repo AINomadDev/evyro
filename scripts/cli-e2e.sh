@@ -49,6 +49,14 @@ if grep -q "Explain this line" <<<"$review_json"; then ok "review prompt"; else 
 review_id=$("$EVYRO" --json review | sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' | head -1)
 step "review resolve" "$EVYRO" review resolve "$review_id"
 step "chat agents list" "$EVYRO" chat --list
+step "skills list" "$EVYRO" skills list
+step "skills for a task" "$EVYRO" skills list --for "fix a crash"
+step "skills show" "$EVYRO" skills show debugging
+step "skills new" "$EVYRO" skills new e2e-skill --description "Use when testing Evyro"
+step "skills disable" "$EVYRO" skills disable e2e-skill
+step "skills check" "$EVYRO" skills check
+step "skills export" "$EVYRO" skills export debugging --out "$TMP/skills"
+step "skills sync for Claude Code" "$EVYRO" skills sync --for claude-code
 step "export" "$EVYRO" export --out "$TMP/export.json"
 step "backup" "$EVYRO" backup "$TMP/backup.db"
 echo "CLI end-to-end passed."
