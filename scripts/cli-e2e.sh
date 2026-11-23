@@ -57,6 +57,10 @@ step "skills disable" "$EVYRO" skills disable e2e-skill
 step "skills check" "$EVYRO" skills check
 step "skills export" "$EVYRO" skills export debugging --out "$TMP/skills"
 step "skills sync for Claude Code" "$EVYRO" skills sync --for claude-code
+step "remote pair" "$EVYRO" remote pair --name "E2E phone" --scope read
+step "remote devices" "$EVYRO" remote devices
+step "remote revoke" "$EVYRO" remote revoke "E2E phone"
+if "$EVYRO" serve --host 0.0.0.0 >/dev/null 2>&1; then echo "FAIL  serve refuses a LAN address without --allow-lan"; exit 1; else ok "serve refuses a LAN address without --allow-lan"; fi
 step "export" "$EVYRO" export --out "$TMP/export.json"
 step "backup" "$EVYRO" backup "$TMP/backup.db"
 echo "CLI end-to-end passed."

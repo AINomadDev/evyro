@@ -26,6 +26,7 @@ pub mod memory;
 pub mod paths;
 pub mod projects;
 pub mod redact;
+pub mod remote;
 pub mod review;
 pub mod search;
 pub mod sessions;

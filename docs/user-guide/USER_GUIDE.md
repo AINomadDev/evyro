@@ -376,6 +376,17 @@ evyro skills sync --for codex --append        # adds a skills list to AGENTS.md
 
 Evyro never overwrites instructions someone wrote. A sync leaves your own `.claude/skills` files alone. It changes `AGENTS.md` only between its own markers, or adds them at the end when you pass `--append`. In the desktop app, the **Skills** tab does all of this. See [Skills](../SKILLS_SYSTEM.md) for the file format and the details.
 
+### 4.12 Follow and approve from your phone
+
+Start remote access, pair your phone once, and you can see the tasks, the changes and every chat from it, and allow or reject an agent's requests there. It is off until you start it.
+
+```bash
+evyro remote pair --name "My phone"    # prints a one-time code, valid 10 minutes
+evyro serve --host 100.x.y.z           # your Tailscale address; 127.0.0.1 is the default
+```
+
+Open `http://100.x.y.z:7420/` on the phone and type the code. In the desktop app, Settings → **Remote access** does the same, and the phone then sees the chats open in the window. Pick the lowest access that does the job: `read` looks only, `approve` (the default) also answers permission requests, `control` also starts and messages chats. `evyro remote revoke "My phone"` cuts a device off at once. See [Remote access](../REMOTE_ACCESS.md) for the security model, Tailscale and the API.
+
 ---
 
 ## Part 5. Desktop app

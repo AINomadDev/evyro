@@ -25,7 +25,7 @@ Requirements: Rust 1.80+ and Git. On Linux, the WebKitGTK 4.1 development packag
 | Decisions & memory | Recorded decisions and project memory with search | Record a decision, save a memory |
 | Skills | Every skill (built in, yours, this project's) with its source, version and whether it is on; type a task to see which fit | Read a skill, **Turn on** or **Turn off** here or in every project, **+ New skill**, **Import…**, **Add to agent files…** (never replaces a file someone wrote) |
 | AI targets | Every AI you can switch to, grouped as coding agents, API keys, AI IDEs and chat apps, with status and next step; installed agent versions below | **+ Add target** (agent, API key by variable name or Keychain item, IDE, chat app), **Switch to**, open a target to see its checks or remove it |
-| Settings | Verification commands, project details, Evyro data folder, doctor checks | Edit test/lint/build commands (saved to `.evyro/project.toml`), archive a project, back up the database |
+| Settings | Verification commands, project details, Evyro data folder, doctor checks | Edit test/lint/build commands (saved to `.evyro/project.toml`), archive a project, back up the database. **Remote access**: start or stop serving to paired devices (they see this window's chats), **+ Pair a device** shows a one-time code, **Revoke** cuts a device off |
 
 ## Working faster
 

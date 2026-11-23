@@ -17,6 +17,6 @@
 | Skills | Study ideas | obra/superpowers and Claude Code `SKILL.md` format | Implemented (own code, own skill text): `evyro-core::skills` with 15 built-in skills, global and project skills, versions, on/off, checks (secrets, size, Evyro version), import/export, `list_skills`/`get_skill` over MCP, a short list in the task context, and `evyro skills sync` into `.claude/skills`, `AGENTS.md`, `GEMINI.md` or the Copilot file without overwriting what a person wrote |
 | Kanban / worktree per task | Study ideas | vibe-kanban (sunsetting) | Worktree per task implemented |
 | Memory server | Study ideas | Marrow, agent-office | FTS5 memory with provenance implemented |
-| Remote / mobile | Study ideas | T3 Code (Tailscale, mobile apps) | Not implemented |
+| Remote / mobile | Study ideas | T3 Code (Tailscale, mobile apps) | Implemented (own code): `evyro-remote` with `evyro serve`, one-time pairing codes and hashed device tokens in `evyro-core::remote`, `read`/`approve`/`control` scopes, loopback or Tailscale by default, rate limits, an audit log, a phone web companion, an event feed and MCP over HTTP |
 | Base application | Reject fork | T3 Code, px0, Paradev | See FORK_VS_BUILD.md |
 | Continue | Reject | Repository is read-only / unmaintained | |

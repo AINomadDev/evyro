@@ -121,6 +121,17 @@ const FIX = {
           if (cmd === "skill_text") { const k = sk.find((x) => x.name === args.name); return { skill: k, text: "# " + k.name + "\n\nSteps for " + k.name + "." }; }
           if (cmd === "set_skill_enabled") { const k = sk.find((x) => x.name === args.name); k.enabled = args.enabled; k.enabled_by = args.global ? "global" : "project"; return k; }
           if (cmd === "sync_skills") return { harness: args.harness, written: [], unchanged: [], removed: [], skipped: [{ name: "AGENTS.md", reason: "AGENTS.md has instructions someone wrote and no Evyro section, so it was not changed" }] };
+          // Remote access, kept in memory.
+          const rm = (window.__rm = window.__rm || { running: false, devices: [] });
+          if (cmd === "remote_status") return rm.running ? { running: true, url: "http://" + rm.host + ":" + rm.port + "/", reach: "loopback" } : { running: false };
+          if (cmd === "remote_start") { Object.assign(rm, { running: true, host: args.host, port: args.port }); return { running: true }; }
+          if (cmd === "remote_stop") { rm.running = false; return null; }
+          if (cmd === "remote_devices") return JSON.parse(JSON.stringify(rm.devices));
+          if (cmd === "remote_pair") {
+            const device = { id: "dev_0" + (rm.devices.length + 1) + "abcdef", name: args.name, scope: args.scope, state: "waiting", created_at: new Date().toISOString(), last_seen_at: null, last_address: null };
+            rm.devices.push(device); return { device, code: "K7QM-4XPZ", expires_at: new Date(Date.now() + 6e5).toISOString() };
+          }
+          if (cmd === "remote_revoke") { const d = rm.devices.find((d) => d.id === args.id); d.state = "revoked"; return d; }
           // Review comments, kept in memory.
           const rv = (window.__rv = window.__rv || []);
           if (cmd === "list_review_comments") return rv.filter((c) => args.all || c.status !== "resolved");
@@ -330,6 +341,21 @@ const FIX = {
     await page.click(".modal .actions .btn");
   });
   await step("settings", async () => { await tab("settings"); await page.waitForSelector("text=Doctor"); });
+  await step("remote access: start serving, pair a device, revoke it", async () => {
+    await page.waitForSelector("h2:text-is('Remote access')");
+    await page.click("text=Start serving");
+    await page.waitForSelector(".card >> text=http://127.0.0.1:7420/");
+    await page.click("text=+ Pair a device");
+    await page.fill(".modal input[type=text]", "My phone");
+    await page.click(".modal .actions .btn.primary");
+    await page.waitForSelector(".modal .pair-code >> text=K7QM-4XPZ");
+    await page.click(".modal .actions .btn");
+    await page.waitForSelector(".list li:has-text('My phone') .pill:text-is('waiting')");
+    await page.click(".list li:has-text('My phone') >> text=Revoke");
+    await page.waitForSelector(".list li:has-text('My phone') .pill:text-is('revoked')");
+    await page.click(".card >> text=Stop");
+    await page.waitForSelector("text=Start serving");
+  });
   await step("command palette filters and runs", async () => {
     await page.keyboard.press("Control+k");
     await page.waitForSelector(".palette input");

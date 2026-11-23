@@ -10,6 +10,7 @@
 //! Spec: <https://agentclientprotocol.com> (protocol version 1).
 
 pub mod client;
+pub mod host;
 
 pub use client::{pick_option, AcpClient, AcpError, Event, Launch, McpStdio, OnEvent};
 

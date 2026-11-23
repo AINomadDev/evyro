@@ -2003,3 +2003,362 @@ fn skills_library_end_to_end() {
         r[4]
     );
 }
+
+/// A tiny HTTP/1.1 client for the remote-access test: (status, headers, JSON body).
+fn http(
+    base: &str,
+    method: &str,
+    path: &str,
+    token: Option<&str>,
+    extra: &[(&str, &str)],
+    body: Option<&Value>,
+) -> (u16, String, Value) {
+    use std::io::{Read, Write};
+    let hostport = base.trim_start_matches("http://");
+    let mut s = std::net::TcpStream::connect(hostport).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(30)))
+        .unwrap();
+    let body = body.map(|b| b.to_string()).unwrap_or_default();
+    let mut req = format!("{method} {path} HTTP/1.1\r\nHost: {hostport}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n", body.len());
+    if let Some(t) = token {
+        req.push_str(&format!("Authorization: Bearer {t}\r\n"));
+    }
+    for (k, v) in extra {
+        req.push_str(&format!("{k}: {v}\r\n"));
+    }
+    req.push_str("\r\n");
+    req.push_str(&body);
+    s.write_all(req.as_bytes()).unwrap();
+    let mut raw = Vec::new();
+    s.read_to_end(&mut raw).unwrap();
+    let text = String::from_utf8_lossy(&raw).to_string();
+    let (head, rest) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    let status: u16 = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let json = serde_json::from_str(rest).unwrap_or(Value::Null);
+    (status, head.to_string(), json)
+}
+
+/// Remote access: pairing, scopes, an approval that must name the exact tool
+/// call, the event feed, MCP over HTTP, revocation, rate limiting, the bind
+/// policy and the audit log, all against the real `evyro serve`.
+#[test]
+fn remote_access_pairs_approves_and_revokes() {
+    use std::io::BufRead;
+    let mut env = Env::new();
+    let repo = env.repo("remote");
+    std::fs::write(repo.join("README.md"), "# Calculator\n").unwrap();
+    env.init(&repo);
+    env.ok(
+        &repo,
+        &[
+            "task",
+            "add",
+            "Add subtraction",
+            "--accept",
+            "sub works",
+            "--ready",
+        ],
+    );
+    std::fs::write(
+        repo.join("src/lib.txt"),
+        "// calculator\nfn add() {}\nlet api_key = \"sk_live_abcdefghijklmnopqrstuv\";\n",
+    )
+    .unwrap();
+    let fake = Path::new(env!("CARGO_MANIFEST_DIR")).join("../evyro-acp/tests/fake_acp_agent.py");
+
+    // Only loopback or Tailscale without --allow-lan.
+    let lan = env.run(&repo, &["serve", "--host", "0.0.0.0", "--port", "0"]);
+    assert_ne!(lan.status.code(), Some(0));
+    assert!(
+        String::from_utf8_lossy(&lan.stderr).contains("Tailscale"),
+        "{}",
+        String::from_utf8_lossy(&lan.stderr)
+    );
+
+    let mut child = env
+        .cmd(&repo, &["--json", "serve", "--port", "0"])
+        .env("EVYRO_ACP_BIN_CODEX", &fake)
+        .env("FAKE_ACP_LOG", repo.join(".agent-acp.log"))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut first = String::new();
+    std::io::BufReader::new(child.stdout.take().unwrap())
+        .read_line(&mut first)
+        .unwrap();
+    let base = serde_json::from_str::<Value>(&first).unwrap()["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let get = |path: &str, t: Option<&str>| http(&base, "GET", path, t, &[], None);
+    let post = |path: &str, t: Option<&str>, b: Value| http(&base, "POST", path, t, &[], Some(&b));
+
+    // Open endpoints and the web companion.
+    assert_eq!(get("/api/v1/health", None).2["ok"], true);
+    let (st, head, _) = get("/", None);
+    assert_eq!(st, 200);
+    assert!(
+        head.contains("Content-Security-Policy: default-src 'self'"),
+        "{head}"
+    );
+    assert_eq!(get("/api/v1/projects", None).0, 401);
+
+    // Pairing: one-time codes, hashed tokens, three scopes.
+    let pair = |scope: &str| -> String {
+        let p = env.json(
+            &repo,
+            &[
+                "remote",
+                "pair",
+                "--name",
+                &format!("{scope}-phone"),
+                "--scope",
+                scope,
+            ],
+        );
+        let code = p["code"].as_str().unwrap().to_string();
+        let (st, _, r) = post(
+            "/api/v1/pair",
+            None,
+            serde_json::json!({"code": code.to_lowercase()}),
+        );
+        assert_eq!(st, 200, "{r}");
+        assert_eq!(
+            post("/api/v1/pair", None, serde_json::json!({"code": code})).0,
+            401,
+            "codes work once"
+        );
+        r["token"].as_str().unwrap().to_string()
+    };
+    let (read, appr, ctl) = (pair("read"), pair("approve"), pair("control"));
+    let db = std::fs::read(env.home.path().join("data/evyro.db")).unwrap();
+    assert!(
+        !String::from_utf8_lossy(&db).contains(&ctl),
+        "tokens are stored only as hashes"
+    );
+
+    // Reading works for every scope; the diff is redacted.
+    let projects = get("/api/v1/projects", Some(&read)).2;
+    let pid = projects[0]["id"].as_str().unwrap().to_string();
+    let tasks = get(&format!("/api/v1/projects/{pid}/tasks"), Some(&read)).2;
+    assert_eq!(tasks[0]["task"]["key"], "T-1");
+    let changes = get(&format!("/api/v1/projects/{pid}/changes"), Some(&read)).2;
+    assert!(
+        changes["diff"].as_str().unwrap().contains("fn add"),
+        "{changes}"
+    );
+    assert!(
+        !changes.to_string().contains("sk_live_"),
+        "secrets are redacted"
+    );
+
+    // Comments need approve; chats need control.
+    let comment =
+        serde_json::json!({"path": "src/lib.txt", "line": 2, "body": "Add sub next to add"});
+    assert_eq!(
+        post(
+            &format!("/api/v1/projects/{pid}/review"),
+            Some(&read),
+            comment.clone()
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        post(
+            &format!("/api/v1/projects/{pid}/review"),
+            Some(&appr),
+            comment
+        )
+        .0,
+        200
+    );
+    let open = serde_json::json!({"project": pid, "target": "codex", "task": "T-1"});
+    assert_eq!(post("/api/v1/chats", Some(&appr), open.clone()).0, 403);
+    let (st, _, info) = post("/api/v1/chats", Some(&ctl), open);
+    assert_eq!(st, 200, "{info}");
+    let chat = info["id"].as_str().unwrap().to_string();
+    let wait_for = |what: &str, f: &dyn Fn(&Value) -> bool| -> Value {
+        for _ in 0..150 {
+            let v = get(&format!("/api/v1/chats/{chat}"), Some(&read)).2;
+            if f(&v) {
+                return v;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        panic!("timed out waiting for {what}");
+    };
+    wait_for("the first turn", &|v| {
+        v["info"]["state"] == "ready" && v["info"]["busy"] == false
+    });
+    assert_eq!(
+        post(
+            &format!("/api/v1/chats/{chat}/messages"),
+            Some(&appr),
+            serde_json::json!({"text": "write the notes"})
+        )
+        .0,
+        403
+    );
+    assert_eq!(
+        post(
+            &format!("/api/v1/chats/{chat}/messages"),
+            Some(&ctl),
+            serde_json::json!({"text": "please write the notes"})
+        )
+        .0,
+        200
+    );
+    let v = wait_for("a permission request", &|v| {
+        !v["pending"].as_array().unwrap().is_empty()
+    });
+    assert_eq!(v["info"]["waiting"], 1);
+    let req = v["pending"][0]["request"].clone();
+    let tool = v["pending"][0]["params"]["toolCall"]["toolCallId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let answer = |t: &str, tool: &str, opt: &str| {
+        post(
+            &format!("/api/v1/chats/{chat}/permission"),
+            Some(t),
+            serde_json::json!({"request": req, "tool_call_id": tool, "option_id": opt}),
+        )
+    };
+    assert_eq!(
+        answer(&read, &tool, "yes").0,
+        403,
+        "read devices cannot approve"
+    );
+    assert_eq!(
+        answer(&appr, "call_other", "yes").0,
+        409,
+        "the approval must name the waiting tool call"
+    );
+    assert_eq!(
+        answer(&appr, &tool, "rm-rf").0,
+        400,
+        "only the agent's own options"
+    );
+    let (st, _, r) = answer(&appr, &tool, "yes");
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(
+        answer(&appr, &tool, "yes").0,
+        409,
+        "an answered request cannot be answered again"
+    );
+    let v = wait_for("the turn to end", &|v| {
+        v["info"]["busy"] == false && v["log"].to_string().contains("Wrote notes.txt")
+    });
+    assert!(
+        v["log"].to_string().contains("approve-phone"),
+        "the transcript says who approved"
+    );
+    assert_eq!(
+        std::fs::read_to_string(repo.join("notes.txt")).unwrap(),
+        "written by the fake agent\n"
+    );
+
+    // The feed carried the request.
+    let feed = get("/api/v1/feed?since=0", Some(&read)).2;
+    assert!(
+        feed["items"].to_string().contains("\"t\":\"permission\""),
+        "{feed}"
+    );
+
+    // MCP over HTTP: sessions are per device; read devices get read-only tools.
+    let init = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}});
+    let (st, head, r) = http(
+        &base,
+        "POST",
+        &format!("/mcp/{pid}"),
+        Some(&read),
+        &[],
+        Some(&init),
+    );
+    assert_eq!(st, 200, "{r}");
+    let sid = head
+        .lines()
+        .find_map(|l| l.strip_prefix("Mcp-Session-Id: "))
+        .unwrap()
+        .trim()
+        .to_string();
+    let list = serde_json::json!({"jsonrpc":"2.0","id":2,"method":"tools/list"});
+    let tools = http(
+        &base,
+        "POST",
+        &format!("/mcp/{pid}"),
+        Some(&read),
+        &[("Mcp-Session-Id", &sid)],
+        Some(&list),
+    )
+    .2;
+    let names = tools["result"]["tools"].to_string();
+    assert!(
+        names.contains("get_active_task") && !names.contains("create_task"),
+        "{names}"
+    );
+    assert_eq!(
+        http(
+            &base,
+            "POST",
+            &format!("/mcp/{pid}"),
+            Some(&ctl),
+            &[("Mcp-Session-Id", &sid)],
+            Some(&list)
+        )
+        .0,
+        404,
+        "another device cannot use the session"
+    );
+    assert_eq!(
+        http(
+            &base,
+            "POST",
+            &format!("/mcp/{pid}"),
+            Some(&read),
+            &[],
+            Some(&list)
+        )
+        .0,
+        400
+    );
+
+    // End the chat: the session closes with a checkpoint.
+    assert_eq!(
+        post(
+            &format!("/api/v1/chats/{chat}/close"),
+            Some(&ctl),
+            serde_json::json!({})
+        )
+        .0,
+        200
+    );
+    let sessions = env.json(&repo, &["sessions"]);
+    assert!(sessions.to_string().contains("chat_closed"), "{sessions}");
+
+    // Revoke: the token stops working at once.
+    env.ok(&repo, &["remote", "revoke", "approve-phone"]);
+    assert_eq!(get("/api/v1/projects", Some(&appr)).0, 401);
+    let devices = env.json(&repo, &["remote", "devices"]);
+    assert!(devices.to_string().contains("\"revoked\""));
+
+    // Failed sign-ins are rate limited.
+    let mut last = 0;
+    for _ in 0..12 {
+        last = get("/api/v1/projects", Some("evr_not_a_real_token")).0;
+    }
+    assert_eq!(last, 429);
+
+    // The audit log has every request, but no tokens or query strings.
+    let audit =
+        std::fs::read_to_string(env.home.path().join("data/logs/remote-audit.log")).unwrap();
+    assert!(audit.contains("/api/v1/chats") && audit.contains("control-phone"));
+    assert!(
+        !audit.contains("evr_") && !audit.contains("since="),
+        "{audit}"
+    );
+    child.kill().unwrap();
+    let _ = child.wait();
+}
