@@ -371,6 +371,29 @@ mod tests {
         )
     }
 
+    /// Windows ConPTY asks the terminal for the cursor position (ESC[6n) at
+    /// startup and waits for the answer. xterm.js answers in the app; here the
+    /// test plays the terminal.
+    fn wait_answering_cursor_query(
+        terms: &Terminals,
+        id: &str,
+        out: &Arc<Mutex<String>>,
+        rx: &mpsc::Receiver<Option<u32>>,
+    ) -> Option<u32> {
+        let mut answered = false;
+        for _ in 0..400 {
+            if let Ok(code) = rx.try_recv() {
+                return code;
+            }
+            if !answered && out.lock().unwrap().contains("\x1b[6n") {
+                let _ = terms.write(id, "\x1b[1;1R");
+                answered = true;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("program did not exit; output: {:?}", out.lock().unwrap());
+    }
+
     fn echo_env() -> Spawn {
         if cfg!(windows) {
             spec("cmd.exe", &["/C", "echo %EVYRO_TERM_TEST%"])
@@ -385,9 +408,7 @@ mod tests {
         let (o, e, out, rx) = collect();
         let info = terms.open(echo_env(), o, e).unwrap();
         assert!(info.running);
-        let code = rx
-            .recv_timeout(Duration::from_secs(20))
-            .expect("program should exit");
+        let code = wait_answering_cursor_query(&terms, &info.id, &out, &rx);
         if cfg!(windows) {
             assert_eq!(code, Some(0));
         } else {
