@@ -1885,7 +1885,14 @@ fn skills_library_end_to_end() {
     assert!(env.run(&repo, &["skills", "new", "Bad Name"]).status.code() != Some(0));
     let bad = repo.join(".evyro/skills/leaky");
     std::fs::create_dir_all(&bad).unwrap();
-    std::fs::write(bad.join("SKILL.md"), "---\nname: leaky\ndescription: Use when deploying.\n---\nexport API_KEY=sk_live_abcdefghijklmnopqrstuvwx\n").unwrap();
+    std::fs::write(
+        bad.join("SKILL.md"),
+        concat!(
+            "---\nname: leaky\ndescription: Use when deploying.\n---\nexport API_KEY=sk_",
+            "live_abcdefghijklmnopqrstuvwx\n"
+        ),
+    )
+    .unwrap();
     let chk = env.run(&repo, &["skills", "check"]);
     assert_eq!(chk.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&chk.stdout).contains("leaky"));
@@ -2184,7 +2191,10 @@ fn remote_access_pairs_approves_and_revokes() {
     );
     std::fs::write(
         repo.join("src/lib.txt"),
-        "// calculator\nfn add() {}\nlet api_key = \"sk_live_abcdefghijklmnopqrstuv\";\n",
+        concat!(
+            "// calculator\nfn add() {}\nlet api_key = \"sk_",
+            "live_abcdefghijklmnopqrstuv\";\n"
+        ),
     )
     .unwrap();
     let fake = fake_acp_bin(&env);

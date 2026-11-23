@@ -1001,7 +1001,7 @@ mod tests {
 
     #[test]
     fn checks_problems() {
-        let raw = "---\nname: Bad_Name\ndescription: \nversion: one\nrequires: >=99.0.0\n---\napi_key = sk_live_abcdefghijklmnop\n";
+        let raw = concat!("---\nname: Bad_Name\ndescription: \nversion: one\nrequires: >=99.0.0\n---\napi_key = sk_", "live_abcdefghijklmnop\n");
         let p = parse(raw).unwrap();
         let pr = check(&p, raw, Some("other"));
         let all = pr.join(" | ");

@@ -79,6 +79,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - Process liveness uses `kill -0` / `tasklist`; a recycled pid can make a dead session look alive.
 - The contract HMAC key is per install, so contracts moved to another machine verify by content hash only.
 - Redaction is pattern-based and can miss unusual secret formats.
+- The Linux desktop build pulls in `glib` 0.18 through Tauri's GTK libraries, which has a medium advisory (GHSA-wrw7-89jp-8q8g, unsound `VariantStrIter`). Evyro never uses that iterator, and the fix needs Tauri to move to gtk-rs 0.20 or later.
 - Checkpoint progress fields are agent-reported; Evyro verifies Git state and receipts, not prose.
 - A found login file does not prove the account can run (plan, usage limit, forced migration); that shows only when the tool runs.
 - Chat targets cannot apply changes: the person pastes the pack and applies the answer. Readiness for chat targets is "unknown" because a web sign-in cannot be checked.
