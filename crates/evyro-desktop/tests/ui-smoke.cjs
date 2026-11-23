@@ -425,7 +425,7 @@ const FIX = {
           if (el.dataset.kbdWalk === walk) return { again: true };
           el.dataset.kbdWalk = walk;
           if (el.closest(".xterm")) return { key: "xterm", ok: true };
-          const id = el.tagName.toLowerCase() + (el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/).join(".") : "") + (el.textContent || "").trim().slice(0, 20);
+          const id = el.tagName.toLowerCase() + (el.className && typeof el.className === "string" ? "." + el.className.trim().split(/\s+/).join(".") : "") + `#len:${(el.textContent || "").trim().length}`; // no page text in CI logs
           const cs = getComputedStyle(el);
           const ok = (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0) || (cs.boxShadow && cs.boxShadow !== "none");
           return { key: id, ok };
