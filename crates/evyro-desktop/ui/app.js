@@ -118,7 +118,7 @@ const lines = (s) => String(s || "").split("\n").map((x) => x.trim()).filter(Boo
 const state = {
   projects: [],
   project: null,
-  view: "overview",
+  view: "workspace",
   drawerTask: null,
   timer: null,
   agents: null,
@@ -217,10 +217,15 @@ function selectProject(id, silent) {
   closeDrawer();
   for (const el of document.querySelectorAll(".project-item")) el.classList.toggle("active", el.title === p.root_path);
   $("#project-title").textContent = p.alias || p.name;
-  $("#project-sub").textContent = `${p.root_path}${p.stack && p.stack.length ? " · " + p.stack.join(", ") : ""}`;
-  if (!silent) state.view = "overview";
+  const sub = $("#project-sub");
+  sub.textContent = `${p.root_path}${p.stack && p.stack.length ? " · " + p.stack.join(", ") : ""}`;
+  sub.title = sub.textContent;
+  if (!silent) state.view = "workspace";
+  state.ctx = null;
   setTab(state.view);
   updateLiveBadge();
+  loadThreads().then(() => drawThreadList());
+  drawContext();
 }
 
 function addProjectDialog() {
@@ -244,7 +249,10 @@ function addProjectDialog() {
 }
 
 // ---------- tabs ----------
+// Screens that were merged: Overview and Threads into Workspace, Handoffs and Sessions into History.
+const TAB_ALIAS = { overview: "workspace", threads: "workspace", handoffs: "history", sessions: "history" };
 function setTab(view) {
+  view = TAB_ALIAS[view] || view;
   state.view = view;
   for (const b of document.querySelectorAll(".tab")) b.classList.toggle("active", b.dataset.view === view);
   render();
@@ -265,8 +273,9 @@ function render() {
       h("p", { class: "small" }, "Press ", h("kbd", null, MOD + " K"), " any time for every action. Projects you set up with ", h("code", null, "evyro init"), " appear here automatically.")));
     return;
   }
-  const views = { overview: viewOverview, tasks: viewTasks, changes: viewChanges, threads: viewThreads, handoffs: viewHandoffs, sessions: viewSessions, knowledge: viewKnowledge, skills: viewSkills, agents: viewAgents, settings: viewSettings };
-  (views[state.view] || viewOverview)(v);
+  const views = { workspace: viewWorkspace, tasks: viewTasks, changes: viewChanges, history: viewHistory, knowledge: viewKnowledge, skills: viewSkills, agents: viewAgents, settings: viewSettings };
+  v.classList.toggle("ws-view", state.view === "workspace");
+  (views[state.view] || viewWorkspace)(v);
 }
 
 function renderBackendError(e) {
@@ -281,7 +290,7 @@ async function viewOverview(v) {
     let o;
     try { o = await invoke("overview", { projectId: pid }); }
     catch (e) { clear(v).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
-    if (state.view !== "overview" || state.project.id !== pid) return;
+    if (!v.isConnected || state.project.id !== pid) return;
     clear(v);
     if (o.recovered && o.recovered.length) {
       v.append(h("div", { class: "banner warn" }, `${o.recovered.length} session(s) had exited and were closed out with a recovery checkpoint.`));
@@ -385,15 +394,16 @@ async function viewTasks(v) {
   const head = h("div", { class: "row", style: "margin-bottom:14px" },
     h("button", { class: "btn primary", onclick: newTaskDialog }, "+ New task"),
     h("span", { class: "spacer" }),
-    h("span", { class: "muted small" }, "Click a task to see criteria, checkpoints and receipts."));
+    h("span", { class: "muted small" }, "Cards show the AIs working on them live. Click a task for criteria, checkpoints and receipts."));
   v.append(head);
   const board = h("div", { class: "board" });
   v.append(board);
   const draw = async () => {
     let rows;
+    await loadThreads();
     try { rows = await invoke("list_tasks", { projectId: pid, includeClosed: true }); }
     catch (e) { clear(board).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
-    if (state.view !== "tasks" || state.project.id !== pid) return;
+    if (!board.isConnected || state.project.id !== pid) return;
     clear(board);
     for (const [st, label] of COLUMNS) {
       const items = rows.filter((r) => r.task.status === st);
@@ -411,14 +421,45 @@ async function viewTasks(v) {
 function taskCard(r) {
   const t = r.task;
   const pct = r.criteria_total ? Math.round((100 * r.criteria_met) / r.criteria_total) : 0;
-  return h("button", { class: "task-card", onclick: () => openTask(t.key) },
+  // AIs working on this task right now, with their latest line, so the board shows live work.
+  const live = (state.threads || []).filter((x) => x.project_id === state.project.id && x.task === t.key && x.running);
+  const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
+  const open = ["backlog", "ready", "blocked"].includes(t.status);
+  return h("div", { class: "task-card" + (live.length ? " live" : ""), ...opens(() => openTask(t.key)), "aria-label": `${t.key} ${t.title}` },
     h("div", { class: "meta" }, h("span", { class: "key" }, t.key), h("span", { class: "pill" }, t.kind), h("span", { class: "pill" }, "P" + t.priority)),
     h("div", { class: "t" }, t.title),
     r.criteria_total ? [h("div", { class: "progress", title: `${r.criteria_met}/${r.criteria_total} criteria met` }, h("span", { style: `width:${pct}%` })),
       h("div", { class: "muted small" }, `${r.criteria_met}/${r.criteria_total} criteria met`)] : h("div", { class: "muted small" }, "No acceptance criteria"),
+    live.map((x) => h("div", { class: "card-ai" },
+      h("div", { class: "row" }, agentBadge(x, true), h("span", { class: "small card-ai-name" }, x.title), h("span", { class: "spacer" }), threadStatus(x)),
+      liveLine(x) ? h("div", { class: "card-ai-line mono" }, liveLine(x)) : null,
+      h("button", { class: "btn small", onclick: stop(() => { placeThread(x.id); setTab("workspace"); }) }, needsYou(x) ? "Answer" : "Open"))),
     h("div", { class: "meta" },
-      r.owner ? pill("running", r.owner) : null,
-      r.blocked_by.length ? pill("blocked", "blocked by " + r.blocked_by.join(", ")) : null));
+      r.owner && !live.length ? pill("running", r.owner) : null,
+      r.blocked_by.length ? pill("blocked", "blocked by " + r.blocked_by.join(", ")) : null,
+      open && !live.length && state.project ? h("button", { class: "btn small", onclick: stop(() => newThreadDialog(t.key)), title: "Start an AI on this task" }, "Start with…") : null));
+}
+
+/** The last line an AI wrote: the bottom of its terminal, or its latest chat message. */
+function liveLine(t) {
+  if (t.kind === "chat") {
+    const blocks = chatBlocks(chatData(t.id).log);
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const b = blocks[i];
+      if (b.k === "perm" && b.answer === undefined) return "asks: " + ((b.params && b.params.toolCall && b.params.toolCall.title) || "permission");
+      if (b.k === "agent" && b.text.trim()) return b.text.trim().split("\n").pop().slice(0, 120);
+      if (b.k === "tool") return `${b.title} (${b.status})`;
+    }
+    return "";
+  }
+  const x = XTERMS.get(t.id);
+  if (!x || !x.opened) return "";
+  const buf = x.term.buffer.active;
+  for (let i = buf.baseY + buf.cursorY; i >= 0 && i > buf.baseY + buf.cursorY - 30; i--) {
+    const line = buf.getLine(i)?.translateToString(true).trim();
+    if (line) return line.slice(0, 120);
+  }
+  return "";
 }
 
 function newTaskDialog() {
@@ -469,7 +510,7 @@ async function openTask(key) {
   const title = clear($("#drawer-title"));
   title.append(h("span", { class: "key" }, t.key), " ", t.title);
   clear(body);
-  const refresh = () => { openTask(key); if (state.view === "tasks" || state.view === "overview") render(); };
+  const refresh = () => { openTask(key); if (state.view === "tasks" || (state.view === "workspace" && !projThreads().length)) render(); drawContext(); };
 
   // Status
   const statusSel = h("select", { style: "width:auto" }, h("option", { value: "" }, "Move to…"), d.allowed_next.filter((s) => s !== t.status).map((s) => h("option", { value: s }, s.replace(/_/g, " "))));
@@ -580,13 +621,29 @@ async function runVerify(key, done) {
 }
 
 // ---------- handoffs ----------
-async function handoffDialog(taskKey, preferred) {
+async function handoffDialog(taskKey, preferred, source = null) {
+  const projectId = state.project.id;
   const to = await targetSelect(preferred || "codex");
+  const checkpoint = source && await act(() => invoke("handoff_checkpoint", { projectId, task: taskKey }));
+  if (state.project.id !== projectId) return;
+  if (source && to.value === source) {
+    const other = [...to.options].find((o) => o.value !== source && o.parentElement.label === KIND_LABEL.harness && !o.textContent.includes("needs setup"));
+    if (other) to.value = other.value;
+  }
   const summary = h("textarea", { placeholder: "What happened so far (optional; Git state is captured automatically)" });
   const done = h("textarea", { placeholder: "Completed items, one per line" });
   const remaining = h("textarea", { placeholder: "Remaining items, one per line" });
   const next = h("input", { type: "text", placeholder: "The very next step for the receiving AI" });
-  modal(`Hand off ${taskKey || "work"}`, [
+  if (checkpoint) {
+    summary.value = (checkpoint.summary || "").slice(0, 800);
+    done.value = (checkpoint.completed || []).slice(-5).map((line) => line.slice(0, 240)).join("\n");
+    remaining.value = (checkpoint.remaining || []).slice(0, 5).map((line) => line.slice(0, 240)).join("\n");
+    next.value = (checkpoint.next_action || "").slice(0, 500);
+  }
+  modal(source ? `Continue ${taskKey} with another AI` : `Hand off ${taskKey || "work"}`, [
+    source ? h("p", { class: "hint" }, checkpoint
+      ? "Review these notes from the task’s latest checkpoint before transferring ownership."
+      : "This task has no checkpoint yet. Add a short summary and next action before transferring ownership.") : null,
     field("Continue with", to, "Any AI: a coding agent, an API key, an AI IDE or a chat app. Add more under AI targets."),
     field("Summary", summary),
     field("Completed", done),
@@ -637,7 +694,7 @@ async function openHandoff(id) {
     result,
   ];
   const actions = rec.status === "prepared" ? [{
-    label: "Start with this AI", primary: true, run: () => handTo(agent.value, null, result, false, rec.id),
+    label: "Start with this AI", primary: true, run: () => handTo(agent.value, d.contract?.task?.key || null, result, false, rec.id),
   }, {
     label: "Accept only", run: async () => {
       const r = await act(() => invoke("resume_handoff", { projectId: state.project.id, handoffId: rec.id, agent: agent.value, acceptDrift: false }));
@@ -650,7 +707,7 @@ async function openHandoff(id) {
     },
   }] : [];
   if (rec.status === "prepared") nodes.splice(4, 0, field("Continue with", agent,
-    "Start with this AI: coding agents open in a Terminal window; IDEs and chat apps open with the hand-over text on your clipboard. Accept only: start the session and copy the prompt, and launch the AI yourself."));
+    "Coding agents open in the workspace with an editable continuation draft. IDEs and chat apps receive the continuation on your clipboard."));
   modal("Handoff " + short(rec.id, 14), nodes, actions);
 }
 
@@ -921,6 +978,7 @@ async function viewSettings(v) {
   }
   const info = h("div", { class: "card" }, h("h2", null, "Evyro"), h("div", { class: "muted" }, "Loading…"));
   const doc = h("div", { class: "card wide" }, h("h2", null, "Doctor"), h("div", { class: "muted" }, "Running checks…"));
+  grid.prepend(appearanceCard());
   grid.append(info, updatesCard(), doc, remoteCard());
   invoke("app_info").then((a) => {
     clear(info).append(h("h2", null, "Evyro"), h("dl", { class: "kv" },
@@ -940,12 +998,14 @@ async function viewSettings(v) {
 // The Changes view and review comments live in review.js.
 
 // ---------- live updates ----------
-const LIVE_VIEWS = new Set(["overview", "tasks", "handoffs", "sessions", "changes"]);
+const LIVE_VIEWS = new Set(["tasks", "history", "changes"]);
 let liveTimer = null;
 /** Refresh the current screen when something changed elsewhere (CLI, agent, MCP), unless the person is busy in a form. */
 function onLiveEvents(evs) {
   const mine = state.project && evs.some((e) => e.project_id === state.project.id);
-  if (mine) updateLiveBadge();
+  if (mine) { updateLiveBadge(); drawContext(); }
+  // The workspace keeps its terminals and chats; only its overview (shown with no threads) refreshes.
+  if (mine && state.view === "workspace" && !projThreads().length) { clearTimeout(liveTimer); liveTimer = setTimeout(() => render(), 300); return; }
   if (!mine || !LIVE_VIEWS.has(state.view)) return;
   const busy = $("#modal-root").firstChild || $("#palette-root").firstChild || state.drawerTask
     || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
@@ -960,14 +1020,14 @@ async function updateLiveBadge() {
     const ss = await invoke("list_sessions", { projectId: state.project.id, activeOnly: true });
     const running = ss.filter((x) => x.status === "running");
     b.className = "live-badge" + (running.length ? " on" : "");
-    b.textContent = running.length ? `With ${running.map((x) => x.harness).join(", ")}` : "No AI working";
+    b.textContent = running.length ? `With ${[...new Set(running.map((x) => x.harness))].join(", ")}` : "No AI working";
     b.title = running.length ? "Sessions in progress for this project" : "";
   } catch { b.textContent = ""; }
 }
 
 // ---------- command palette ----------
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
-const TABS = [["overview", "Overview"], ["tasks", "Tasks"], ["changes", "Changes"], ["threads", "Threads"], ["handoffs", "Handoffs"], ["sessions", "Sessions"], ["knowledge", "Decisions & memory"], ["skills", "Skills"], ["agents", "AI targets"], ["settings", "Settings"]];
+const TABS = [["workspace", "Workspace"], ["tasks", "Tasks"], ["changes", "Changes"], ["history", "History"], ["knowledge", "Knowledge (decisions and memory)"], ["skills", "Skills"], ["agents", "AI targets"], ["settings", "Settings"]];
 async function paletteActions() {
   const acts = TABS.map(([v, l], i) => ({ label: `Go to ${l}`, hint: i < 9 ? `${MOD} ${i + 1}` : "", run: () => setTab(v) }));
   acts.push({ label: "Add a project", run: addProjectDialog });
@@ -981,6 +1041,11 @@ async function paletteActions() {
     acts.push({ label: "Go to symbol", hint: `${MOD} ⇧ O`, run: () => openSearch("symbols") });
     acts.push({ label: "New chat with an AI (ACP)", run: () => { setTab("threads"); newChatDialog(); } });
     acts.push({ label: "Copy context for an agent", run: () => copyContext(null) });
+    acts.push({ label: "Layout: one pane", run: () => { setTab("workspace"); setLayout(1); } });
+    acts.push({ label: "Layout: two panes side by side", run: () => { setTab("workspace"); setLayout(2); } });
+    acts.push({ label: "Layout: grid of four panes", run: () => { setTab("workspace"); setLayout(4); } });
+    acts.push({ label: state.ctxOpen ? "Hide shared context" : "Show shared context", hint: `${MOD} .`, run: () => setCtxOpen(!state.ctxOpen) });
+    acts.push({ label: "Toggle terminal drawer", hint: "Ctrl `", run: () => toggleTermDrawer() });
     acts.push({ label: "Add an AI target", run: () => { setTab("agents"); addTargetDialog(); } });
     try {
       for (const t of await loadTargets()) acts.push({ label: `Switch to ${t.target.name}`, hint: KIND_LABEL[t.target.kind], run: () => handTo(t.target.name, null, h("div")) });
@@ -1033,12 +1098,17 @@ document.addEventListener("DOMContentLoaded", () => {
     if (mod && state.project && (e.key.toLowerCase() === "p" && !e.shiftKey)) { e.preventDefault(); openSearch("files"); return; }
     if (mod && state.project && e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); openSearch("text"); return; }
     if (mod && state.project && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); openSearch("symbols"); return; }
-    if (mod && /^[1-9]$/.test(e.key)) { e.preventDefault(); setTab(TABS[Number(e.key) - 1][0]); return; }
+    if (mod && /^[1-9]$/.test(e.key) && TABS[Number(e.key) - 1]) { e.preventDefault(); setTab(TABS[Number(e.key) - 1][0]); return; }
+    if (mod && e.key === "." && state.project) { e.preventDefault(); setCtxOpen(!state.ctxOpen); return; }
+    if (e.ctrlKey && e.key === "`" && state.project) { e.preventDefault(); toggleTermDrawer(); return; }
     if (mod && e.key.toLowerCase() === "n" && state.project) { e.preventDefault(); setTab("tasks"); newTaskDialog(); }
   });
   $("#palette-btn").addEventListener("click", openPalette);
   $("#palette-btn").textContent = `${MOD} K`;
   $("#search-btn").addEventListener("click", () => openSearch());
+  $("#ctx-btn").addEventListener("click", () => setCtxOpen(!state.ctxOpen));
+  $("#ctx-close").addEventListener("click", () => setCtxOpen(false));
+  for (const b of document.querySelectorAll(".ctx-tab")) b.addEventListener("click", () => setCtxPane(b.dataset.pane));
   $("#search-btn").textContent = `Search  ${MOD} P`;
   if (window.__TAURI__ && window.__TAURI__.event) {
     window.__TAURI__.event.listen("evyro-events", (ev) => onLiveEvents(ev.payload || []));

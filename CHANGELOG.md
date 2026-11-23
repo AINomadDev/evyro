@@ -4,6 +4,36 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ## [Unreleased]
 
+### Added
+
+- Desktop workspace for several AIs at once: threads side by side in 1, 2 or 4 panes, a sidebar that groups threads as Needs you, Working, Your turn and Ended, a shared-context panel (task and criteria, handoff, decisions, review notes, memory, activity across AIs, changed files) that sends any item to the focused AI, a box that messages several AIs at once, a terminal drawer and a status bar.
+- The task board shows which AI is working on each card, with its latest line of output, and starts an AI from a card.
+- Appearance settings: five themes, accent colors including your own, interface and terminal fonts and sizes, density, corner radius and layout options, with copy and paste of the settings as JSON.
+- Threads and their output are saved and listed after the desktop app restarts (marked "earlier run"), with a **Resume** button; the pane layout is kept too.
+- A **Usage, by AI** section in the shared-context panel: tasks each AI holds, runs, failed runs, time worked and when it was last active.
+- A pane that stopped because a task is held by an AI that is gone offers **Free T-n and retry**.
+
+- New coding agents: Amp, Qwen Code, Kiro CLI, Factory Droid, Cline CLI and Crush (from their docs; not run with Evyro yet). Copilot CLI and Cursor now start in a terminal pane.
+- Local model servers: MLX, llama.cpp (also for Unsloth GGUF models) and vLLM, besides Ollama and LM Studio.
+- Panes: grids of six and nine; starting an AI that is already running points to the running thread first.
+
+### Fixed
+
+- Clicking anywhere in a terminal pane now focuses it, so Enter reaches prompts such as a workspace-trust question; a pane redraw no longer drops focus.
+- Reopening a thread no longer types stray "3R3R3R" into the running AI: the terminal's replies to replayed output are ignored.
+- Saved and replayed terminal output no longer starts in the middle of an escape sequence.
+- The message box is compact, grows with the text and shows a line count with Discard for long drafts. Failed sends no longer say "Sent to 0 AIs".
+- A running AI that is low on or out of usage shows a banner with **Continue with…**, suggesting the AI with the most usage left.
+- `evyro integrate cursor --write` writes `.cursor/mcp.json`, with the full path to `evyro` when it is not on PATH.
+
+- A task an agent starts from inside `evyro run` (CLI or MCP) now belongs to that run and is freed when the agent exits. Before, it stayed held by a session nobody watched, and every later thread on that task failed with "owned by session".
+- `evyro run` with no task named no longer fails when the active task is held by another AI; it starts free.
+- Agents started from the desktop find `evyro` by name, and the header names each running AI once.
+
+### Changed
+
+- Desktop screens: Overview and Threads became **Workspace**, Handoffs and Sessions became **History**, and Decisions & memory is now **Knowledge**.
+
 ## [0.2.0-rc.1] - 2026-11-23
 
 ### Added
