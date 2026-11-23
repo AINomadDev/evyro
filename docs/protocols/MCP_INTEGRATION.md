@@ -16,9 +16,9 @@
 
 ## Tools
 
-Read-only: `get_project_context`, `get_active_task`, `list_tasks`, `get_checkpoint`, `get_handoff`, `get_git_status`, `list_sessions`, `get_project_health`, `search_memory`, `get_relevant_files`.
+Read-only: `get_project_context`, `get_active_task`, `list_tasks`, `get_checkpoint`, `get_handoff`, `get_git_status`, `list_sessions`, `get_project_health`, `search_memory`, `get_relevant_files`, `get_review_comments`.
 
-Mutating (disabled with `--read-only`): `create_task`, `claim_task`, `update_task`, `check_acceptance`, `create_checkpoint`, `prepare_handoff`, `record_decision`, `run_verification`, `add_memory`.
+Mutating (disabled with `--read-only`): `create_task`, `claim_task`, `update_task`, `check_acceptance`, `create_checkpoint`, `prepare_handoff`, `record_decision`, `run_verification`, `add_memory`, `resolve_review_comment`.
 
 ## Safety rules
 

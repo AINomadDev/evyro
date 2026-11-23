@@ -64,6 +64,10 @@ fn tools() -> Vec<ToolDef> {
             schema: s(json!({"id": {"type": "string"}}), &[]) },
         ToolDef { name: "record_decision", mutating: true, description: "Record an architecture/implementation decision with rationale.",
             schema: s(json!({"title": {"type": "string"}, "decision": {"type": "string"}, "rationale": {"type": "string"}, "task": {"type": "string"}}), &["title", "decision"]) },
+        ToolDef { name: "get_review_comments", mutating: false, description: "Review comments the person left on your changes that are not resolved yet (file, line, comment, the commented line). Address each one, then call resolve_review_comment.",
+            schema: s(json!({}), &[]) },
+        ToolDef { name: "resolve_review_comment", mutating: true, description: "Mark a review comment as addressed, by its id or short id.",
+            schema: s(json!({"id": {"type": "string"}}), &["id"]) },
         ToolDef { name: "run_verification", mutating: true, description: "Run one of the project's configured build/test/lint commands and record a receipt. Arbitrary commands are not allowed here.",
             schema: s(json!({"kind": {"type": "string", "enum": ["test", "lint", "build"]}, "index": {"type": "integer", "minimum": 0}, "task": {"type": "string"}}), &["kind"]) },
         ToolDef { name: "get_git_status", mutating: false, description: "Branch, HEAD, and changed files (with content hashes) of the project or task worktree.",
@@ -354,6 +358,23 @@ impl Server {
                 }
                 let c = evyro_core::contract::load(std::path::Path::new(&h.contract_path))?;
                 json!({"record": h, "markdown": c.to_markdown(), "contract": c})
+            }
+            "get_review_comments" => {
+                let cs = s.pending_review_comments(&pid)?;
+                let text = if cs.is_empty() {
+                    "No review comments waiting.".to_string()
+                } else {
+                    evyro_core::review::review_prompt(&cs)
+                };
+                json!({"comments": cs, "text": text})
+            }
+            "resolve_review_comment" => {
+                let c = s.resolve_review_ref(&pid, arg_str(args, "id").unwrap_or(""))?;
+                json!(s.set_review_status(
+                    &c.id,
+                    "resolved",
+                    &format!("agent:{}", self.agent(args))
+                )?)
             }
             "record_decision" => {
                 let t = match arg_str(args, "task") {

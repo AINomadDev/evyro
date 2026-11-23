@@ -32,6 +32,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 
 - Desktop app under Xvfb: creating a task, checking criteria, running tests, accepting a handoff with drift, saving commands, the AI targets screen, adding a target, switching to a chat app through a handoff, the Changes view, the palette and live refresh after a CLI checkpoint.
 - Agent threads in the real app under Xvfb (2026-11-23): an agent thread ran `evyro run --to aider --task T-1` with a stand-in agent in a PTY, took typed input, was tracked as a session (top bar showed "With aider") and checkpointed on exit; a shell thread ran commands and followed window resizes; quitting the app stopped a running thread's program.
+- Review workbench in the real app under Xvfb (2026-11-23): commented on a diff line, saw it inline, sent it to a running stand-in agent thread; the agent (in raw mode with bracketed paste on, like real agent TUIs) received it as one bracketed message submitted with Enter, and the comment showed as sent.
 
 ## Not yet verified
 
@@ -46,7 +47,6 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 
 - Desktop: tray icon, auto-update.
 - Web UI, mobile companion, remote access.
-- Review workflow with inline diff comments (planned).
 - Code search, symbol index, LSP, codebase map.
 - Skills registry, context deduplication across sessions, embeddings.
 - Model discovery (listing a provider's models), quota tracking, routing policies, automation rules. A provider registry exists (`evyro targets providers`).

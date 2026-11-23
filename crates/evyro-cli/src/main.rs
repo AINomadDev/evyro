@@ -157,6 +157,12 @@ enum Cmd {
     },
     /// Decisions for the project.
     Decisions,
+    /// Review comments on the working-tree changes: leave them on files and
+    /// lines, send the open ones to an agent, resolve them when addressed.
+    Review {
+        #[command(subcommand)]
+        cmd: Option<ReviewCmd>,
+    },
     /// Project memory.
     #[command(subcommand)]
     Memory(MemoryCmd),
@@ -427,6 +433,36 @@ enum TargetsCmd {
     Remove { name: String },
     /// Providers you can use with API targets.
     Providers,
+}
+
+#[derive(Subcommand)]
+enum ReviewCmd {
+    /// Comments still waiting for an agent (open or sent). The default.
+    List {
+        /// Include resolved comments.
+        #[arg(long)]
+        all: bool,
+    },
+    /// Comment on a file or a line: `evyro review comment src/lib.rs:42 "Handle the empty case"`.
+    Comment {
+        /// `path` or `path:line`, relative to the repository root.
+        location: String,
+        text: String,
+        #[arg(long)]
+        task: Option<String>,
+    },
+    /// Mark comments as addressed.
+    Resolve { ids: Vec<String> },
+    /// Open a resolved or sent comment again.
+    Reopen { id: String },
+    /// Remove a comment.
+    Delete { id: String },
+    /// Print the open comments as one prompt to paste into any AI.
+    Prompt {
+        /// Mark the printed comments as sent.
+        #[arg(long)]
+        mark_sent: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1238,6 +1274,117 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                     .collect::<Vec<_>>()
                     .join("\n")
             });
+        }
+        Cmd::Review { cmd } => {
+            let p = project(&store, &cli.project, &dir)?;
+            let actor = match std::env::var("EVYRO_SESSION_ID") {
+                Ok(sid) if !sid.is_empty() => format!("agent:{sid}"),
+                _ => "human".to_string(),
+            };
+            let list = |cs: &Vec<evyro_core::review::ReviewComment>| {
+                if cs.is_empty() {
+                    return "No review comments waiting.".to_string();
+                }
+                cs.iter()
+                    .map(|c| {
+                        format!(
+                            "{}  {:8} {}  {}",
+                            c.short_id(),
+                            c.status,
+                            c.location(),
+                            c.body.replace('\n', " ")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            match cmd.unwrap_or(ReviewCmd::List { all: false }) {
+                ReviewCmd::List { all } => {
+                    let cs = if all {
+                        store.list_review_comments(&p.id, &[])?
+                    } else {
+                        store.pending_review_comments(&p.id)?
+                    };
+                    o.print(&cs, || list(&cs));
+                }
+                ReviewCmd::Comment {
+                    location,
+                    text,
+                    task,
+                } => {
+                    let (path, line) = evyro_core::review::parse_location(&location)?;
+                    let root = p.root();
+                    // The commented line as it is now, for context.
+                    let snippet = line
+                        .and_then(|l| {
+                            std::fs::read_to_string(root.join(&path))
+                                .ok()
+                                .and_then(|t| t.lines().nth(l as usize - 1).map(str::to_string))
+                        })
+                        .unwrap_or_default();
+                    let t = match task {
+                        Some(r) => Some(store.resolve_task(&p.id, &r)?.id),
+                        None => None,
+                    };
+                    let head = git::head_sha(&root).ok().flatten();
+                    let c = store.add_review_comment(
+                        &p.id,
+                        evyro_core::review::NewReviewComment {
+                            task_id: t.as_deref(),
+                            path: &path,
+                            line,
+                            snippet: &snippet,
+                            body: &text,
+                            author: &actor,
+                            commit_sha: head.as_deref(),
+                        },
+                    )?;
+                    o.print(&c, || {
+                        format!("Comment {} on {}", c.short_id(), c.location())
+                    });
+                }
+                ReviewCmd::Resolve { ids } => {
+                    if ids.is_empty() {
+                        return Err(Error::Invalid("give the comment ids to resolve".into()).into());
+                    }
+                    let mut done = Vec::new();
+                    for id in &ids {
+                        let c = store.resolve_review_ref(&p.id, id)?;
+                        done.push(store.set_review_status(&c.id, "resolved", &actor)?);
+                    }
+                    o.print(&done, || format!("Resolved {} comment(s).", done.len()));
+                }
+                ReviewCmd::Reopen { id } => {
+                    let c = store.resolve_review_ref(&p.id, &id)?;
+                    let c = store.set_review_status(&c.id, "open", &actor)?;
+                    o.print(&c, || format!("Reopened {}", c.id));
+                }
+                ReviewCmd::Delete { id } => {
+                    let c = store.resolve_review_ref(&p.id, &id)?;
+                    store.delete_review_comment(&c.id)?;
+                    o.print(&json!({"deleted": c.id}), || format!("Deleted {}", c.id));
+                }
+                ReviewCmd::Prompt { mark_sent } => {
+                    let cs = store.list_review_comments(&p.id, &["open"])?;
+                    let text = if cs.is_empty() {
+                        String::new()
+                    } else {
+                        evyro_core::review::review_prompt(&cs)
+                    };
+                    if mark_sent {
+                        for c in &cs {
+                            store.set_review_status(&c.id, "sent", &actor)?;
+                        }
+                    }
+                    o.print(&json!({"prompt": text, "count": cs.len()}), || {
+                        if cs.is_empty() {
+                            "No open review comments.".into()
+                        } else {
+                            text.clone()
+                        }
+                    });
+                }
+            }
         }
         Cmd::Memory(m) => {
             let p = project(&store, &cli.project, &dir)?;

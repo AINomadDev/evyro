@@ -104,6 +104,22 @@ const FIX = {
           window.__mockLog(cmd);
           if (cmd in fix) return JSON.parse(JSON.stringify(fix[cmd]));
           if (cmd === "add_target") return args.target;
+          // Review comments, kept in memory.
+          const rv = (window.__rv = window.__rv || []);
+          if (cmd === "list_review_comments") return rv.filter((c) => args.all || c.status !== "resolved");
+          if (cmd === "add_review_comment") {
+            const c = { id: "rvc_" + (rv.length + 1) + "0000000", project_id: args.projectId, task_id: null, path: args.path, line: args.line, snippet: args.snippet || "",
+              body: args.body, status: "open", author: "human", commit_sha: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+            rv.push(c); return c;
+          }
+          if (cmd === "set_review_status") { const c = rv.find((c) => c.id === args.id); c.status = args.status; return c; }
+          if (cmd === "delete_review_comment") { window.__rv = rv.filter((c) => c.id !== args.id); return null; }
+          if (cmd === "review_prompt_text") {
+            const open = rv.filter((c) => c.status === "open");
+            const prompt = open.map((c, i) => `${i + 1}. ${c.path}${c.line ? ":" + c.line : ""}\n   ${c.body}`).join("\n");
+            if (args.markSent) open.forEach((c) => (c.status = "sent"));
+            return { prompt, count: open.length };
+          }
           // Terminals: a stand-in that echoes input back, like a PTY would.
           const terms = (window.__terms = window.__terms || []);
           if (cmd === "term_list") return JSON.parse(JSON.stringify(terms));
@@ -116,6 +132,7 @@ const FIX = {
           }
           if (cmd === "term_snapshot") return { data: "", end: 0 };
           if (cmd === "term_resize") return null;
+          if (cmd === "term_write") window.__lastTermWrite = (window.__lastTermWrite || "") + args.data;
           if (cmd === "term_write") { setTimeout(() => window.__emit("term-output", { id: args.id, data: args.data, end: 0 }), 10); return null; }
           if (cmd === "term_close") { window.__terms = terms.filter((t) => t.id !== args.id); return null; }
           throw { code: "not_mocked", message: `no fixture for ${cmd}` };
@@ -140,8 +157,10 @@ const FIX = {
   await step("tasks board", async () => { await tab("tasks"); await page.waitForSelector(".task-card"); });
   await step("changes view renders the diff", async () => {
     await tab("changes");
-    await page.waitForSelector("pre.diff .add");
-    if ((await page.textContent("pre.diff .add")).trim() !== "+two") throw new Error("diff line");
+    await page.waitForSelector(".diff .add .code");
+    if ((await page.textContent(".diff .add .code")).trim() !== "+two") throw new Error("diff line");
+    // The added line is line 2 of the new file.
+    if ((await page.textContent(".diff .add .ln.can")).trim() !== "2") throw new Error("line number");
   });
   await step("handoffs list", async () => { await tab("handoffs"); await page.waitForSelector("table tbody tr"); });
   await step("sessions", async () => { await tab("sessions"); await page.waitForTimeout(200); });
@@ -176,6 +195,25 @@ const FIX = {
     await tab("overview");
     await tab("threads");
     await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("agent ready"));
+  });
+  await step("review comments: comment on a line and send to a running agent", async () => {
+    await page.evaluate((pid) => window.__terms.push({ id: "term_9", title: "codex on T-1", kind: "agent", target: "codex", task: "T-1",
+      project_id: pid, cwd: "/repo", command: "evyro run", started_at: 1, running: true, exit_code: null }), project.id);
+    await tab("changes");
+    await page.waitForSelector(".diff .add .ln.can");
+    await page.click(".diff .add .ln.can");
+    await page.fill(".rv-form textarea", "Read the limit from config");
+    await page.click(".rv-form .btn.primary");
+    await page.waitForSelector(".rv-comment >> text=Read the limit from config");
+    await page.waitForSelector("text=1 open comment");
+    await page.click("text=Send comments to agent");
+    await page.waitForSelector(".rv-preview >> text=app.txt:2");
+    await page.click(".modal .btn.primary");
+    await page.waitForSelector(".modal", { state: "detached" });
+    await page.waitForFunction(() => window.__lastTermWrite && window.__lastTermWrite.includes("Read the limit from config"));
+    await page.waitForSelector(".rv-comment.sent");
+    await page.click(".rv-comment >> text=Resolve");
+    await page.waitForSelector(".rv-comment", { state: "detached" });
   });
   await step("settings", async () => { await tab("settings"); await page.waitForSelector("text=Doctor"); });
   await step("command palette filters and runs", async () => {

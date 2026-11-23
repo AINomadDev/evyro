@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+mod review;
 mod threads;
 
 type CmdResult = Result<Value, Value>;
@@ -738,7 +739,11 @@ async fn repo_changes(project_id: String) -> CmdResult {
         let p = s.get_project(&project_id)?;
         let root = p.root();
         let files = git::status_files(&root)?;
-        let raw = git::diff_text(&root, 400_000);
+        let mut raw = git::diff_text(&root, 400_000);
+        // New files the agent created, shown as added so they can be reviewed too.
+        if !raw.contains("… diff truncated …") {
+            raw.push_str(&git::untracked_diff(&root, &files, 200_000));
+        }
         let (diff, findings) = evyro_core::redact::redact(&raw);
         Ok(json!({
             "files": files,
@@ -864,6 +869,11 @@ fn main() {
             open_in_terminal,
             pick_folder,
             repo_changes,
+            review::list_review_comments,
+            review::add_review_comment,
+            review::set_review_status,
+            review::delete_review_comment,
+            review::review_prompt_text,
             threads::term_open,
             threads::term_list,
             threads::term_write,
