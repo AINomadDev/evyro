@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Evyro</title>
+  <link rel="stylesheet" href="vendor/xterm/xterm.css">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -33,6 +34,7 @@
           <button data-view="overview" class="tab active">Overview</button>
           <button data-view="tasks" class="tab">Tasks</button>
           <button data-view="changes" class="tab">Changes</button>
+          <button data-view="threads" class="tab">Threads</button>
           <button data-view="handoffs" class="tab">Handoffs</button>
           <button data-view="sessions" class="tab">Sessions</button>
           <button data-view="knowledge" class="tab">Decisions &amp; memory</button>
@@ -55,6 +57,9 @@
   <div id="modal-root"></div>
   <div id="palette-root"></div>
   <div id="toast-root" class="toast-root"></div>
+  <script src="vendor/xterm/xterm.js"></script>
+  <script src="vendor/xterm/addon-fit.js"></script>
   <script src="app.js"></script>
+  <script src="threads.js"></script>
 </body>
 </html>

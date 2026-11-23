@@ -216,3 +216,24 @@ kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px sol
 .palette-list { list-style: none; margin: 0; padding: 6px; max-height: 50vh; overflow: auto; }
 .palette-list li { padding: 8px 10px; border-radius: 8px; display: flex; justify-content: space-between; gap: 12px; cursor: pointer; }
 .palette-list li.sel { background: var(--accent-soft); color: var(--accent); }
+
+/* ---------- threads ---------- */
+.threads { display: grid; grid-template-columns: 240px 1fr; gap: 14px; height: 100%; min-height: 360px; }
+.thread-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+.thread-list { display: flex; flex-direction: column; gap: 4px; overflow: auto; }
+.thread-item { text-align: left; border: 1px solid transparent; background: none; color: var(--text); padding: 8px 10px; border-radius: 8px; cursor: pointer; font: inherit; display: flex; flex-direction: column; gap: 2px; }
+.thread-item:hover { background: var(--panel-2); }
+.thread-item.active { background: var(--accent-soft); border-color: var(--border); }
+.thread-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.thread-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.empty-threads { padding: 8px 10px; }
+.thread-pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.thread-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.thread-head > .row { flex-wrap: nowrap; }
+.thread-head > div:first-child { min-width: 0; }
+.thread-head .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60vw; }
+.thread-name { font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.term-host { flex: 1; min-height: 0; padding: 8px 4px 4px 10px; background: #ffffff; }
+.thread-empty { margin: auto; max-width: 520px; text-align: center; padding: 40px 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+@media (prefers-color-scheme: dark) { .term-host { background: #0c0e14; } }
+.view:has(.threads) { padding-bottom: 20px; }

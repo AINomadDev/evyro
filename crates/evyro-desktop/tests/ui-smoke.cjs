@@ -104,6 +104,20 @@ const FIX = {
           window.__mockLog(cmd);
           if (cmd in fix) return JSON.parse(JSON.stringify(fix[cmd]));
           if (cmd === "add_target") return args.target;
+          // Terminals: a stand-in that echoes input back, like a PTY would.
+          const terms = (window.__terms = window.__terms || []);
+          if (cmd === "term_list") return JSON.parse(JSON.stringify(terms));
+          if (cmd === "term_open") {
+            const t = { id: "term_" + (terms.length + 1), title: args.kind === "agent" ? `${args.target} on ${args.task}` : "Shell", kind: args.kind,
+              target: args.target, task: args.task, project_id: args.projectId, cwd: "/repo", command: "evyro run", started_at: Math.floor(Date.now() / 1000), running: true, exit_code: null };
+            terms.push(t);
+            setTimeout(() => window.__emit("term-output", { id: t.id, data: "agent ready\r\n", end: 13 }), 50);
+            return t;
+          }
+          if (cmd === "term_snapshot") return { data: "", end: 0 };
+          if (cmd === "term_resize") return null;
+          if (cmd === "term_write") { setTimeout(() => window.__emit("term-output", { id: args.id, data: args.data, end: 0 }), 10); return null; }
+          if (cmd === "term_close") { window.__terms = terms.filter((t) => t.id !== args.id); return null; }
           throw { code: "not_mocked", message: `no fixture for ${cmd}` };
         },
       },
@@ -145,6 +159,24 @@ const FIX = {
     await page.click(".modal .btn.primary");
     await page.waitForSelector(".modal", { state: "detached" });
   });
+  await step("agent thread runs in the window", async () => {
+    await tab("threads");
+    await page.waitForSelector("text=Work with an AI right here");
+    await page.click("text=New agent thread");
+    await page.waitForSelector(".modal select");
+    await page.selectOption(".modal select >> nth=1", "T-1");
+    await page.click(".modal .btn.primary");
+    await page.waitForSelector(".thread-item");
+    await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("agent ready"));
+    await page.click(".xterm");
+    await page.keyboard.type("hi");
+    await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("agent readyhi") || document.querySelector(".xterm-rows")?.textContent.includes("hi"));
+    await page.evaluate(() => window.__emit("term-exit", { id: "term_1", code: 0 }));
+    await page.waitForSelector(".thread-item >> text=exit 0");
+    await tab("overview");
+    await tab("threads");
+    await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("agent ready"));
+  });
   await step("settings", async () => { await tab("settings"); await page.waitForSelector("text=Doctor"); });
   await step("command palette filters and runs", async () => {
     await page.keyboard.press("Control+k");
@@ -154,6 +186,7 @@ const FIX = {
     await page.waitForSelector('.tab.active[data-view="tasks"]');
   });
   await step("keyboard shortcut switches tabs", async () => {
+    await page.click(".tab[data-view=\"tasks\"]");
     await page.keyboard.press("Control+3");
     await page.waitForSelector('.tab.active[data-view="changes"]');
   });

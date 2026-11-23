@@ -30,21 +30,22 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 ## Works (checked by hand on Linux)
 
 - Desktop app under Xvfb: creating a task, checking criteria, running tests, accepting a handoff with drift, saving commands, the AI targets screen, adding a target, switching to a chat app through a handoff, the Changes view, the palette and live refresh after a CLI checkpoint.
+- Agent threads in the real app under Xvfb (2026-11-23): an agent thread ran `evyro run --to aider --task T-1` with a stand-in agent in a PTY, took typed input, was tracked as a session (top bar showed "With aider") and checkpointed on exit; a shell thread ran commands and followed window resizes; quitting the app stopped a running thread's program.
 
 ## Not yet verified
 
 - **Real agents.** No real Claude Code, Codex, Gemini or OpenCode run has been recorded. Argv and MCP setup are from docs. The first real run on your Mac is the next acceptance step.
 - **Windows end-to-end.** Unit tests and builds pass on Windows CI, but the end-to-end scenario tests use shell-script stand-ins for agents and run only on Linux and macOS. No one has used Evyro on a Windows machine.
-- **Notifications and the Terminal launch** on a real desktop.
+- **Notifications, agent threads and the Terminal launch** on a real Mac or Windows desktop. Agent threads were checked by hand on Linux with a real PTY and a stand-in agent.
 - **Installers.** The CI job that builds .dmg, .exe, .deb and .AppImage is configured; see the backlog for its first run. Builds are not code-signed or notarized (needs an Apple Developer ID and a Windows certificate).
 - **Sign-in and key checks against real tools.** Login detection is confirmed for Claude Code, Codex and Gemini CLI on a real Mac; the others follow their docs. Opening IDEs from Evyro has not been checked on a real Mac yet.
 - **Real API keys.** No target has been run with a real key; model name mapping per agent follows each agent's docs.
 
 ## Not implemented
 
-- Desktop: embedded terminal, tray icon, auto-update.
+- Desktop: tray icon, auto-update.
 - Web UI, mobile companion, remote access.
-- Terminal/PTY, diff viewer, review workflow, inline comments (planned via px0 integration).
+- Review workflow with inline diff comments (planned).
 - Code search, symbol index, LSP, codebase map.
 - Skills registry, context deduplication across sessions, embeddings.
 - Model discovery (listing a provider's models), quota tracking, routing policies, automation rules. A provider registry exists (`evyro targets providers`).

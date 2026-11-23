@@ -17,6 +17,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+mod threads;
+
 type CmdResult = Result<Value, Value>;
 
 fn err(e: Error) -> Value {
@@ -820,6 +822,7 @@ fn start_event_watcher(app: tauri::AppHandle) {
 }
 
 fn main() {
+    let terms: threads::Terms = std::sync::Arc::new(evyro_term::Terminals::new());
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -861,11 +864,24 @@ fn main() {
             open_in_terminal,
             pick_folder,
             repo_changes,
+            threads::term_open,
+            threads::term_list,
+            threads::term_write,
+            threads::term_resize,
+            threads::term_snapshot,
+            threads::term_close,
         ])
+        .manage(terms.clone())
         .setup(|app| {
             start_event_watcher(app.handle().clone());
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Evyro desktop");
+        .build(tauri::generate_context!())
+        .expect("error while running Evyro desktop")
+        .run(move |_, event| {
+            // Agents started in the window stop with it.
+            if let tauri::RunEvent::Exit = event {
+                terms.close_all();
+            }
+        });
 }
