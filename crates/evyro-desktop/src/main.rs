@@ -18,6 +18,7 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 
 mod chat;
+mod remote;
 mod review;
 mod search;
 mod skills;
@@ -865,7 +866,8 @@ fn adopt_login_path() {
 fn main() {
     adopt_login_path();
     let terms: threads::Terms = std::sync::Arc::new(evyro_term::Terminals::new());
-    let chats: chat::Chats = Default::default();
+    let chats: chat::Chats = chat::new_chats();
+    let remote: remote::Remote = Default::default();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -909,6 +911,12 @@ fn main() {
             repo_changes,
             search::find_files,
             skills::list_skills,
+            remote::remote_status,
+            remote::remote_start,
+            remote::remote_stop,
+            remote::remote_devices,
+            remote::remote_pair,
+            remote::remote_revoke,
             skills::skill_text,
             skills::set_skill_enabled,
             skills::new_skill,
@@ -940,9 +948,14 @@ fn main() {
         ])
         .manage(terms.clone())
         .manage(chats.clone())
-        .setup(|app| {
-            start_event_watcher(app.handle().clone());
-            Ok(())
+        .manage(remote.clone())
+        .setup({
+            let chats = chats.clone();
+            move |app| {
+                chat::attach(&chats, app.handle().clone());
+                start_event_watcher(app.handle().clone());
+                Ok(())
+            }
         })
         .build(tauri::generate_context!())
         .expect("error while running Evyro desktop")
@@ -950,6 +963,7 @@ fn main() {
             // Agents started in the window stop with it.
             if let tauri::RunEvent::Exit = event {
                 terms.close_all();
+                remote::stop(&remote);
                 chat::close_all(&chats);
             }
         });

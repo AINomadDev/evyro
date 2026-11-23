@@ -24,6 +24,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0004_skill_settings",
         include_str!("../migrations/0004_skill_settings.sql"),
     ),
+    (
+        "0005_remote_devices",
+        include_str!("../migrations/0005_remote_devices.sql"),
+    ),
 ];
 
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;

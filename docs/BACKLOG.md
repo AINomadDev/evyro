@@ -42,5 +42,5 @@ Requirement references are spec section numbers. Evidence for done items is the 
 8. **Skills registry** (23): done for built-in, global and project skills, versions, on/off, checks, import/export, MCP `list_skills`/`get_skill`, the task context list, `evyro skills sync` and the desktop Skills screen. Next: skill folders with extra files (scripts, references), sharing a skills catalogue between machines, and suggestions ranked by a model instead of words.
 9. **Handoff benchmark suite** (38) with real agents.
 10. **Packaging** (5.5): release binaries + checksums, Homebrew tap, then installers.
-11. **Remote access and mobile companion** (6.4, 32.1): Streamable HTTP with auth, after desktop is stable.
+11. **Remote access and mobile companion** (6.4, 32.1): done for `evyro serve` (pairing codes, hashed device tokens, scopes, bind policy with Tailscale, rate limits, audit log), the phone web companion, the event feed and MCP over HTTP, and the desktop Remote access card. Next: push notifications, HTTPS without Tailscale, a native phone app, more desktop screens on the phone.
 12. **Relay contract import/export, GitHub Issues sync** (19.4).

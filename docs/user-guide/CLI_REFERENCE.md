@@ -58,6 +58,8 @@ Commands:
   restore      Replace the global database with a backup (keeps the old one)
   logs         Event log (timeline)
   mcp          Run the MCP server on stdio for this project
+  serve        Let paired devices (a phone, another computer) follow and approve the work over HTTP: an API, an event stream, MCP over HTTP and a web companion
+  remote       Devices that may use `evyro serve`: pair a new one, list, revoke
   integrate    Integration helpers (MCP registration, hooks)
   completions  Shell completions
   version      Version information
@@ -757,6 +759,35 @@ Options:
       --project <PROJECT>  Target a registered project by id or alias instead of the current directory
   -h, --help               Print help
 ```
+
+### evyro serve
+
+Serves the phone companion, the `/api/v1` API, the event feed and MCP over HTTP to devices you paired. It runs until Ctrl-C. Only `127.0.0.1` and Tailscale addresses are allowed unless you pass `--allow-lan`, because plain HTTP on other networks is not encrypted. With `--json` the first line is `{"url", "reach", "api"}`. Details: [Remote access](../REMOTE_ACCESS.md).
+
+```bash
+evyro serve
+evyro serve --host 100.101.102.103 --port 7420
+evyro serve --host 0.0.0.0 --allow-lan
+```
+
+```text
+Options:
+      --host <HOST>        Address to listen on. 127.0.0.1 is this computer only; a Tailscale IP reaches your tailnet [default: 127.0.0.1]
+      --port <PORT>        [default: 7420]
+      --allow-lan          Allow an address that is neither this computer nor Tailscale (plain HTTP, not encrypted)
+```
+
+### evyro remote
+
+Devices that may sign in to `evyro serve`. `pair` makes a one-time code (it works once, for `--minutes`, 1 to 60, default 10). `devices` lists every device with its access, state and when and from where it was last seen. `revoke` takes an id, the first 6 or more characters of one, or an exact name; the device's token stops working at once.
+
+```bash
+evyro remote pair --name "My phone" --scope approve
+evyro remote devices
+evyro remote revoke "My phone"
+```
+
+Scopes: `read` (look only), `approve` (also answer permission requests, stop a turn and comment), `control` (also start, message and close chats, and MCP write tools).
 
 ### evyro export
 

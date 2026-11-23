@@ -165,6 +165,21 @@ enum Cmd {
     /// Search the code: file names, text or regex, symbols, a file's outline.
     #[command(subcommand)]
     Search(SearchCmd),
+    /// Let paired devices (a phone, another computer) follow and approve the
+    /// work over HTTP: an API, an event stream, MCP over HTTP and a web companion.
+    Serve {
+        /// Address to listen on. 127.0.0.1 is this computer only; a Tailscale IP reaches your tailnet.
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        #[arg(long, default_value_t = 7420)]
+        port: u16,
+        /// Allow an address that is neither this computer nor Tailscale (plain HTTP, not encrypted).
+        #[arg(long)]
+        allow_lan: bool,
+    },
+    /// Devices that may use `evyro serve`: pair a new one, list, revoke.
+    #[command(subcommand)]
+    Remote(RemoteCmd),
     /// Skills: reusable instructions agents load when a task needs them.
     Skills {
         #[command(subcommand)]
@@ -479,6 +494,26 @@ enum TargetsCmd {
     Remove { name: String },
     /// Providers you can use with API targets.
     Providers,
+}
+
+#[derive(Subcommand)]
+enum RemoteCmd {
+    /// Make a one-time pairing code for a new device.
+    Pair {
+        /// A name you will recognise, like "My phone".
+        #[arg(long)]
+        name: String,
+        /// read: look only; approve: also answer agents' permission requests and comment; control: also start and message chats.
+        #[arg(long, default_value = "approve", value_parser = ["read", "approve", "control"])]
+        scope: String,
+        /// Minutes the code stays valid (1 to 60).
+        #[arg(long, default_value_t = 10)]
+        minutes: i64,
+    },
+    /// Paired devices and waiting codes.
+    Devices,
+    /// Revoke a device by id or name. Its token stops working at once.
+    Revoke { device: String },
 }
 
 #[derive(Subcommand)]
@@ -1449,6 +1484,94 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                     .join("\n")
             });
         }
+        Cmd::Serve {
+            host,
+            port,
+            allow_lan,
+        } => {
+            let running = evyro_remote::start(
+                evyro_remote::ServeOpts {
+                    host,
+                    port,
+                    allow_lan,
+                    evyro_mcp: std::env::current_exe().ok(),
+                },
+                None,
+            )
+            .map_err(|e| anyhow::anyhow!(e))?;
+            let url = running.url();
+            let info =
+                json!({"url": url, "reach": running.reach, "api": evyro_remote::API_VERSION});
+            if o.json {
+                println!("{info}");
+            } else {
+                println!("{} is serving at {url}", brand::PRODUCT_NAME);
+            }
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+            if !o.json && !o.quiet {
+                eprintln!(
+                    "{}\nPair a device with `{} remote pair --name <name>`, then open {url} on it (or reach it through Tailscale). Press Ctrl-C to stop.",
+                    match running.reach {
+                        evyro_remote::Reach::Loopback => "Only this computer can connect.",
+                        evyro_remote::Reach::Tailscale => "Devices on your Tailscale network can connect.",
+                        evyro_remote::Reach::Lan => "WARNING: any device that reaches this address can connect, and plain HTTP is not encrypted.",
+                    },
+                    brand::CLI_NAME
+                );
+            }
+            let flag = running.stop_flag();
+            let _ =
+                ctrlc::set_handler(move || flag.store(true, std::sync::atomic::Ordering::SeqCst));
+            running.wait();
+            if !o.json && !o.quiet {
+                eprintln!("[{}] stopped serving", brand::CLI_NAME);
+            }
+        }
+        Cmd::Remote(cmd) => match cmd {
+            RemoteCmd::Pair {
+                name,
+                scope,
+                minutes,
+            } => {
+                let p = store.pair_device(&name, &scope, minutes * 60)?;
+                o.print(&p, || {
+                    format!(
+                        "Pairing code for \"{}\" ({} access): {}\nIt works once and expires at {} (UTC).\nOn the device, open the address `{} serve` prints and enter the code.",
+                        p.device.name, p.device.scope, p.code, p.expires_at, brand::CLI_NAME
+                    )
+                });
+            }
+            RemoteCmd::Devices => {
+                let ds = store.list_devices()?;
+                o.print(&ds, || {
+                    if ds.is_empty() {
+                        return format!(
+                            "No devices. Pair one with `{} remote pair --name <name>`.",
+                            brand::CLI_NAME
+                        );
+                    }
+                    ds.iter()
+                        .map(|d| {
+                            format!(
+                                "{:<8} {:<8} {}  {}  last seen {}",
+                                d.state,
+                                d.scope,
+                                d.id,
+                                d.name,
+                                d.last_seen_at.as_deref().unwrap_or("never")
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+            }
+            RemoteCmd::Revoke { device } => {
+                let d = store.revoke_device(&device)?;
+                o.print(&d, || {
+                    format!("Revoked {} ({}). Its token no longer works.", d.name, d.id)
+                });
+            }
+        },
         Cmd::Skills { cmd } => {
             use evyro_core::skills;
             let here = project(&store, &cli.project, &dir).ok();

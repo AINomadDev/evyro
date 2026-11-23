@@ -586,11 +586,14 @@ impl Server {
                 }))
             }
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({"tools": tools().iter().map(|t| {
+            // With --read-only, tools that change anything are not offered at all.
+            "tools/list" => Ok(
+                json!({"tools": tools().iter().filter(|t| !(t.mutating && self.opts.read_only)).map(|t| {
                 let mut d = json!({"name": t.name, "description": t.description, "inputSchema": t.schema});
                 if !t.mutating { d["annotations"] = json!({"readOnlyHint": true}); }
                 d
-            }).collect::<Vec<_>>()})),
+            }).collect::<Vec<_>>()}),
+            ),
             "tools/call" => {
                 let name = params
                     .get("name")

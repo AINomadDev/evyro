@@ -17,6 +17,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - ACP chat (`evyro chat`) with a stand-in ACP agent: streamed plan, tool calls and permission requests, Evyro's MCP server reached from inside the agent, file access limited to the project (`.env` and paths outside refused), `--approve` policies, cancellation, a handoff picked up, a checkpoint at the end.
 - A receiving agent that fails to launch reopens its handoff instead of stranding the task.
 - Skills library: 15 built-in skills, on and off per project and globally, a project skill replacing a built-in one, `check` refusing a skill with a secret, import refusing secrets and older versions (`--force` replaces), export, sync for Claude Code that keeps a person's own skill file and removes its own file when a skill is turned off, sync for Codex that leaves `AGENTS.md` alone without `--append` and then changes only its own section, the context packet listing fitting skills without their text, and the MCP tools `list_skills` and `get_skill` (a skill that is off cannot be loaded). Desktop Skills screen in the UI smoke test.
+- Remote access (`evyro serve`, scenario test): a LAN address refused without `--allow-lan`; pairing with a one-time code (typed in lower case), a reused or wrong code refused, tokens stored only as hashes (unit test); `read` devices refused writes (403) and given a read-only MCP server; the diff with a secret redacted; review comments from an `approve` device; a chat with a stand-in ACP agent started by a `control` device, an approval with the wrong tool call (409) or an option the agent did not offer (400) refused, the right one letting the agent write its file; the feed; MCP sessions bound to their device; revoke; the 429 rate limit; an audit log with no tokens. Desktop Remote access card in the UI smoke test.
 - Switch targets of every kind, with simulated binaries: an API target (key from an env var, model mapped for OpenCode), refusal before any state change when the key is missing, `app_login` removing `ANTHROPIC_API_KEY`, an IDE launch, a redacted chat pack, and continuing a handoff with a different AI than it named.
 
 - Desktop UI smoke test (Playwright): every screen, the add-target form, the command palette, code search and the file viewer, shortcuts, live refresh and first-run setup, on Linux, macOS and Windows.
@@ -48,12 +49,13 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - **Notifications, agent threads and the Terminal launch** on a real Mac or Windows desktop. Agent threads were checked by hand on Linux with a real PTY and a stand-in agent.
 - **Installers on real machines.** The installers build in CI but have not been installed on a real Mac, Windows or Linux machine yet. They are not code-signed or notarized (needs an Apple Developer ID and a Windows certificate), so macOS and Windows will warn on first open.
 - **Sign-in and key checks against real tools.** Login detection is confirmed for Claude Code, Codex and Gemini CLI on a real Mac; the others follow their docs. Opening IDEs from Evyro has not been checked on a real Mac yet.
+- **Remote access on a real phone.** The phone companion has been driven only in automated tests and with curl on Linux. No run on a real phone, over Tailscale, or from the desktop app on a Mac has been recorded.
 - **Real API keys.** No target has been run with a real key; model name mapping per agent follows each agent's docs.
 
 ## Not implemented
 
 - Desktop: tray icon, auto-update.
-- Web UI, mobile companion, remote access.
+- Remote access: no HTTPS of its own (use Tailscale or `tailscale serve`), no push notifications, no native phone app. Chats started in the desktop app and in a terminal `evyro serve` are separate. The phone companion covers following, approving and chatting, not every desktop screen.
 - Code intelligence beyond search: tree-sitter parsing, find references, LSP (types, go to definition across files), a codebase map. Symbols come from per-language patterns, so an unusual declaration can be missed.
 - Skills registry, context deduplication across sessions, embeddings.
 - Model discovery (listing a provider's models), quota tracking, routing policies, automation rules. A provider registry exists (`evyro targets providers`).

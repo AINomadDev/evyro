@@ -14,13 +14,17 @@
 
 `evyro integrate <agent>` prints the line for that agent. These commands are taken from each agent's documentation and have not been run against real installs in CI yet.
 
+## Over HTTP
+
+`evyro serve` also offers the same server at `http://<address>:7420/mcp/<project>` (Streamable HTTP, JSON replies) to devices you paired, with the device token as a bearer token. `initialize` returns an `Mcp-Session-Id` to send on later requests. Devices without the `control` scope get the read-only tools. See [Remote access](../REMOTE_ACCESS.md).
+
 ## Tools
 
 Read-only: `get_project_context`, `get_active_task`, `list_tasks`, `get_checkpoint`, `get_handoff`, `get_git_status`, `list_sessions`, `get_project_health`, `search_memory`, `get_relevant_files`, `find_files`, `search_code`, `find_symbols`, `get_outline`, `get_review_comments`, `list_skills`, `get_skill`.
 
 The four search tools read only files Git tracks or would track in the project (or the task's worktree when you pass `task`). They take repo-relative paths only, skip binary, large and sensitive files, and redact secrets in matched lines.
 
-Mutating (disabled with `--read-only`): `create_task`, `claim_task`, `update_task`, `check_acceptance`, `create_checkpoint`, `prepare_handoff`, `record_decision`, `run_verification`, `add_memory`, `resolve_review_comment`.
+Mutating (disabled with `--read-only`, and then left out of `tools/list`): `create_task`, `claim_task`, `update_task`, `check_acceptance`, `create_checkpoint`, `prepare_handoff`, `record_decision`, `run_verification`, `add_memory`, `resolve_review_comment`.
 
 ## Safety rules
 

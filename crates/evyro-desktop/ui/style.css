@@ -341,3 +341,7 @@ kbd { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; border: 1px sol
 .skill-text { max-height: 55vh; }
 label.check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
 label.check input { width: auto; margin: 0; padding: 0; border: 0; accent-color: var(--accent); }
+
+/* Remote access */
+.pair-code { font: 700 34px/1.2 var(--mono); letter-spacing: .08em; text-align: center; padding: 18px; background: var(--panel-2); border-radius: 10px; margin-bottom: 10px; }
+.stack { display: flex; flex-direction: column; gap: 8px; }

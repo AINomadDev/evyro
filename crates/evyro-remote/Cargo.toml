@@ -1,0 +1,17 @@
+[package]
+name = "evyro-remote"
+description = "Evyro remote access: an authenticated HTTP API, event stream, MCP over HTTP and a phone-sized web companion"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+evyro-core = { path = "../evyro-core" }
+evyro-acp = { path = "../evyro-acp" }
+evyro-mcp = { path = "../evyro-mcp" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tiny_http = "0.12"
