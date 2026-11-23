@@ -28,7 +28,14 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0005_remote_devices",
         include_str!("../migrations/0005_remote_devices.sql"),
     ),
+    (
+        "0006_session_pid_started",
+        include_str!("../migrations/0006_session_pid_started.sql"),
+    ),
 ];
+
+/// How many pre-upgrade copies of the database to keep.
+const KEEP_UPGRADE_BACKUPS: usize = 5;
 
 pub const SCHEMA_VERSION: i64 = MIGRATIONS.len() as i64;
 
@@ -76,6 +83,9 @@ impl Store {
                 "database schema v{current} is newer than this build (v{SCHEMA_VERSION}); upgrade evyro"
             )));
         }
+        if current > 0 && current < SCHEMA_VERSION {
+            self.backup_before_upgrade(current)?;
+        }
         for (i, (name, sql)) in MIGRATIONS.iter().enumerate() {
             let v = (i + 1) as i64;
             if v <= current {
@@ -88,6 +98,39 @@ impl Store {
                 rusqlite::params![v, name, crate::util::now()],
             )?;
             tx.commit()?;
+        }
+        Ok(())
+    }
+
+    /// Copy the database aside before upgrading its schema, so a failed or
+    /// unwanted upgrade can be undone with `evyro restore`. Keeps the newest
+    /// few copies in `<data>/backups/`.
+    fn backup_before_upgrade(&self, from: i64) -> Result<()> {
+        let dir = self.paths.data_dir.join("backups");
+        std::fs::create_dir_all(&dir)?;
+        let stamp = crate::util::now().replace([':', '-'], "").replace('.', "_");
+        let path = dir.join(format!(
+            "pre-upgrade-v{from}-to-v{SCHEMA_VERSION}-{stamp}.db"
+        ));
+        let mut dst = Connection::open(&path)?;
+        rusqlite::backup::Backup::new(&self.conn, &mut dst)?.run_to_completion(
+            256,
+            Duration::from_millis(0),
+            None,
+        )?;
+        drop(dst);
+        let mut old: Vec<_> = std::fs::read_dir(&dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("pre-upgrade-") && n.ends_with(".db"))
+            })
+            .collect();
+        old.sort();
+        while old.len() > KEEP_UPGRADE_BACKUPS {
+            let _ = std::fs::remove_file(old.remove(0));
         }
         Ok(())
     }
@@ -133,4 +176,62 @@ pub fn to_json<T: serde::Serialize>(v: &T) -> String {
 pub fn from_json<T: serde::de::DeserializeOwned + Default>(s: Option<String>) -> T {
     s.and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod upgrade_tests {
+    use super::*;
+    #[test]
+    fn an_older_database_is_copied_aside_before_upgrading() {
+        let d = tempfile::tempdir().unwrap();
+        let paths = GlobalPaths {
+            data_dir: d.path().join("data"),
+            config_dir: d.path().join("config"),
+        };
+        paths.ensure().unwrap();
+        let db = paths.db_path();
+        let s = Store::open_at(&db, paths.clone()).unwrap();
+        // A fresh database is not backed up: there is nothing to lose.
+        assert!(!paths.data_dir.join("backups").exists());
+        // Turn it back into the schema before the newest migration.
+        s.conn
+            .execute_batch(&format!(
+                "ALTER TABLE sessions DROP COLUMN pid_started;
+                 DELETE FROM schema_migrations WHERE version = {SCHEMA_VERSION};"
+            ))
+            .unwrap();
+        drop(s);
+
+        let s = Store::open_at(&db, paths.clone()).unwrap();
+        assert_eq!(s.schema_version().unwrap(), SCHEMA_VERSION);
+        let backups: Vec<_> = std::fs::read_dir(paths.data_dir.join("backups"))
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .collect();
+        assert_eq!(backups.len(), 1, "{backups:?}");
+        let name = backups[0]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            name.starts_with(&format!(
+                "pre-upgrade-v{}-to-v{SCHEMA_VERSION}-",
+                SCHEMA_VERSION - 1
+            )),
+            "{name}"
+        );
+        // The copy is the old schema, intact.
+        let old = Connection::open(&backups[0]).unwrap();
+        let v: i64 = old
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION - 1);
+        let ok: String = old
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ok, "ok");
+    }
 }

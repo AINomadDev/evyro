@@ -12,6 +12,7 @@ pub mod brand;
 pub mod checkpoints;
 pub mod context;
 pub mod contract;
+pub mod crash;
 pub mod db;
 pub mod decisions;
 pub mod doctor;
