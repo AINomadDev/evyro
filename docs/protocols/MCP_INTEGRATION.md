@@ -16,7 +16,7 @@
 
 ## Tools
 
-Read-only: `get_project_context`, `get_active_task`, `list_tasks`, `get_checkpoint`, `get_handoff`, `get_git_status`, `list_sessions`, `get_project_health`, `search_memory`, `get_relevant_files`, `find_files`, `search_code`, `find_symbols`, `get_outline`, `get_review_comments`.
+Read-only: `get_project_context`, `get_active_task`, `list_tasks`, `get_checkpoint`, `get_handoff`, `get_git_status`, `list_sessions`, `get_project_health`, `search_memory`, `get_relevant_files`, `find_files`, `search_code`, `find_symbols`, `get_outline`, `get_review_comments`, `list_skills`, `get_skill`.
 
 The four search tools read only files Git tracks or would track in the project (or the task's worktree when you pass `task`). They take repo-relative paths only, skip binary, large and sensitive files, and redact secrets in matched lines.
 

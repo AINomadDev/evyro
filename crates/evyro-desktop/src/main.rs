@@ -20,6 +20,7 @@ use std::path::PathBuf;
 mod chat;
 mod review;
 mod search;
+mod skills;
 mod threads;
 
 type CmdResult = Result<Value, Value>;
@@ -907,6 +908,13 @@ fn main() {
             pick_folder,
             repo_changes,
             search::find_files,
+            skills::list_skills,
+            skills::skill_text,
+            skills::set_skill_enabled,
+            skills::new_skill,
+            skills::import_skills,
+            skills::sync_skills,
+            skills::pick_skill_folder,
             search::search_text,
             search::find_symbols,
             search::view_file,

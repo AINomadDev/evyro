@@ -47,6 +47,7 @@ Commands:
   decide       Record a decision. Record a decision: `evyro decide "<title>" "<decision>" [--why ...]`
   decisions    Decisions for the project
   search       Search the code: file names, text or regex, symbols, a file's outline
+  skills       Skills: reusable instructions agents load when a task needs them
   review       Review comments on the working-tree changes: leave them on files and lines, send the open ones to an agent, resolve them when addressed
   memory       Project memory
   handoffs     Handoff history
@@ -690,6 +691,69 @@ Options:
       --path <PATH>        Only files whose path contains this
   -C, --dir <DIR>          Run as if started in this directory
       --limit <LIMIT>      Stop after this many matching lines [default: 100]
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro skills
+
+Skills are reusable instructions that agents load when a task needs them: 15 built in, yours (`--global`), and the project's own in `.evyro/skills`. `list` is the default. `--for` shows the skills that fit some task text. `check` exits 1 if any skill has a problem. `import` skips skills with secrets or a version older than or the same as the one installed (`--force` replaces it). `sync` never replaces a file someone wrote without `--force`, or adds to an instruction file without `--append`. Details: [Skills](../SKILLS_SYSTEM.md).
+
+```bash
+evyro skills
+evyro skills list --for "fix the crash on save"
+evyro skills show debugging
+evyro skills disable performance-optimization --global
+evyro skills new api-conventions --description "Use when adding an HTTP endpoint"
+evyro skills import ./team-skills
+evyro skills export debugging --out ./shared
+evyro skills sync --for claude-code
+evyro skills sync --for codex --append
+```
+
+```text
+Skills: reusable instructions agents load when a task needs them
+
+Usage: evyro skills [OPTIONS] [COMMAND]
+
+Commands:
+  list     Every skill here, with its source, version and whether it is on. The default
+  show     Print one skill's full text
+  new      Start a new skill from a template (in this project, or --global)
+  enable   Turn skills on (for this project, or --global for every project)
+  disable  Turn skills off (for this project, or --global for every project)
+  reset    Forget this project's on/off choice, so the global one applies
+  check    List problems that stop skills from being used
+  import   Copy skills in from a SKILL.md, a skill folder or a folder of skills
+  export   Write skills out as <dir>/<name>/SKILL.md (all usable skills if none named)
+  sync     Write skill references where an agent reads its instructions
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+```text
+Write skill references where an agent reads its instructions
+
+Usage: evyro skills sync [OPTIONS] --for <HARNESS> [NAMES]...
+
+Arguments:
+  [NAMES]...  Only these skills (default: every skill that is on)
+
+Options:
+      --for <HARNESS>      claude-code, codex, gemini, copilot, opencode, goose, cursor, amp or aider
+      --json               Machine-readable JSON output
+      --append             Add the skills list to an instruction file that has no Evyro section yet
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+      --force              Replace skill files that someone else wrote
+  -C, --dir <DIR>          Run as if started in this directory
       --project <PROJECT>  Target a registered project by id or alias instead of the current directory
   -h, --help               Print help
 ```

@@ -252,6 +252,23 @@ impl Store {
             add("ready", 6, s);
         }
 
+        // Progressive disclosure: name the few skills that fit the task, not their text.
+        if let Some(t) = task {
+            let all = self.skills(Some(project)).unwrap_or_default();
+            let words = format!("{} {} {}", t.kind, t.title, t.description);
+            let fit = crate::skills::relevant(&all, &words, 4);
+            if !fit.is_empty() {
+                let mut s = format!(
+                    "## Skills that fit this task\n\nLoad one when you need it: the `get_skill` MCP tool, or `{} skills show <name>`.\n\n",
+                    brand::CLI_NAME
+                );
+                for k in fit {
+                    s.push_str(&format!("- `{}`: {}\n", k.name, k.description));
+                }
+                add("skills", 6, s);
+            }
+        }
+
         let mems: Vec<_> = self
             .search_memory(&project.id, None, None, 20)?
             .into_iter()

@@ -23,6 +23,7 @@ Requirements: Rust 1.80+ and Git. On Linux, the WebKitGTK 4.1 development packag
 | Handoffs | Every handoff with quality score and status | Prepare a handoff to any AI, read the signed contract, see drift, then **Start with this AI** or **Accept only** |
 | Sessions | Every agent session with status and exit reason | Recover sessions whose agent is gone |
 | Decisions & memory | Recorded decisions and project memory with search | Record a decision, save a memory |
+| Skills | Every skill (built in, yours, this project's) with its source, version and whether it is on; type a task to see which fit | Read a skill, **Turn on** or **Turn off** here or in every project, **+ New skill**, **Import…**, **Add to agent files…** (never replaces a file someone wrote) |
 | AI targets | Every AI you can switch to, grouped as coding agents, API keys, AI IDEs and chat apps, with status and next step; installed agent versions below | **+ Add target** (agent, API key by variable name or Keychain item, IDE, chat app), **Switch to**, open a target to see its checks or remove it |
 | Settings | Verification commands, project details, Evyro data folder, doctor checks | Edit test/lint/build commands (saved to `.evyro/project.toml`), archive a project, back up the database |
 
@@ -31,7 +32,7 @@ Requirements: Rust 1.80+ and Git. On Linux, the WebKitGTK 4.1 development packag
 | Shortcut | Does |
 |---|---|
 | ⌘K / Ctrl+K | Command palette: every screen, new task, new handoff, switch to any AI, open any project |
-| ⌘1 to ⌘9 / Ctrl+1 to Ctrl+9 | Jump to a screen |
+| ⌘1 to ⌘9 / Ctrl+1 to Ctrl+9 | Jump to a screen, in tab order (Settings has no number; use ⌘K) |
 | ⌘N / Ctrl+N | New task |
 | ⌘P / Ctrl+P | Go to a file by name |
 | ⌘⇧F / Ctrl+Shift+F | Search the code for text or a regex |

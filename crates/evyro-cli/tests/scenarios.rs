@@ -1673,3 +1673,333 @@ fn acp_chat_runs_under_an_evyro_session() {
         before
     );
 }
+
+/// Skills library: built-in skills, on/off per project and globally, project
+/// skills that replace built-in ones, import checks (secrets, versions),
+/// export, sync into agent files without overwriting what a person wrote,
+/// the context packet's short list, and the MCP tools.
+#[test]
+fn skills_library_end_to_end() {
+    let mut env = Env::new();
+    let repo = env.repo("skills");
+    env.init(&repo);
+    let other = env.repo("skills-other");
+    env.init(&other);
+    let names = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["name"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    // 15 built-in skills, all on.
+    let all = env.json(&repo, &["skills", "list"]);
+    assert_eq!(all.as_array().unwrap().len(), 15, "{all}");
+    assert!(all
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|s| s["enabled"] == true && s["source"] == "builtin"));
+    let fit = env.json(
+        &repo,
+        &["skills", "list", "--for", "bug: the export crashes"],
+    );
+    assert_eq!(names(&fit)[0], "debugging", "{fit}");
+
+    // Off in one project only; off everywhere with --global; reset follows global.
+    env.ok(&repo, &["skills", "disable", "debugging"]);
+    let get = |dir: &Path, n: &str| -> Value {
+        env.json(dir, &["skills", "list"])
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == n)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(get(&repo, "debugging")["enabled"], false);
+    assert_eq!(
+        get(&other, "debugging")["enabled"],
+        true,
+        "other projects are not affected"
+    );
+    env.ok(&repo, &["skills", "disable", "refactoring", "--global"]);
+    env.ok(&repo, &["skills", "enable", "refactoring"]);
+    assert_eq!(
+        get(&repo, "refactoring")["enabled"],
+        true,
+        "the project's choice wins"
+    );
+    assert_eq!(get(&other, "refactoring")["enabled"], false);
+    env.ok(&repo, &["skills", "reset", "refactoring"]);
+    assert_eq!(get(&repo, "refactoring")["enabled"], false);
+    env.ok(&repo, &["skills", "enable", "refactoring", "--global"]);
+
+    // A project skill with the same name replaces the built-in one.
+    let d = repo.join(".evyro/skills/code-review");
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(d.join("SKILL.md"), "---\nname: code-review\ndescription: Use when reviewing code in this repository.\nversion: 2.0.0\ntags: [review]\n---\n# Our review rules\n\nAlways check the migration.\n").unwrap();
+    let cr = get(&repo, "code-review");
+    assert_eq!(cr["source"], "project");
+    assert_eq!(cr["overrides"], "builtin");
+    assert!(env
+        .ok(&repo, &["skills", "show", "code-review"])
+        .contains("Always check the migration"));
+
+    // New skill from the template, then a broken one is reported by check.
+    env.ok(
+        &repo,
+        &[
+            "skills",
+            "new",
+            "team-style",
+            "--description",
+            "Use when writing code here",
+        ],
+    );
+    assert!(repo.join(".evyro/skills/team-style/SKILL.md").is_file());
+    assert!(env.run(&repo, &["skills", "new", "Bad Name"]).status.code() != Some(0));
+    let bad = repo.join(".evyro/skills/leaky");
+    std::fs::create_dir_all(&bad).unwrap();
+    std::fs::write(bad.join("SKILL.md"), "---\nname: leaky\ndescription: Use when deploying.\n---\nexport API_KEY=sk_live_abcdefghijklmnopqrstuvwx\n").unwrap();
+    let chk = env.run(&repo, &["skills", "check"]);
+    assert_eq!(chk.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&chk.stdout).contains("leaky"));
+    assert!(
+        env.run(&repo, &["skills", "show", "leaky"]).status.code() != Some(0),
+        "a skill with a secret is not shown"
+    );
+
+    // Import: secrets refused, versions respected, --force replaces.
+    let src = tempfile::tempdir().unwrap();
+    let mk = |name: &str, ver: &str, extra: &str| {
+        let d = src.path().join(name);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("SKILL.md"), format!("---\nname: {name}\ndescription: Use when shipping {name}.\nversion: {ver}\n---\n# {name}\n{extra}\n")).unwrap();
+    };
+    mk("ship-it", "1.1.0", "");
+    mk("secret-one", "1.0.0", "password = hunter2hunter2");
+    let r = env.run(
+        &repo,
+        &[
+            "--json",
+            "skills",
+            "import",
+            src.path().to_str().unwrap(),
+            "--global",
+        ],
+    );
+    let r: Value = serde_json::from_slice(&r.stdout).unwrap();
+    assert_eq!(names(&r["imported"]), vec!["ship-it"], "{r}");
+    assert_eq!(r["skipped"][0]["name"], "secret-one");
+    assert!(r["skipped"][0]["reason"]
+        .as_str()
+        .unwrap()
+        .contains("secret"));
+    assert_eq!(
+        get(&other, "ship-it")["source"],
+        "global",
+        "global skills reach every project"
+    );
+    mk("ship-it", "1.0.0", "older");
+    let older = env.run(
+        &repo,
+        &[
+            "skills",
+            "import",
+            src.path().join("ship-it").to_str().unwrap(),
+            "--global",
+        ],
+    );
+    assert_eq!(older.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&older.stdout).contains("1.1.0 is installed"));
+    env.ok(
+        &repo,
+        &[
+            "skills",
+            "import",
+            src.path().join("ship-it").to_str().unwrap(),
+            "--global",
+            "--force",
+        ],
+    );
+    assert_eq!(get(&other, "ship-it")["version"], "1.0.0");
+
+    // Export round trip.
+    let out = tempfile::tempdir().unwrap();
+    env.ok(
+        &repo,
+        &[
+            "skills",
+            "export",
+            "debugging",
+            "ship-it",
+            "--out",
+            out.path().to_str().unwrap(),
+        ],
+    );
+    assert!(
+        std::fs::read_to_string(out.path().join("debugging/SKILL.md"))
+            .unwrap()
+            .contains("# Debugging")
+    );
+    assert!(
+        env.run(
+            &repo,
+            &[
+                "skills",
+                "export",
+                "leaky",
+                "--out",
+                out.path().to_str().unwrap()
+            ]
+        )
+        .status
+        .code()
+            != Some(0)
+    );
+    std::fs::remove_dir_all(&bad).unwrap();
+
+    // Sync for Claude Code: one file per skill that is on; a person's file is kept.
+    let mine = repo.join(".claude/skills/ship-it");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(mine.join("SKILL.md"), "my own version\n").unwrap();
+    let s = env.json(&repo, &["skills", "sync", "--for", "claude-code"]);
+    let written = s["written"].as_array().unwrap();
+    assert!(
+        written
+            .iter()
+            .any(|w| w == ".claude/skills/code-review/SKILL.md"),
+        "{s}"
+    );
+    assert!(
+        !written
+            .iter()
+            .any(|w| w.as_str().unwrap().contains("debugging")),
+        "off skills are not written"
+    );
+    assert_eq!(
+        std::fs::read_to_string(mine.join("SKILL.md")).unwrap(),
+        "my own version\n"
+    );
+    assert!(
+        s["skipped"].to_string().contains("written by someone else"),
+        "{s}"
+    );
+    env.ok(&repo, &["skills", "disable", "team-style"]);
+    let s = env.json(&repo, &["skills", "sync", "--for", "claude-code"]);
+    assert_eq!(s["removed"][0], ".claude/skills/team-style/SKILL.md", "{s}");
+
+    // Sync for Codex: AGENTS.md someone wrote is left alone unless --append.
+    std::fs::write(repo.join("AGENTS.md"), "# House rules\n\nUse tabs.\n").unwrap();
+    let r = env.run(&repo, &["skills", "sync", "--for", "codex"]);
+    assert_eq!(r.status.code(), Some(1));
+    assert_eq!(
+        std::fs::read_to_string(repo.join("AGENTS.md")).unwrap(),
+        "# House rules\n\nUse tabs.\n"
+    );
+    env.ok(&repo, &["skills", "sync", "--for", "codex", "--append"]);
+    let a = std::fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+    assert!(
+        a.starts_with("# House rules\n\nUse tabs.\n\n<!-- evyro:skills:start -->"),
+        "{a}"
+    );
+    assert!(
+        a.contains("**ship-it**") && !a.contains("**debugging**"),
+        "{a}"
+    );
+    std::fs::write(
+        repo.join("AGENTS.md"),
+        a.replace("Use tabs.", "Use tabs. Really."),
+    )
+    .unwrap();
+    env.ok(&repo, &["skills", "enable", "debugging"]);
+    env.ok(&repo, &["skills", "sync", "--for", "codex"]);
+    let a2 = std::fs::read_to_string(repo.join("AGENTS.md")).unwrap();
+    assert!(
+        a2.contains("Use tabs. Really.") && a2.contains("**debugging**"),
+        "only Evyro's section changed: {a2}"
+    );
+    assert_eq!(a2.matches("evyro:skills:start").count(), 1);
+    assert!(
+        env.run(&repo, &["skills", "sync", "--for", "nope"])
+            .status
+            .code()
+            != Some(0)
+    );
+
+    // The context packet names the skills that fit, not their text.
+    env.ok(
+        &repo,
+        &[
+            "task",
+            "add",
+            "Fix the crash when saving",
+            "--kind",
+            "bug",
+            "--accept",
+            "ok",
+        ],
+    );
+    let ctx = env.ok(&repo, &["context", "--task", "T-1"]);
+    assert!(ctx.contains("## Skills that fit this task"), "{ctx}");
+    assert!(ctx.contains("`debugging`"), "{ctx}");
+    assert!(
+        !ctx.contains("Find the cause first"),
+        "skill text is not inlined"
+    );
+
+    // MCP: list (names only, filtered by task text) and get.
+    let mut child = env
+        .cmd(&repo, &["mcp", "--agent", "codex"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    use std::io::Write;
+    let mut stdin = child.stdin.take().unwrap();
+    for m in [
+        r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_skills","arguments":{}}}"#,
+        r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_skills","arguments":{"for":"security review of the login form"}}}"#,
+        r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_skill","arguments":{"name":"code-review"}}}"#,
+        r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_skill","arguments":{"name":"team-style"}}}"#,
+    ] {
+        writeln!(stdin, "{m}").unwrap();
+    }
+    drop(stdin);
+    let out = child.wait_with_output().unwrap();
+    let r: Vec<Value> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let listed = &r[1]["result"]["structuredContent"]["result"];
+    let ln = names(listed);
+    assert!(
+        ln.contains(&"ship-it".to_string()) && !ln.contains(&"team-style".to_string()),
+        "{listed}"
+    );
+    assert!(
+        listed[0].get("text").is_none(),
+        "the list has no skill text"
+    );
+    assert_eq!(
+        names(&r[2]["result"]["structuredContent"]["result"])[0],
+        "security-review"
+    );
+    let got = &r[3]["result"]["structuredContent"]["result"];
+    assert!(
+        got["text"]
+            .as_str()
+            .unwrap()
+            .contains("Always check the migration"),
+        "{got}"
+    );
+    assert!(got["note"].as_str().unwrap().contains("repository"));
+    assert_eq!(
+        r[4]["result"]["isError"], true,
+        "a skill that is off cannot be loaded: {}",
+        r[4]
+    );
+}

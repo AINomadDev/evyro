@@ -251,7 +251,7 @@ function render() {
       h("p", { class: "small" }, "Press ", h("kbd", null, MOD + " K"), " any time for every action. Projects you set up with ", h("code", null, "evyro init"), " appear here automatically.")));
     return;
   }
-  const views = { overview: viewOverview, tasks: viewTasks, changes: viewChanges, threads: viewThreads, handoffs: viewHandoffs, sessions: viewSessions, knowledge: viewKnowledge, agents: viewAgents, settings: viewSettings };
+  const views = { overview: viewOverview, tasks: viewTasks, changes: viewChanges, threads: viewThreads, handoffs: viewHandoffs, sessions: viewSessions, knowledge: viewKnowledge, skills: viewSkills, agents: viewAgents, settings: viewSettings };
   (views[state.view] || viewOverview)(v);
 }
 
@@ -953,9 +953,9 @@ async function updateLiveBadge() {
 
 // ---------- command palette ----------
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
-const TABS = [["overview", "Overview"], ["tasks", "Tasks"], ["changes", "Changes"], ["threads", "Threads"], ["handoffs", "Handoffs"], ["sessions", "Sessions"], ["knowledge", "Decisions & memory"], ["agents", "AI targets"], ["settings", "Settings"]];
+const TABS = [["overview", "Overview"], ["tasks", "Tasks"], ["changes", "Changes"], ["threads", "Threads"], ["handoffs", "Handoffs"], ["sessions", "Sessions"], ["knowledge", "Decisions & memory"], ["skills", "Skills"], ["agents", "AI targets"], ["settings", "Settings"]];
 async function paletteActions() {
-  const acts = TABS.map(([v, l], i) => ({ label: `Go to ${l}`, hint: `${MOD} ${i + 1}`, run: () => setTab(v) }));
+  const acts = TABS.map(([v, l], i) => ({ label: `Go to ${l}`, hint: i < 9 ? `${MOD} ${i + 1}` : "", run: () => setTab(v) }));
   acts.push({ label: "Add a project", run: addProjectDialog });
   if (state.project) {
     acts.push({ label: "New task", hint: `${MOD} N`, run: () => { setTab("tasks"); newTaskDialog(); } });

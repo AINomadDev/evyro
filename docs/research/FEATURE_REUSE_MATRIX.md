@@ -14,7 +14,7 @@
 | Fuzzy / regex search, symbols | Study architectural ideas | px0 `internal/fuzzy`, `internal/symbols`; tree-sitter | Implemented in `evyro-core::search` (own code, no px0 source copied): fuzzy file names, text and regex search, per-language pattern symbols and outlines, in the CLI, MCP and desktop. Tree-sitter not yet |
 | Symbol-level retrieval | Integrate existing tool | Serena as optional MCP server | Not implemented |
 | Context packing | Study ideas | Repomix | Budgeted packet implemented |
-| Skills | Study ideas | obra/superpowers format | Not implemented |
+| Skills | Study ideas | obra/superpowers and Claude Code `SKILL.md` format | Implemented (own code, own skill text): `evyro-core::skills` with 15 built-in skills, global and project skills, versions, on/off, checks (secrets, size, Evyro version), import/export, `list_skills`/`get_skill` over MCP, a short list in the task context, and `evyro skills sync` into `.claude/skills`, `AGENTS.md`, `GEMINI.md` or the Copilot file without overwriting what a person wrote |
 | Kanban / worktree per task | Study ideas | vibe-kanban (sunsetting) | Worktree per task implemented |
 | Memory server | Study ideas | Marrow, agent-office | FTS5 memory with provenance implemented |
 | Remote / mobile | Study ideas | T3 Code (Tailscale, mobile apps) | Not implemented |

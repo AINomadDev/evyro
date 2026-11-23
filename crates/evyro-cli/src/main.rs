@@ -165,6 +165,11 @@ enum Cmd {
     /// Search the code: file names, text or regex, symbols, a file's outline.
     #[command(subcommand)]
     Search(SearchCmd),
+    /// Skills: reusable instructions agents load when a task needs them.
+    Skills {
+        #[command(subcommand)]
+        cmd: Option<SkillsCmd>,
+    },
     /// Review comments on the working-tree changes: leave them on files and
     /// lines, send the open ones to an agent, resolve them when addressed.
     Review {
@@ -474,6 +479,76 @@ enum TargetsCmd {
     Remove { name: String },
     /// Providers you can use with API targets.
     Providers,
+}
+
+#[derive(Subcommand)]
+enum SkillsCmd {
+    /// Every skill here, with its source, version and whether it is on. The default.
+    List {
+        /// Only the skills that fit this text, such as a task title.
+        #[arg(long = "for")]
+        for_text: Option<String>,
+    },
+    /// Print one skill's full text.
+    Show { name: String },
+    /// Start a new skill from a template (in this project, or --global).
+    New {
+        name: String,
+        #[arg(long, default_value = "")]
+        description: String,
+        #[arg(long)]
+        global: bool,
+    },
+    /// Turn skills on (for this project, or --global for every project).
+    Enable {
+        #[arg(required = true)]
+        names: Vec<String>,
+        #[arg(long)]
+        global: bool,
+    },
+    /// Turn skills off (for this project, or --global for every project).
+    Disable {
+        #[arg(required = true)]
+        names: Vec<String>,
+        #[arg(long)]
+        global: bool,
+    },
+    /// Forget this project's on/off choice, so the global one applies.
+    Reset {
+        #[arg(required = true)]
+        names: Vec<String>,
+    },
+    /// List problems that stop skills from being used.
+    Check,
+    /// Copy skills in from a SKILL.md, a skill folder or a folder of skills.
+    Import {
+        path: PathBuf,
+        #[arg(long)]
+        global: bool,
+        /// Replace an installed skill even when its version is the same or newer.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Write skills out as <dir>/<name>/SKILL.md (all usable skills if none named).
+    Export {
+        names: Vec<String>,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    /// Write skill references where an agent reads its instructions.
+    Sync {
+        /// claude-code, codex, gemini, copilot, opencode, goose, cursor, amp or aider.
+        #[arg(long = "for")]
+        harness: String,
+        /// Only these skills (default: every skill that is on).
+        names: Vec<String>,
+        /// Add the skills list to an instruction file that has no Evyro section yet.
+        #[arg(long)]
+        append: bool,
+        /// Replace skill files that someone else wrote.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1373,6 +1448,206 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                     .collect::<Vec<_>>()
                     .join("\n")
             });
+        }
+        Cmd::Skills { cmd } => {
+            use evyro_core::skills;
+            let here = project(&store, &cli.project, &dir).ok();
+            let scoped = |global: bool| -> anyhow::Result<Option<&evyro_core::projects::Project>> {
+                if global {
+                    return Ok(None);
+                }
+                match &here {
+                    Some(p) => Ok(Some(p)),
+                    None => anyhow::bail!(
+                        "not inside an {} project: run this in one, or add --global",
+                        brand::PRODUCT_NAME
+                    ),
+                }
+            };
+            match cmd.unwrap_or(SkillsCmd::List { for_text: None }) {
+                SkillsCmd::List { for_text } => {
+                    let all = store.skills(here.as_ref())?;
+                    let shown: Vec<&skills::Skill> = match &for_text {
+                        Some(t) => skills::relevant(&all, t, 8),
+                        None => all.iter().collect(),
+                    };
+                    o.print(&shown, || {
+                        let mut out: Vec<String> = shown
+                            .iter()
+                            .map(|k| {
+                                let state = if !k.usable() {
+                                    "problem"
+                                } else if k.enabled {
+                                    "on"
+                                } else {
+                                    "off"
+                                };
+                                format!(
+                                    "[{state:>7}] {:<26} {:<8} {:<8} {}",
+                                    k.name, k.version, k.source, k.description
+                                )
+                            })
+                            .collect();
+                        if out.is_empty() {
+                            out.push("No skill fits that.".into());
+                        }
+                        out.push(format!(
+                            "\n{} skill(s). Show one with `{} skills show <name>`.",
+                            shown.len(),
+                            brand::CLI_NAME
+                        ));
+                        out.join("\n")
+                    });
+                }
+                SkillsCmd::Show { name } => {
+                    let k = store.skill(here.as_ref(), &name)?;
+                    if !k.usable() {
+                        anyhow::bail!("skill '{name}' cannot be used: {}", k.problems.join("; "));
+                    }
+                    let v = json!({"skill": k, "text": k.body()});
+                    o.print(&v, || k.raw.clone());
+                }
+                SkillsCmd::New {
+                    name,
+                    description,
+                    global,
+                } => {
+                    let f = skills::create(&store, scoped(global)?, &name, &description)?;
+                    o.print(&json!({"path": f}), || {
+                        format!(
+                            "Created {}. Edit it, then check it with `{} skills check`.",
+                            f.display(),
+                            brand::CLI_NAME
+                        )
+                    });
+                }
+                SkillsCmd::Enable { names, global } => {
+                    let p = scoped(global)?;
+                    for n in &names {
+                        store.set_skill_enabled(p, n, true)?;
+                    }
+                    o.print(&json!({"enabled": names}), || {
+                        format!(
+                            "Turned on: {}{}",
+                            names.join(", "),
+                            if global { " (every project)" } else { "" }
+                        )
+                    });
+                }
+                SkillsCmd::Disable { names, global } => {
+                    let p = scoped(global)?;
+                    for n in &names {
+                        store.set_skill_enabled(p, n, false)?;
+                    }
+                    o.print(&json!({"disabled": names}), || {
+                        format!(
+                            "Turned off: {}{}",
+                            names.join(", "),
+                            if global { " (every project)" } else { "" }
+                        )
+                    });
+                }
+                SkillsCmd::Reset { names } => {
+                    let p = scoped(false)?;
+                    for n in &names {
+                        store.reset_skill_setting(p, n)?;
+                    }
+                    o.print(&json!({"reset": names}), || {
+                        format!(
+                            "This project now follows the global choice for: {}",
+                            names.join(", ")
+                        )
+                    });
+                }
+                SkillsCmd::Check => {
+                    let all = store.skills(here.as_ref())?;
+                    let bad: Vec<&skills::Skill> = all.iter().filter(|k| !k.usable()).collect();
+                    o.print(&bad, || {
+                        if bad.is_empty() {
+                            format!("All {} skills can be used.", all.len())
+                        } else {
+                            bad.iter()
+                                .map(|k| {
+                                    format!(
+                                        "{} ({}): {}",
+                                        k.name,
+                                        k.path.as_deref().unwrap_or(&k.source),
+                                        k.problems.join("; ")
+                                    )
+                                })
+                                .collect::<Vec<_>>()
+                                .join("\n")
+                        }
+                    });
+                    if !bad.is_empty() {
+                        return Ok(1);
+                    }
+                }
+                SkillsCmd::Import {
+                    path,
+                    global,
+                    force,
+                } => {
+                    let r = skills::import(&store, &path, scoped(global)?, force)?;
+                    o.print(&r, || {
+                        let mut out: Vec<String> = r
+                            .imported
+                            .iter()
+                            .map(|i| match &i.replaced {
+                                Some(old) => {
+                                    format!("imported {} {} (replaced {old})", i.name, i.version)
+                                }
+                                None => format!("imported {} {}", i.name, i.version),
+                            })
+                            .collect();
+                        out.extend(
+                            r.skipped
+                                .iter()
+                                .map(|k| format!("skipped {}: {}", k.name, k.reason)),
+                        );
+                        out.join("\n")
+                    });
+                    if r.imported.is_empty() && !r.skipped.is_empty() {
+                        return Ok(1);
+                    }
+                }
+                SkillsCmd::Export { names, out } => {
+                    let files = skills::export(&store, here.as_ref(), &names, &out)?;
+                    o.print(&files, || {
+                        format!("Wrote {} skill(s) to {}", files.len(), out.display())
+                    });
+                }
+                SkillsCmd::Sync {
+                    harness,
+                    names,
+                    append,
+                    force,
+                } => {
+                    let p = scoped(false)?.unwrap();
+                    let r = skills::sync(&store, p, &harness, &names, append, force)?;
+                    o.print(&r, || {
+                        let mut out = Vec::new();
+                        for w in &r.written {
+                            out.push(format!("wrote {w}"));
+                        }
+                        for w in &r.removed {
+                            out.push(format!(
+                                "removed {w} (Evyro wrote it; the skill is no longer on)"
+                            ));
+                        }
+                        if !r.unchanged.is_empty() {
+                            out.push(format!("{} file(s) already up to date", r.unchanged.len()));
+                        }
+                        for k in &r.skipped {
+                            out.push(format!("skipped {}: {}", k.name, k.reason));
+                        }
+                        out.join("\n")
+                    });
+                    if r.written.is_empty() && r.unchanged.is_empty() && !r.skipped.is_empty() {
+                        return Ok(1);
+                    }
+                }
+            }
         }
         Cmd::Search(cmd) => {
             use evyro_core::search;

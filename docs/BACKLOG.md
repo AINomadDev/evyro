@@ -39,7 +39,7 @@ Requirement references are spec section numbers. Evidence for done items is the 
 5a. **ACP, next steps**: chat is in (`evyro chat`, desktop chat threads). Next: run it with real ACP agents (Claude Agent ACP, Codex ACP, Gemini), `session/load` so a chat survives an app restart, `terminal/*`, image prompts, model and mode pickers.
 6. **Codex and Gemini hooks** (14.4): automatic checkpoints where those agents expose hooks.
 7. **Code search and symbols** (22): done for fuzzy file search, text and regex search, pattern-based symbols and outlines (CLI, MCP, desktop). Next: tree-sitter outlines, find references, optional Serena or LSP over MCP.
-8. **Skills registry** (23).
+8. **Skills registry** (23): done for built-in, global and project skills, versions, on/off, checks, import/export, MCP `list_skills`/`get_skill`, the task context list, `evyro skills sync` and the desktop Skills screen. Next: skill folders with extra files (scripts, references), sharing a skills catalogue between machines, and suggestions ranked by a model instead of words.
 9. **Handoff benchmark suite** (38) with real agents.
 10. **Packaging** (5.5): release binaries + checksums, Homebrew tap, then installers.
 11. **Remote access and mobile companion** (6.4, 32.1): Streamable HTTP with auth, after desktop is stable.

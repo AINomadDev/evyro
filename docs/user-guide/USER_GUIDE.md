@@ -359,6 +359,23 @@ evyro chat --to claude-code --approve reads "Start with the failing test"
 
 Each agent needs its ACP side installed once, for example `npm install -g @agentclientprotocol/claude-agent-acp` for Claude Code or `npm install -g @agentclientprotocol/codex-acp` for Codex. `evyro chat --list` prints the command for each. Evyro shares only files inside the project with a chat agent, never `.env` or keys. See [ACP](../protocols/ACP.md) for the details.
 
+### 4.11 Give agents skills
+
+Skills are short instructions for one kind of work, such as debugging, test-driven development, a security review or a handoff. Evyro has 15 built in. You can add your own for all your projects, or for one repository in `.evyro/skills`. When an agent starts a task, it sees only the names of the skills that fit, and it loads a skill's text when it needs it (MCP `get_skill`).
+
+```bash
+evyro skills                                  # every skill, and whether it is on
+evyro skills list --for "fix the crash on save"   # which ones fit a task
+evyro skills show debugging
+evyro skills disable performance-optimization # in this project (--global for all)
+evyro skills new api-conventions --description "Use when adding an HTTP endpoint"
+evyro skills import ./team-skills             # copies SKILL.md files in, checked for secrets
+evyro skills sync --for claude-code           # writes .claude/skills/ for Claude Code
+evyro skills sync --for codex --append        # adds a skills list to AGENTS.md
+```
+
+Evyro never overwrites instructions someone wrote. A sync leaves your own `.claude/skills` files alone. It changes `AGENTS.md` only between its own markers, or adds them at the end when you pass `--append`. In the desktop app, the **Skills** tab does all of this. See [Skills](../SKILLS_SYSTEM.md) for the file format and the details.
+
 ---
 
 ## Part 5. Desktop app
@@ -427,6 +444,7 @@ If the task still belongs to another AI, **Switch to** opens the handoff form in
 | Comment on a change | `evyro review comment <path>:<line> "..."` |
 | Send review comments | `evyro review prompt --mark-sent` |
 | Chat with an agent | `evyro chat --to <agent> --task T-1` |
+| Skills for a task | `evyro skills list --for "<task>"` |
 | Health check | `evyro doctor` |
 
 Full reference: [CLI reference](CLI_REFERENCE.md).
