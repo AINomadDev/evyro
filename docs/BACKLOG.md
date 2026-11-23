@@ -36,6 +36,7 @@ Requirement references are spec section numbers. Evidence for done items is the 
 4. **Desktop, next steps** (Phase 3): run on macOS, native folder picker, notifications, automated UI smoke test.
 4a. **Targets, next steps**: confirm login-file locations and model mapping against real installs; model discovery per provider; a generic "custom CLI" harness with an argv template.
 5. **px0 / T3 Code integration** (21.2): launch px0 on a task worktree; document T3 Code + Evyro MCP setup.
+5a. **ACP, next steps**: chat is in (`evyro chat`, desktop chat threads). Next: run it with real ACP agents (Claude Agent ACP, Codex ACP, Gemini), `session/load` so a chat survives an app restart, `terminal/*`, image prompts, model and mode pickers.
 6. **Codex and Gemini hooks** (14.4): automatic checkpoints where those agents expose hooks.
 7. **Code search and symbols** (22): done for fuzzy file search, text and regex search, pattern-based symbols and outlines (CLI, MCP, desktop). Next: tree-sitter outlines, find references, optional Serena or LSP over MCP.
 8. **Skills registry** (23).

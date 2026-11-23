@@ -25,7 +25,10 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
 });
 
 async function loadThreads() {
-  try { state.threads = await invoke("term_list"); } catch { state.threads = []; }
+  let terms = [];
+  try { terms = await invoke("term_list"); } catch { terms = []; }
+  const chats = typeof loadChats === "function" ? await loadChats() : [];
+  state.threads = [...terms, ...chats].sort((a, b) => a.started_at - b.started_at);
   return state.threads;
 }
 
@@ -90,6 +93,15 @@ function threadExit(p) {
 
 async function closeThread(id) {
   const t = state.threads.find((t) => t.id === id);
+  if (t && t.kind === "chat") {
+    if (t.running && !(await confirmDialog(`End the chat with ${t.agent || t.target}?`, "Evyro stops the agent, records a checkpoint and closes its session."))) return;
+    await act(() => invoke("chat_close", { id }));
+    CHATS.delete(id);
+    state.threads = state.threads.filter((x) => x.id !== id);
+    if (state.thread === id) state.thread = null;
+    render();
+    return;
+  }
   if (t && t.running && !(await confirmDialog(`Stop ${t.title}?`, "The program is still running. Evyro stops it; its last checkpoint and session stay recorded."))) return;
   await act(() => invoke("term_close", { id }));
   const x = XTERMS.get(id);
@@ -135,6 +147,14 @@ async function newThreadDialog() {
 }
 
 function threadStatus(t) {
+  if (t.kind === "chat") {
+    if (t.state === "failed") return pill("bad", "failed");
+    if (!t.running) return pill("", "ended");
+    if (t.state === "starting") return pill("warn", "starting");
+    const asking = (CHATS.get(t.id)?.log || []).some((it) => it.t === "permission") && chatBlocks(CHATS.get(t.id).log).some((b) => b.k === "perm" && b.answer === undefined);
+    if (asking) return pill("warn", "needs you");
+    return t.busy ? pill("running", "working") : pill("ok", "your turn");
+  }
   if (t.running) return pill("running");
   return pill(t.exit_code === 0 ? "" : "bad", t.exit_code == null ? "ended" : `exit ${t.exit_code}`);
 }
@@ -147,7 +167,7 @@ function drawThreadList() {
     class: "thread-item" + (t.id === state.thread ? " active" : ""),
     onclick: () => { state.thread = t.id; drawThreadList(); drawThreadPane(); },
   }, h("div", { class: "thread-row" }, h("span", { class: "thread-title" }, t.title), threadStatus(t)),
-    h("div", { class: "muted small" }, t.kind === "agent" ? (t.task ? `task ${t.task}` : "no task") : "shell", " · ", agoSecs(t.started_at)))));
+    h("div", { class: "muted small" }, t.kind === "chat" ? `chat${t.task ? ` · task ${t.task}` : ""}` : t.kind === "agent" ? (t.task ? `task ${t.task}` : "no task") : "shell", " · ", agoSecs(t.started_at)))));
   if (!mine.length) list.append(h("div", { class: "muted small empty-threads" }, "No threads yet."));
 }
 const agoSecs = (s) => ago(new Date(s * 1000).toISOString());
@@ -163,9 +183,11 @@ function drawThreadPane() {
       h("p", { class: "muted" }, "Start Claude Code, Codex, Gemini or any coding agent in a thread. When it stops or hits a limit, hand off and start the next one in another thread. Every thread is tracked as a session."),
       h("div", { class: "row" },
         h("button", { class: "btn primary", onclick: newThreadDialog }, "New agent thread"),
+        h("button", { class: "btn", onclick: newChatDialog }, "New chat"),
         h("button", { class: "btn", onclick: () => startThread({ kind: "shell" }) }, "New shell"))));
     return;
   }
+  if (t.kind === "chat") { drawChatPane(pane, t); return; }
   const x = ensureXterm(t.id);
   pane.append(h("div", { class: "thread-head" },
     h("div", null, h("div", { class: "thread-name" }, t.title, " ", threadStatus(t)), h("div", { class: "muted small mono" }, t.command)),
@@ -198,6 +220,7 @@ async function viewThreads(v) {
     h("div", { class: "thread-side" },
       h("div", { class: "row" },
         h("button", { class: "btn primary small", onclick: newThreadDialog }, "+ Agent"),
+        h("button", { class: "btn small", onclick: newChatDialog, title: "Chat with an agent over ACP" }, "+ Chat"),
         h("button", { class: "btn small", onclick: () => startThread({ kind: "shell" }) }, "+ Shell")),
       h("nav", { id: "thread-list", class: "thread-list" })),
     h("div", { id: "thread-pane", class: "thread-pane" })));

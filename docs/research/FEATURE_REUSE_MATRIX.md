@@ -8,7 +8,7 @@
 | Git operations | Integrate existing tool | `git` CLI with explicit argv | Implemented |
 | Agent launch argv | Implement compatible functionality | px0 `agent.go` dispatch patterns, agent docs | Implemented (documented, not run against real installs here) |
 | MCP server | Use existing protocol | MCP spec 2025-11-25; `rmcp` evaluated | Implemented (stdio) |
-| ACP | Use existing protocol (later) | T3 Code `effect-acp`, Goose | Not implemented |
+| ACP | Use existing protocol | T3 Code `effect-acp`, Goose, ACP spec v1 | Implemented as a client (`evyro-acp`, own code): `evyro chat` and desktop chat threads, with Evyro sessions, Evyro's MCP server injected, project-only file access and permission prompts |
 | Agent threads, model switching UI | Implement compatible functionality | T3 Code (threads), `portable-pty` + xterm.js | Implemented: agent and shell threads in the desktop app, each running `evyro run` in a PTY |
 | Review workbench, PR review | Implement compatible functionality | px0 (review workflow ideas) | Line and file comments on working-tree changes in the desktop Changes view and `evyro review`; sent to running agents or as a prompt; in context packets and over MCP. PR review on GitHub not implemented |
 | Fuzzy / regex search, symbols | Study architectural ideas | px0 `internal/fuzzy`, `internal/symbols`; tree-sitter | Implemented in `evyro-core::search` (own code, no px0 source copied): fuzzy file names, text and regex search, per-language pattern symbols and outlines, in the CLI, MCP and desktop. Tree-sitter not yet |

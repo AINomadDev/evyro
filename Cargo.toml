@@ -1,8 +1,8 @@
 [workspace]
 resolver = "2"
-members = ["crates/evyro-core", "crates/evyro-mcp", "crates/evyro-cli", "crates/evyro-term", "crates/evyro-desktop"]
+members = ["crates/evyro-core", "crates/evyro-mcp", "crates/evyro-cli", "crates/evyro-term", "crates/evyro-acp", "crates/evyro-desktop"]
 # The desktop app needs system webview libraries; plain `cargo build`/`test` skip it.
-default-members = ["crates/evyro-core", "crates/evyro-mcp", "crates/evyro-cli", "crates/evyro-term"]
+default-members = ["crates/evyro-core", "crates/evyro-mcp", "crates/evyro-cli", "crates/evyro-term", "crates/evyro-acp"]
 
 [workspace.package]
 version = "0.1.0"

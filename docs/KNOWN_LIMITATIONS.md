@@ -14,6 +14,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - MCP stdio server.
 - Three-agent continuation using simulated harness binaries.
 - Code search through the CLI and MCP (scenario test): fuzzy file names, text and regex, symbols and outlines; `.gitignore`, binary and sensitive files left out, secrets in matched lines redacted, paths outside the repository refused.
+- ACP chat (`evyro chat`) with a stand-in ACP agent: streamed plan, tool calls and permission requests, Evyro's MCP server reached from inside the agent, file access limited to the project (`.env` and paths outside refused), `--approve` policies, cancellation, a handoff picked up, a checkpoint at the end.
 - A receiving agent that fails to launch reopens its handoff instead of stranding the task.
 - Switch targets of every kind, with simulated binaries: an API target (key from an env var, model mapped for OpenCode), refusal before any state change when the key is missing, `app_login` removing `ANTHROPIC_API_KEY`, an IDE launch, a redacted chat pack, and continuing a handoff with a different AI than it named.
 
@@ -34,10 +35,12 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - Desktop app under Xvfb: creating a task, checking criteria, running tests, accepting a handoff with drift, saving commands, the AI targets screen, adding a target, switching to a chat app through a handoff, the Changes view, the palette and live refresh after a CLI checkpoint.
 - Agent threads in the real app under Xvfb (2026-11-23): an agent thread ran `evyro run --to aider --task T-1` with a stand-in agent in a PTY, took typed input, was tracked as a session (top bar showed "With aider") and checkpointed on exit; a shell thread ran commands and followed window resizes; quitting the app stopped a running thread's program.
 - Code search in the real app under Xvfb (2026-11-23): Ctrl+P found `rate_limiter.rs` from "ratelim", text search showed both matches with the token in `config.ts` as `[REDACTED:github_token]` and left `.env` out, symbol search jumped to `allow_request`, and the file viewer opened at line 6 with its outline.
+- Chat threads (ACP) in the real app under Xvfb (2026-11-23): **+ Chat** started a stand-in ACP agent on T-1; the conversation showed its plan, tool calls, the task read through Evyro's MCP server and the refusals for `.env` and `../outside.txt`; **Allow** on its permission card let it write `notes.txt`; **End chat** stopped the agent and closed the session with a checkpoint listing "Edited notes.txt".
 - Review workbench in the real app under Xvfb (2026-11-23): commented on a diff line, saw it inline, sent it to a running stand-in agent thread; the agent (in raw mode with bracketed paste on, like real agent TUIs) received it as one bracketed message submitted with Enter, and the comment showed as sent.
 
 ## Not yet verified
 
+- **Real ACP agents.** Chat has been run only with a stand-in ACP agent. Its messages matched the official ACP v1 schema in a hand check (2026-11-23). No run with Claude Agent ACP, Codex ACP, Gemini CLI, Goose, OpenCode or Copilot has been recorded; their commands come from their docs.
 - **Real agents.** No real Claude Code, Codex, Gemini or OpenCode run has been recorded. Argv and MCP setup are from docs. The first real run on your Mac is the next acceptance step.
 - **Windows end-to-end.** Unit tests and builds pass on Windows CI, but the end-to-end scenario tests use shell-script stand-ins for agents and run only on Linux and macOS. No one has used Evyro on a Windows machine.
 - **Notifications, agent threads and the Terminal launch** on a real Mac or Windows desktop. Agent threads were checked by hand on Linux with a real PTY and a stand-in agent.
@@ -52,7 +55,8 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - Code intelligence beyond search: tree-sitter parsing, find references, LSP (types, go to definition across files), a codebase map. Symbols come from per-language patterns, so an unusual declaration can be missed.
 - Skills registry, context deduplication across sessions, embeddings.
 - Model discovery (listing a provider's models), quota tracking, routing policies, automation rules. A provider registry exists (`evyro targets providers`).
-- GitHub Issues sync, Relay contract import/export, ACP.
+- GitHub Issues sync, Relay contract import/export.
+- ACP: `terminal/*`, `authenticate`, `session/load`, session modes, and image or audio prompts (see [ACP](protocols/ACP.md)).
 - Handoff benchmark suite (fresh vs. transcript vs. summary vs. contract) with real agents.
 - Code signing and notarization, Homebrew/winget, published releases.
 - Storing keys. By design Evyro never stores keys; targets can read one from the macOS Keychain at launch (`--key-keychain`).

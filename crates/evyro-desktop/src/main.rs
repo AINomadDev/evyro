@@ -17,6 +17,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+mod chat;
 mod review;
 mod search;
 mod threads;
@@ -827,8 +828,43 @@ fn start_event_watcher(app: tauri::AppHandle) {
     });
 }
 
+/// Apps opened from the Dock or Start menu get a short PATH. Take the login
+/// shell's PATH once at startup, so agents installed with npm, Homebrew or
+/// cargo are found the same way the person's terminal finds them.
+fn adopt_login_path() {
+    if cfg!(windows) || std::env::var_os("EVYRO_KEEP_PATH").is_some() {
+        return;
+    }
+    let (shell, args) = evyro_term::shell_command(Some("printf '%s' \"$PATH\""));
+    let out = std::process::Command::new(shell)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output();
+    if let Ok(o) = out {
+        let path = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if o.status.success() && path.contains('/') {
+            // The login shell's order first, then anything only the app had.
+            let mut dirs: Vec<std::path::PathBuf> = std::env::split_paths(&path).collect();
+            if let Some(old) = std::env::var_os("PATH") {
+                for d in std::env::split_paths(&old) {
+                    if !dirs.contains(&d) {
+                        dirs.push(d);
+                    }
+                }
+            }
+            if let Ok(joined) = std::env::join_paths(dirs) {
+                // Single-threaded here: nothing else reads the environment yet.
+                std::env::set_var("PATH", joined);
+            }
+        }
+    }
+}
+
 fn main() {
+    adopt_login_path();
     let terms: threads::Terms = std::sync::Arc::new(evyro_term::Terminals::new());
+    let chats: chat::Chats = Default::default();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
@@ -879,6 +915,14 @@ fn main() {
             review::set_review_status,
             review::delete_review_comment,
             review::review_prompt_text,
+            chat::acp_agents,
+            chat::chat_open,
+            chat::chat_list,
+            chat::chat_log,
+            chat::chat_send,
+            chat::chat_permission,
+            chat::chat_cancel,
+            chat::chat_close,
             threads::term_open,
             threads::term_list,
             threads::term_write,
@@ -887,6 +931,7 @@ fn main() {
             threads::term_close,
         ])
         .manage(terms.clone())
+        .manage(chats.clone())
         .setup(|app| {
             start_event_watcher(app.handle().clone());
             Ok(())
@@ -897,6 +942,7 @@ fn main() {
             // Agents started in the window stop with it.
             if let tauri::RunEvent::Exit = event {
                 terms.close_all();
+                chat::close_all(&chats);
             }
         });
 }

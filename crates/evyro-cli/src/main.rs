@@ -1,5 +1,6 @@
 //! `evyro` CLI. Works without the desktop app; every command supports `--json`.
 
+mod chat;
 mod launch;
 mod out;
 
@@ -108,6 +109,10 @@ enum Cmd {
     },
     /// Launch an agent with session tracking (pid, exit checkpoint).
     Run(RunArgs),
+    /// Chat with a coding agent over ACP (Agent Client Protocol): its reply,
+    /// plan and tool calls in the terminal, and you approve each tool call.
+    /// `evyro chat --list` shows which agents can.
+    Chat(ChatArgs),
     /// Detected agents and their capabilities.
     Agents,
     /// Switch targets: every AI you can hand work to (agent CLIs, IDEs, chat
@@ -390,6 +395,39 @@ struct RunArgs {
     /// Continue this handoff, even one prepared for a different AI.
     #[arg(long)]
     handoff: Option<String>,
+}
+
+#[derive(Args)]
+struct ChatArgs {
+    /// The coding agent or API target to chat with (see `evyro chat --list`).
+    #[arg(long, alias = "agent", required_unless_present = "list")]
+    to: Option<String>,
+    /// The task to work on (default: a handoff waiting for this agent, or the active task).
+    #[arg(long)]
+    task: Option<String>,
+    /// Continue this handoff, even one prepared for a different AI.
+    #[arg(long)]
+    handoff: Option<String>,
+    /// Continue a handoff even though the repository changed since it was written.
+    #[arg(long)]
+    accept_drift: bool,
+    /// Model for API targets (passed to the agent's environment as `evyro run` does).
+    #[arg(long)]
+    model: Option<String>,
+    /// Which tool calls to allow without asking.
+    #[arg(long, value_enum, default_value = "ask")]
+    approve: chat::Approve,
+    /// Do not offer Evyro's MCP server to the agent.
+    #[arg(long)]
+    no_mcp: bool,
+    /// Start this ACP command instead of the agent's usual one (program and arguments).
+    #[arg(long, num_args = 1.., allow_hyphen_values = true, value_delimiter = ' ')]
+    command: Option<Vec<String>>,
+    /// List the agents that can chat over ACP and how to install the missing ones.
+    #[arg(long)]
+    list: bool,
+    /// The first message (after Evyro's task or handoff context).
+    prompt: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -938,6 +976,29 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
             };
             o.print(&r, || out::render_resume(&r));
             return Ok(code);
+        }
+        Cmd::Chat(a) => {
+            if a.list {
+                chat::list(o);
+                return Ok(0);
+            }
+            let p = project(&store, &cli.project, &dir)?;
+            return chat::run_chat(
+                &store,
+                &p,
+                chat::ChatArgs {
+                    to: a.to.as_deref().unwrap_or_default(),
+                    task: a.task.as_deref(),
+                    handoff: a.handoff.as_deref(),
+                    accept_drift: a.accept_drift,
+                    model: a.model.as_deref(),
+                    approve: a.approve,
+                    no_mcp: a.no_mcp,
+                    command: a.command,
+                    prompt: a.prompt,
+                },
+                o,
+            );
         }
         Cmd::Run(a) => {
             let p = project(&store, &cli.project, &dir)?;
