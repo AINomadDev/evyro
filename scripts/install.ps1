@@ -19,6 +19,15 @@ if ($env:EVYRO_VERSION) {
 } else {
   $version = 'latest'
   $base = "https://github.com/$repo/releases/latest/download"
+  # Before the first stable release, releases/latest has nothing in it: fall
+  # back to the newest release, pre-releases included.
+  try { Invoke-WebRequest -UseBasicParsing -Method Head -Uri "$base/SHA256SUMS" | Out-Null }
+  catch {
+    $newest = (Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=1") | Select-Object -First 1
+    if (-not $newest) { throw "$repo has no releases yet" }
+    $version = $newest.tag_name.TrimStart('v') + ' (pre-release)'
+    $base = "https://github.com/$repo/releases/download/$($newest.tag_name)"
+  }
 }
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("evyro-" + [guid]::NewGuid())

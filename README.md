@@ -48,7 +48,7 @@ Your AI hits a usage limit halfway through a feature. A different AI would be fa
 | System | Desktop app | Command line (`evyro`) |
 |---|---|---|
 | macOS (Apple Silicon and Intel) | [`Evyro_0.2.0-rc.1_universal.dmg`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_universal.dmg) | [Apple Silicon](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-aarch64-apple-darwin.tar.gz) · [Intel](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-x86_64-apple-darwin.tar.gz) |
-| Windows 10 and 11 (x64) | [`Evyro_0.2.0-rc.1_x64-setup.exe`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_x64-setup.exe) | [x64 `.zip`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-x86_64-pc-windows-msvc.zip) |
+| Windows (x64) | [`Evyro_0.2.0-rc.1_x64-setup.exe`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_x64-setup.exe) | [x64 `.zip`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-x86_64-pc-windows-msvc.zip) |
 | Linux (x64) | [`.AppImage`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_amd64.AppImage) · [`.deb`](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/Evyro_0.2.0-rc.1_amd64.deb) | [x64](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-x86_64-unknown-linux-gnu.tar.gz) |
 | Linux (ARM64) | — | [ARM64](https://github.com/AINomadDev/evyro/releases/download/v0.2.0-rc.1/evyro-0.2.0-rc.1-aarch64-unknown-linux-gnu.tar.gz) |
 
@@ -117,12 +117,11 @@ Evyro is not another place to chat with an agent. It is the layer that remembers
 **CLI only:**
 
 ```bash
-# While only a pre-release exists, name the version (drop EVYRO_VERSION once 0.2.0 is out)
 # macOS and Linux: installs to ~/.local/bin after checking the release checksum
-curl -fsSL https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.sh | EVYRO_VERSION=0.2.0-rc.1 sh
+curl -fsSL https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.sh | sh
 
 # Windows (PowerShell)
-$env:EVYRO_VERSION = "0.2.0-rc.1"; irm https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/AINomadDev/evyro/main/scripts/install.ps1 | iex
 
 # From source (Rust 1.80+ and git)
 cargo install --path crates/evyro-cli
