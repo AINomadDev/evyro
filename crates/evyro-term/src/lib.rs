@@ -54,6 +54,10 @@ pub struct TermInfo {
     pub started_at: u64,
     pub running: bool,
     pub exit_code: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cols: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<u16>,
     /// From an earlier run of the app: ended, output read from disk.
     #[serde(default)]
     pub restored: bool,
@@ -84,6 +88,14 @@ struct Scrollback {
     buf: VecDeque<u8>,
     /// Bytes of output since the start, including bytes dropped from `buf`.
     total: u64,
+    /// The first byte of this process's output, until a frontend attaches.
+    startup_from: Option<u64>,
+}
+
+pub struct AttachmentSnapshot {
+    pub data: String,
+    pub live: String,
+    pub end: u64,
 }
 
 /// All terminals of one app instance.
@@ -112,6 +124,11 @@ impl Terminals {
     /// earlier runs.
     pub fn with_store(dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&dir);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
         let secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -172,6 +189,7 @@ impl Terminals {
         let mut scrollback = Scrollback {
             buf: data.into_bytes().into(),
             total: end,
+            startup_from: None,
         };
         let marker = b"\x1b[?1049l\x1b[?2004l\x1b[0m\r\n[Resumed Evyro thread]\r\n";
         push_scrollback(&mut scrollback.buf, marker);
@@ -193,8 +211,13 @@ impl Terminals {
         on_output: OnOutput,
         on_exit: OnExit,
     ) -> Result<TermInfo> {
+        let (cols, rows) = previous
+            .as_ref()
+            .and_then(|(info, _, _)| info.cols.zip(info.rows))
+            .unwrap_or((spec.cols, spec.rows));
+        let pty_size = size(cols, rows);
         let pair = native_pty_system()
-            .openpty(size(spec.cols, spec.rows))
+            .openpty(pty_size)
             .context("could not open a pseudo-terminal")?;
         let mut cmd = CommandBuilder::new(&spec.program);
         cmd.args(&spec.args);
@@ -228,7 +251,7 @@ impl Terminals {
         let mut reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;
 
-        let (previous, scrollback) = if let Some((info, scrollback, old)) = previous {
+        let (previous, mut scrollback) = if let Some((info, scrollback, old)) = previous {
             if let Some(t) = old {
                 let _info = t.info.lock().unwrap();
                 t.forgotten.store(true, Ordering::SeqCst);
@@ -237,6 +260,7 @@ impl Terminals {
         } else {
             (None, Scrollback::default())
         };
+        scrollback.startup_from = Some(scrollback.total);
         let info = TermInfo {
             id: id.clone(),
             title: previous.as_ref().map_or(spec.title, |i| i.title.clone()),
@@ -257,6 +281,8 @@ impl Terminals {
             ),
             running: true,
             exit_code: None,
+            cols: Some(pty_size.cols),
+            rows: Some(pty_size.rows),
             restored: false,
             stopped_by_app: false,
             credit_budget,
@@ -332,14 +358,34 @@ impl Terminals {
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<()> {
         let t = self.get(id)?;
-        let m = t.master.lock().unwrap();
-        m.resize(size(cols, rows))
-            .map_err(|e| anyhow!(e.to_string()))
+        let mut info = t.info.lock().unwrap();
+        if !info.running {
+            return Ok(());
+        }
+        let pty_size = size(cols, rows);
+        t.master
+            .lock()
+            .unwrap()
+            .resize(pty_size)
+            .map_err(|e| anyhow!(e.to_string()))?;
+        info.cols = Some(pty_size.cols);
+        info.rows = Some(pty_size.rows);
+        Ok(())
     }
 
     /// Output so far (up to [`SCROLLBACK_BYTES`]) and the offset it ends at,
     /// for re-attaching a view.
     pub fn snapshot(&self, id: &str) -> Result<(String, u64)> {
+        let snapshot = self.read_snapshot(id, false)?;
+        Ok((snapshot.data, snapshot.end))
+    }
+
+    /// The first view of a running process also receives its pre-attachment output as live.
+    pub fn attach_snapshot(&self, id: &str) -> Result<AttachmentSnapshot> {
+        self.read_snapshot(id, true)
+    }
+
+    fn read_snapshot(&self, id: &str, attach: bool) -> Result<AttachmentSnapshot> {
         let t = match self.get(id) {
             Ok(t) => t,
             Err(e) => {
@@ -351,13 +397,20 @@ impl Terminals {
                 } else {
                     &bytes[..]
                 };
-                return Ok((
-                    String::from_utf8_lossy(trimmed).into_owned(),
-                    bytes.len() as u64,
-                ));
+                return Ok(AttachmentSnapshot {
+                    data: String::from_utf8_lossy(trimmed).into_owned(),
+                    live: String::new(),
+                    end: bytes.len() as u64,
+                });
             }
         };
-        let sb = t.scrollback.lock().unwrap();
+        let first_attach = attach && t.info.lock().unwrap().running;
+        let mut sb = t.scrollback.lock().unwrap();
+        let live_from = if first_attach {
+            sb.startup_from.take()
+        } else {
+            None
+        };
         let (a, b) = sb.buf.as_slices();
         let mut bytes = Vec::with_capacity(sb.buf.len());
         bytes.extend_from_slice(a);
@@ -367,7 +420,16 @@ impl Terminals {
         } else {
             &bytes[..]
         };
-        Ok((String::from_utf8_lossy(trimmed).into_owned(), sb.total))
+        let start = sb.total.saturating_sub(trimmed.len() as u64);
+        let split = live_from.map_or(trimmed.len(), |offset| {
+            offset.saturating_sub(start).min(trimmed.len() as u64) as usize
+        });
+        let (data, live) = trimmed.split_at(split);
+        Ok(AttachmentSnapshot {
+            data: String::from_utf8_lossy(data).into_owned(),
+            live: String::from_utf8_lossy(live).into_owned(),
+            end: sb.total,
+        })
     }
 
     /// Stop the program if it is still running and forget the terminal.
@@ -506,7 +568,7 @@ fn save_term_locked(dir: &std::path::Path, t: &Term, info: &TermInfo) {
     let bytes: Vec<u8> = t.scrollback.lock().unwrap().buf.iter().copied().collect();
     let write = |p: &PathBuf, data: &[u8]| {
         let tmp = p.with_extension("tmp");
-        if std::fs::write(&tmp, data).is_ok() {
+        if write_private(&tmp, data).is_ok() {
             let _ = std::fs::rename(&tmp, p);
         }
     };
@@ -514,6 +576,19 @@ fn save_term_locked(dir: &std::path::Path, t: &Term, info: &TermInfo) {
     if let Ok(j) = serde_json::to_vec_pretty(info) {
         write(&json, &j);
     }
+}
+
+/// Saved output can hold secrets, so only the current user may read it.
+fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(data)
 }
 
 /// Threads saved by earlier runs, as ended.
@@ -764,6 +839,49 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn first_attachment_only_exposes_the_current_process_query_as_live() {
+        let terms = Terminals::new();
+        let query = "\x1b[2;5H\x1b[6n";
+        let program = spec("/bin/sh", &[
+            "-c",
+            "stty -icanon -echo min 0 time 50; printf '\\033[2;5H\\033[6n'; test \"$(dd bs=1 count=6 2>/dev/null)\" = \"$(printf '\\033[2;5R')\"",
+        ]);
+        let verify_attachment =
+            |id: &str, out: Arc<Mutex<String>>, rx: mpsc::Receiver<Option<u32>>| {
+                for _ in 0..200 {
+                    if out.lock().unwrap().contains(query) {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                let (full, end) = terms.snapshot(id).unwrap();
+                assert!(
+                    full.ends_with(query),
+                    "startup query did not arrive: {full:?}"
+                );
+                let first = terms.attach_snapshot(id).unwrap();
+                assert_eq!(first.end, end);
+                assert_eq!(first.live, query);
+                assert_eq!(first.data, &full[..full.len() - query.len()]);
+                let again = terms.attach_snapshot(id).unwrap();
+                assert_eq!(again.data, full);
+                assert!(again.live.is_empty());
+                terms.write(id, "\x1b[2;5R").unwrap();
+                assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), Some(0));
+                first.data
+            };
+        let (o, e, out, rx) = collect();
+        let info = terms.open(program.clone(), o, e).unwrap();
+        assert!(verify_attachment(&info.id, out, rx).is_empty());
+        let (o, e, out, rx) = collect();
+        terms.resume(&info.id, program, o, e).unwrap();
+        let history = verify_attachment(&info.id, out, rx);
+        assert!(history.contains(query));
+        assert!(history.contains("[Resumed Evyro thread]"));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn saved_threads_come_back_after_a_restart() {
         let dir = std::env::temp_dir().join(format!("evyro-term-store-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -774,7 +892,16 @@ mod tests {
         assert_eq!(code, Some(3));
         let (o, e, _, _) = collect();
         let live = first.open(spec("/bin/cat", &[]), o, e).unwrap();
+        first.resize(&live.id, 120, 40).unwrap();
         first.close_all(); // the app quits with cat still running
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode =
+                |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&dir), 0o700);
+            assert_eq!(mode(&dir.join(format!("{}.log", live.id))), 0o600);
+            assert_eq!(mode(&dir.join(format!("{}.json", live.id))), 0o600);
+        }
 
         let second = Terminals::with_store(dir.clone());
         let saved = second.list();
@@ -783,6 +910,8 @@ mod tests {
         let d = saved.iter().find(|i| i.id == done.id).unwrap();
         assert_eq!(d.exit_code, Some(3));
         assert!(!d.stopped_by_app);
+        let saved_live = saved.iter().find(|i| i.id == live.id).unwrap();
+        assert_eq!((saved_live.cols, saved_live.rows), (Some(120), Some(40)));
         assert!(
             saved
                 .iter()
@@ -813,7 +942,11 @@ mod tests {
         );
         let restarted_shell = second.resume(&live.id, echo_input, o, e).unwrap();
         assert_eq!(restarted_shell.id, live.id);
-        second.write(&live.id, "new input\n").unwrap();
+        assert_eq!(
+            (restarted_shell.cols, restarted_shell.rows),
+            (Some(120), Some(40))
+        );
+        second.write(&live.id, "new input\r").unwrap();
         assert_eq!(
             wait_answering_cursor_query(&second, &live.id, &out, &rx),
             Some(0)

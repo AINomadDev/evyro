@@ -94,7 +94,12 @@ pub const SYNC_TARGETS: &[(&str, &str)] = &[
     ("cursor", "AGENTS.md"),
     ("amp", "AGENTS.md"),
     ("aider", "AGENTS.md"),
+    ("kiro", "AGENTS.md"),
+    ("droid", "AGENTS.md"),
+    ("cline", "AGENTS.md"),
+    ("crush", "AGENTS.md"),
     ("gemini", "GEMINI.md"),
+    ("qwen", "QWEN.md"),
     ("copilot", ".github/copilot-instructions.md"),
 ];
 

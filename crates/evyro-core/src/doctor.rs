@@ -116,7 +116,7 @@ pub fn run(store: &Store, cwd: &Path) -> Vec<Check> {
             Some("install Claude Code, Codex, Gemini CLI or OpenCode"),
         ));
     }
-    match store.list_projects(true, None) {
+    match store.list_projects(false, None) {
         Ok(ps) => {
             for p in ps {
                 if !Path::new(&p.root_path).exists() {

@@ -9,6 +9,7 @@
 //!
 //! Spec: <https://agentclientprotocol.com> (protocol version 1).
 
+mod archive;
 pub mod client;
 pub mod host;
 
@@ -64,6 +65,14 @@ pub const AGENTS: &[AcpAgent] = &[
         args: &["--experimental-acp"],
         install: "npm install -g @google/gemini-cli",
         evidence: "documented (Gemini CLI ACP mode)",
+    },
+    AcpAgent {
+        harness: "antigravity-cli",
+        display_name: "Google Antigravity CLI",
+        binaries: &["agy"],
+        args: &["acp"],
+        install: "https://antigravity.google/docs/cli/install/",
+        evidence: "documented (antigravity.google/docs/cli/acp)",
     },
     AcpAgent {
         harness: "goose",
@@ -190,6 +199,7 @@ pub struct Chat {
     /// Evyro's opening message: the task or the handoff's resume prompt.
     pub first_prompt: String,
     pub agent_info: Value,
+    config_options: Value,
     pub activity: Arc<Mutex<Activity>>,
 }
 
@@ -344,13 +354,38 @@ pub fn start(store: &Store, p: &Project, opts: ChatOpts, on_event: OnEvent) -> R
             env,
         });
     }
-    let acp_session = match client.new_session(&cwd, &mcp) {
+    let open_session = || {
+        if harness == "cursor"
+            && agent_info["authMethods"]
+                .as_array()
+                .is_some_and(|methods| methods.iter().any(|method| method["id"] == "cursor_login"))
+        {
+            client.request("authenticate", json!({"methodId": "cursor_login"}))?;
+        }
+        client.open_session(&cwd, &mcp)
+    };
+    let opened = match open_session() {
         Ok(s) => s,
         Err(e) => {
             client.shutdown();
-            return Err(fail(format!("{display_name} did not open a session: {e}")));
+            let message = e.to_string();
+            let lower = message.to_ascii_lowercase();
+            let hint = match harness.as_str() {
+                "gemini" if lower.contains("no longer supported") && lower.contains("antigravity") =>
+                    "Google moved individual Gemini Code Assist accounts to Antigravity CLI. Sign in with `agy acp --login`, then choose `antigravity-cli` in New chat.",
+                "cursor" if lower.contains("authenticat") || lower.contains("login") =>
+                    "Run `cursor-agent login` in a terminal, finish sign-in, then open a new Cursor chat.",
+                "antigravity-cli" if lower.contains("authenticat") || lower.contains("login") =>
+                    "Run `agy acp --login` in a terminal, then open a new Antigravity chat.",
+                _ => return Err(fail(format!("{display_name} did not open a session: {message}"))),
+            };
+            return Err(fail(hint.into()));
         }
     };
+    let acp_session = opened["sessionId"]
+        .as_str()
+        .expect("validated session id")
+        .to_owned();
     store.set_session_pid(&session.id, client.pid().map(|x| x as i64))?;
     store.emit(
         Some(&p.id),
@@ -370,6 +405,7 @@ pub fn start(store: &Store, p: &Project, opts: ChatOpts, on_event: OnEvent) -> R
         display_name,
         first_prompt,
         agent_info,
+        config_options: opened["configOptions"].clone(),
         activity,
     }))
 }

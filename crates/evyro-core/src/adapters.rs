@@ -153,28 +153,29 @@ pub fn registry() -> Vec<AdapterSpec> {
             display_name: "Cursor (cursor-agent CLI / IDE)",
             binaries: &["cursor-agent"],
             instruction_file: "AGENTS.md",
-            capabilities: Capabilities { interactive_launch: false, ..FULL_CLI },
+            capabilities: FULL_CLI,
             min_version: None,
             mcp_setup: "add evyro to .cursor/mcp.json: {\"mcpServers\": {\"evyro\": {\"command\": \"evyro\", \"args\": [\"mcp\"]}}}",
             model_flag: Some("--model"),
             evidence: "documented (px0 dispatch code inspected at b4e324b)",
             notes: "IDE usage is fallback: open the repo, the agent reads AGENTS.md and the Evyro MCP server.",
             headless: Some(|bin, p| vec![bin.into(), "-p".into(), p.into()]),
-            interactive: None,
+            // `cursor-agent "<prompt>"` opens its chat with that first message.
+            interactive: Some(|bin, p| vec![bin.into(), p.into()]),
         },
         AdapterSpec {
             id: "copilot",
             display_name: "GitHub Copilot CLI",
             binaries: &["copilot"],
             instruction_file: "AGENTS.md",
-            capabilities: Capabilities { interactive_launch: false, ..FULL_CLI },
+            capabilities: FULL_CLI,
             min_version: None,
             mcp_setup: "configure via `copilot` /mcp add (interactive)",
             model_flag: Some("--model"),
-            evidence: "documented",
-            notes: "Headless `-p` mode; IDE integrations use the fallback path.",
+            evidence: "documented (`copilot -i <prompt>` starts a session with a first prompt)",
+            notes: "Interactive with `-i`, headless with `-p`; IDE integrations use the fallback path.",
             headless: Some(|bin, p| vec![bin.into(), "-p".into(), p.into()]),
-            interactive: None,
+            interactive: Some(|bin, p| vec![bin.into(), "-i".into(), p.into()]),
         },
         AdapterSpec {
             id: "goose",
@@ -203,6 +204,104 @@ pub fn registry() -> Vec<AdapterSpec> {
             notes: "Evyro passes the handoff file with `--read`.",
             headless: Some(|bin, p| vec![bin.into(), "--read".into(), ".evyro/CURRENT_TASK.md".into(), "--message".into(), p.into()]),
             interactive: None,
+        },
+        AdapterSpec {
+            id: "amp",
+            display_name: "Amp (Sourcegraph)",
+            binaries: &["amp"],
+            instruction_file: "AGENTS.md",
+            capabilities: FULL_CLI,
+            min_version: None,
+            mcp_setup: "add to Amp settings: \"amp.mcpServers\": {\"evyro\": {\"command\": \"evyro\", \"args\": [\"mcp\"]}}",
+            model_flag: None,
+            evidence: "documented (`amp -x` execute mode)",
+            notes: "Interactive `amp` starts without a first message; it reads AGENTS.md, which tells it to run `evyro context`. `-x` uses paid credits.",
+            headless: Some(|bin, p| vec![bin.into(), "-x".into(), p.into()]),
+            interactive: Some(|bin, _| vec![bin.into()]),
+        },
+        AdapterSpec {
+            id: "qwen",
+            display_name: "Qwen Code",
+            binaries: &["qwen"],
+            instruction_file: "QWEN.md",
+            capabilities: FULL_CLI,
+            min_version: None,
+            mcp_setup: "add to ~/.qwen/settings.json: \"mcpServers\": {\"evyro\": {\"command\": \"evyro\", \"args\": [\"mcp\"]}}",
+            model_flag: Some("--model"),
+            evidence: "documented (`-p` headless, `-i` interactive with a first prompt)",
+            notes: "A Gemini CLI fork: same flags and settings layout.",
+            headless: Some(|bin, p| vec![bin.into(), "-p".into(), p.into()]),
+            interactive: Some(|bin, p| vec![bin.into(), "-i".into(), p.into()]),
+        },
+        AdapterSpec {
+            id: "kiro",
+            display_name: "Kiro CLI (AWS)",
+            binaries: &["kiro-cli"],
+            instruction_file: "AGENTS.md",
+            capabilities: FULL_CLI,
+            min_version: None,
+            mcp_setup: "add to ~/.kiro/settings/mcp.json: {\"mcpServers\": {\"evyro\": {\"command\": \"evyro\", \"args\": [\"mcp\"]}}}",
+            model_flag: Some("--model"),
+            evidence: "documented (`kiro-cli chat [--no-interactive] <prompt>`)",
+            notes: "Headless runs without --trust-all-tools, so tools that need approval are skipped.",
+            headless: Some(|bin, p| vec![bin.into(), "chat".into(), "--no-interactive".into(), p.into()]),
+            interactive: Some(|bin, p| vec![bin.into(), "chat".into(), p.into()]),
+        },
+        AdapterSpec {
+            id: "droid",
+            display_name: "Factory Droid",
+            binaries: &["droid"],
+            instruction_file: "AGENTS.md",
+            capabilities: FULL_CLI,
+            min_version: None,
+            mcp_setup: "in droid, run /mcp and add a server: command `evyro`, args `mcp`",
+            model_flag: Some("--model"),
+            evidence: "documented (`droid exec --auto low`)",
+            notes: "Headless uses `--auto low`: file edits allowed, risky commands still refused.",
+            headless: Some(|bin, p| vec![bin.into(), "exec".into(), "--auto".into(), "low".into(), p.into()]),
+            interactive: Some(|bin, p| vec![bin.into(), p.into()]),
+        },
+        AdapterSpec {
+            id: "cline",
+            display_name: "Cline CLI",
+            binaries: &["cline"],
+            instruction_file: "AGENTS.md",
+            capabilities: Capabilities { acp: true, ..FULL_CLI },
+            min_version: None,
+            mcp_setup: "`cline mcp` to add a server: command `evyro`, args `mcp`",
+            model_flag: Some("--model"),
+            evidence: "documented (`cline <prompt>` runs and exits, `-i` opens the terminal UI)",
+            notes: "A prompt without -i runs in yolo mode (approves its own tools).",
+            headless: Some(|bin, p| vec![bin.into(), p.into()]),
+            interactive: Some(|bin, p| vec![bin.into(), "-i".into(), p.into()]),
+        },
+        AdapterSpec {
+            id: "crush",
+            display_name: "Crush (Charm)",
+            binaries: &["crush"],
+            instruction_file: "AGENTS.md",
+            capabilities: FULL_CLI,
+            min_version: None,
+            mcp_setup: "add to crush.json: \"mcp\": {\"evyro\": {\"type\": \"stdio\", \"command\": \"evyro\", \"args\": [\"mcp\"]}}",
+            model_flag: None,
+            evidence: "documented (`crush run` is non-interactive)",
+            notes: "`crush run` approves its own tools. Interactive `crush` starts without a first message; it reads AGENTS.md.",
+            headless: Some(|bin, p| vec![bin.into(), "run".into(), p.into()]),
+            interactive: Some(|bin, _| vec![bin.into()]),
+        },
+        AdapterSpec {
+            id: "antigravity-cli",
+            display_name: "Google Antigravity CLI",
+            binaries: &["agy"],
+            instruction_file: "AGENTS.md",
+            capabilities: Capabilities { acp: true, ..FULL_CLI },
+            min_version: None,
+            mcp_setup: "configure the Evyro MCP server in Antigravity CLI, or use an Evyro ACP chat",
+            model_flag: Some("--model"),
+            evidence: "documented (Google Antigravity CLI ACP guide)",
+            notes: "For individual Gemini Code Assist accounts, use Antigravity CLI and sign in with `agy acp --login`.",
+            headless: Some(|bin, p| vec![bin.into(), "--print".into(), p.into()]),
+            interactive: Some(|bin, p| vec![bin.into(), "--prompt-interactive".into(), p.into()]),
         },
         AdapterSpec {
             id: "antigravity",
@@ -242,6 +341,12 @@ pub fn normalize_id(id: &str) -> String {
         "cursor" | "cursor-agent" => "cursor".into(),
         "copilot" | "github-copilot" => "copilot".into(),
         "agy" | "antigravity" => "antigravity".into(),
+        "amp" | "ampcode" => "amp".into(),
+        "qwen" | "qwen-code" => "qwen".into(),
+        "kiro" | "kiro-cli" => "kiro".into(),
+        "droid" | "factory" | "factory-droid" => "droid".into(),
+        "cline" | "cline-cli" => "cline".into(),
+        "crush" | "charm-crush" => "crush".into(),
         other => other.into(),
     }
 }
@@ -286,7 +391,15 @@ impl AdapterSpec {
             "{} has no launchable CLI mode in Evyro; use the fallback: open the repo in {} and paste the resume prompt",
             self.display_name, self.display_name
         )))?;
-        let mut argv = f(bin, prompt);
+        let mut argv = if mode == LaunchMode::Interactive && prompt.is_empty() {
+            let mut args = vec![bin.into()];
+            if matches!(self.id, "kiro" | "goose") {
+                args.push(if self.id == "kiro" { "chat" } else { "session" }.into());
+            }
+            args
+        } else {
+            f(bin, prompt)
+        };
         if let (Some(m), Some(flag)) = (model, self.model_flag) {
             argv.insert(1, flag.into());
             argv.insert(2, m.into());
@@ -554,6 +667,58 @@ pub fn detect_all() -> Vec<Detection> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn newer_agents_launch_in_both_modes() {
+        use super::*;
+        for (id, interactive_has_prompt) in [
+            ("amp", false),
+            ("qwen", true),
+            ("kiro", true),
+            ("droid", true),
+            ("cline", true),
+            ("crush", false),
+            ("copilot", true),
+            ("cursor", true),
+            ("antigravity-cli", true),
+        ] {
+            let spec = get(&normalize_id(id)).unwrap();
+            let h = spec
+                .launch_argv("/bin/x", LaunchMode::Headless, "PROMPT", None)
+                .unwrap();
+            assert!(h.iter().any(|a| a == "PROMPT"), "{id} headless: {h:?}");
+            let i = spec
+                .launch_argv("/bin/x", LaunchMode::Interactive, "PROMPT", None)
+                .unwrap();
+            assert_eq!(
+                i.iter().any(|a| a == "PROMPT"),
+                interactive_has_prompt,
+                "{id} interactive: {i:?}"
+            );
+        }
+        assert_eq!(normalize_id("qwen-code"), "qwen");
+        assert_eq!(normalize_id("kiro-cli"), "kiro");
+        assert_eq!(normalize_id("factory"), "droid");
+    }
+
+    #[test]
+    fn interactive_launch_can_wait_for_the_first_message() {
+        use super::*;
+        for (id, args) in [
+            ("cursor", vec!["/agent"]),
+            ("copilot", vec!["/agent"]),
+            ("antigravity-cli", vec!["/agent"]),
+            ("kiro", vec!["/agent", "chat"]),
+        ] {
+            assert_eq!(
+                get(id)
+                    .unwrap()
+                    .launch_argv("/agent", LaunchMode::Interactive, "", None)
+                    .unwrap(),
+                args
+            );
+        }
+    }
+
     #[test]
     fn npm_shims_are_run_through_their_script() {
         // The tail of a real npm cmd-shim.

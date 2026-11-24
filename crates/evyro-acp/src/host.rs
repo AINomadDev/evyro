@@ -7,6 +7,8 @@
 //! desktop can forward them as window events and the server can wake its
 //! event streams.
 
+pub use crate::archive::SearchHit;
+use crate::archive::{self, SavedChat, MAX_SAVED};
 use crate::{ChatOpts, Event, Started};
 use evyro_core::Store;
 use serde_json::{json, Value};
@@ -36,12 +38,13 @@ struct Entry {
     base: u64,
     /// Permission requests waiting for an answer: (request id, params).
     pending: Vec<(Value, Value)>,
+    dirty: bool,
 }
 
 #[derive(Default)]
 struct Inner {
     map: HashMap<String, Entry>,
-    next: u64,
+    saved: HashMap<String, SavedChat>,
 }
 
 #[derive(Clone)]
@@ -49,6 +52,7 @@ pub struct Host {
     inner: Arc<Mutex<Inner>>,
     notify: Notify,
     evyro_mcp: Option<PathBuf>,
+    archive: Option<PathBuf>,
 }
 
 /// Where to start a chat.
@@ -87,6 +91,33 @@ fn item_for(e: &Event) -> Option<Value> {
     })
 }
 
+fn model_choice(config: &Value) -> Value {
+    let Some(model) = config.as_array().and_then(|options| {
+        options
+            .iter()
+            .find(|x| x["category"] == "model" && x["type"] == "select")
+    }) else {
+        return Value::Null;
+    };
+    let Some(items) = model["options"].as_array() else {
+        return Value::Null;
+    };
+    let options: Vec<_> = items
+        .iter()
+        .flat_map(|item| {
+            item["options"]
+                .as_array()
+                .map_or_else(|| std::slice::from_ref(item), Vec::as_slice)
+        })
+        .filter(|item| item["value"].is_string() && item["name"].is_string())
+        .map(|item| json!({"value": item["value"], "name": item["name"]}))
+        .collect();
+    if options.is_empty() || !model["id"].is_string() || !model["currentValue"].is_string() {
+        return Value::Null;
+    }
+    json!({"id": model["id"], "current": model["currentValue"], "options": options})
+}
+
 impl Host {
     /// `evyro_mcp` is the `evyro` program the agents get as their MCP server.
     pub fn new(notify: Notify, evyro_mcp: Option<PathBuf>) -> Self {
@@ -94,7 +125,18 @@ impl Host {
             inner: Default::default(),
             notify,
             evyro_mcp,
+            archive: None,
         }
+    }
+
+    /// Enable local desktop history. Live chat APIs continue to see only this run.
+    pub fn with_archive(mut self, dir: PathBuf) -> Self {
+        match archive::load(&dir) {
+            Ok(saved) => self.inner.lock().unwrap().saved = saved,
+            Err(e) => eprintln!("evyro: could not read chat history: {e}"),
+        }
+        self.archive = Some(dir);
+        self
     }
 
     fn push(&self, id: &str, item: Value) {
@@ -110,6 +152,7 @@ impl Host {
                 _ => {}
             }
             e.log.push(item.clone());
+            e.dirty = true;
             if e.log.len() > MAX_LOG {
                 let cut = e.log.len() - MAX_LOG;
                 e.log.drain(..cut);
@@ -128,6 +171,7 @@ impl Host {
         let info = {
             let Ok(mut c) = self.inner.lock() else { return };
             let Some(e) = c.map.get_mut(id) else { return };
+            e.dirty = true;
             if let (Some(o), Some(p)) = (e.info.as_object_mut(), patch.as_object()) {
                 for (k, v) in p {
                     o.insert(k.clone(), v.clone());
@@ -154,8 +198,7 @@ impl Host {
     pub fn open(&self, o: OpenOpts) -> Value {
         let id = {
             let mut c = self.inner.lock().unwrap();
-            c.next += 1;
-            let id = format!("chat_{}", c.next);
+            let id = evyro_core::util::new_id("chat");
             let title = match o.task.as_deref().filter(|t| !t.is_empty()) {
                 Some(t) => format!("{} on {t}", o.target),
                 None => o.target.clone(),
@@ -174,6 +217,7 @@ impl Host {
                     log: vec![],
                     base: 0,
                     pending: vec![],
+                    dirty: true,
                 },
             );
             id
@@ -211,6 +255,13 @@ impl Host {
                     &i,
                     json!({"running": false, "busy": false, "exit_code": code}),
                 );
+            } else if let Event::Update { update, .. } = &e {
+                if update["sessionUpdate"] == "config_option_update" {
+                    h.set_info(
+                        &i,
+                        json!({"model_choice": model_choice(&update["configOptions"])}),
+                    );
+                }
             } else if matches!(e, Event::Permission { .. }) {
                 h.set_info(&i, json!({}));
             }
@@ -249,22 +300,25 @@ impl Host {
             .as_deref()
             .and_then(|t| store.get_task(t).ok())
             .map(|t| t.key);
-        if let Ok(mut c) = self.inner.lock() {
-            if let Some(e) = c.map.get_mut(&id) {
-                e.chat = Some(chat.clone());
-            }
+        let attached = self.inner.lock().ok().is_some_and(|mut c| {
+            let Some(e) = c.map.get_mut(&id) else {
+                return false;
+            };
+            e.chat = Some(chat.clone());
+            true
+        });
+        if !attached {
+            let _ = chat.finish(&store);
+            return;
         }
         self.set_info(
             &id,
-            json!({"state": "ready", "agent": agent, "session": chat.session.id, "task": task_key, "cwd": chat.cwd.to_string_lossy()}),
+            json!({"state": "ready", "busy": false, "draft_available": true, "agent": agent, "session": chat.session.id, "task": task_key, "cwd": chat.cwd.to_string_lossy(), "model_choice": model_choice(&chat.config_options)}),
         );
-        let first = chat.first_prompt.clone();
-        self.run_turn(&id, chat, first.clone(), json!({"context": first}));
     }
 
     fn run_turn(&self, id: &str, chat: Arc<crate::Chat>, text: String, shown: Value) {
         self.push(id, json!({"t": "user", "text": shown}));
-        self.set_info(id, json!({"busy": true}));
         let host = self.clone();
         let id = id.to_string();
         std::thread::spawn(move || {
@@ -284,12 +338,72 @@ impl Host {
     pub fn list(&self) -> Vec<Value> {
         let c = self.inner.lock().unwrap();
         let mut v: Vec<Value> = c.map.values().map(|e| e.info.clone()).collect();
-        v.sort_by_key(|i| {
-            i["id"]
-                .as_str()
-                .and_then(|s| s.trim_start_matches("chat_").parse::<u64>().ok())
-        });
+        v.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
         v
+    }
+
+    /// Desktop-only list, including transcripts from earlier runs.
+    pub fn list_with_history(&self) -> Vec<Value> {
+        let c = self.inner.lock().unwrap();
+        let mut v: Vec<Value> = c.map.values().map(|e| e.info.clone()).collect();
+        v.extend(
+            c.saved
+                .iter()
+                .filter(|(id, _)| !c.map.contains_key(*id))
+                .map(|(_, chat)| chat.info.clone()),
+        );
+        v.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+        v
+    }
+
+    pub fn saved_log(&self, id: &str) -> Option<Value> {
+        let c = self.inner.lock().ok()?;
+        let chat = c.saved.get(id)?;
+        Some(json!({"info": chat.info, "log": chat.log}))
+    }
+
+    /// Literal, case-insensitive search of saved desktop chat messages in one project.
+    pub fn search_saved(&self, project_id: &str, query: &str) -> Result<Vec<SearchHit>, String> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        if query.chars().count() > 256 {
+            return Err("Search terms are limited to 256 characters".into());
+        }
+        let pattern = regex::RegexBuilder::new(&regex::escape(query))
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let c = self.inner.lock().map_err(|e| e.to_string())?;
+        let mut chats: Vec<_> = c
+            .saved
+            .iter()
+            .filter(|(id, chat)| !c.map.contains_key(*id) && chat.info["project_id"] == project_id)
+            .collect();
+        chats.sort_unstable_by(|(a, _), (b, _)| b.cmp(a));
+        let mut hits = Vec::new();
+        for (_, chat) in chats {
+            hits.extend(chat.matches(&pattern, 60 - hits.len()));
+            if hits.len() == 60 {
+                break;
+            }
+        }
+        Ok(hits)
+    }
+
+    pub fn forget_saved(&self, id: &str) -> Result<(), String> {
+        let mut c = self.inner.lock().map_err(|e| e.to_string())?;
+        if c.map.contains_key(id) {
+            return Err("close the chat before deleting its transcript".into());
+        }
+        if c.saved.contains_key(id) {
+            if let Some(dir) = &self.archive {
+                archive::remove(dir, id).map_err(|e| e.to_string())?;
+            }
+            c.saved.remove(id);
+        }
+        Ok(())
     }
 
     /// A chat's info and its transcript from sequence number `after` on (all when None).
@@ -301,6 +415,7 @@ impl Host {
         let items: Vec<Value> = e.log.iter().skip(skip).cloned().collect();
         Ok(json!({
             "info": e.info,
+            "draft": e.chat.as_ref().filter(|_| e.info["draft_available"] == true).map(|chat| &chat.first_prompt),
             "log": items,
             "first_seq": from,
             "next_seq": e.base + e.log.len() as u64,
@@ -322,19 +437,72 @@ impl Host {
         if text.trim().is_empty() {
             return Err("write a message first".into());
         }
-        let chat = self.chat_of(id)?;
-        let busy = self
-            .info(id)
-            .and_then(|i| i["busy"].as_bool())
-            .unwrap_or(false);
-        if busy {
-            return Err("the agent is still answering; wait or stop the turn".into());
-        }
-        if !chat.client.is_alive() {
-            return Err("the agent has stopped; start a new chat".into());
-        }
+        let (chat, info) = {
+            let mut c = self.inner.lock().map_err(|e| e.to_string())?;
+            let e = c.map.get_mut(id).ok_or("no such chat")?;
+            let chat = e.chat.clone().ok_or("the chat is still starting")?;
+            if !chat.client.is_alive() {
+                return Err("the agent has stopped; start a new chat".into());
+            }
+            if e.info["switching_model"] == true {
+                return Err("wait for the model to change".into());
+            }
+            if e.info["busy"] == true {
+                return Err("the agent is still answering; wait or stop the turn".into());
+            }
+            e.info["busy"] = json!(true);
+            e.info["draft_available"] = json!(false);
+            (chat, e.info.clone())
+        };
+        (self.notify)(Change::State(info));
         self.run_turn(id, chat, text.to_string(), json!(text));
         Ok(())
+    }
+
+    pub fn set_model(&self, id: &str, value: &str) -> Result<(), String> {
+        let (chat, config_id, info) = {
+            let mut c = self.inner.lock().map_err(|e| e.to_string())?;
+            let e = c.map.get_mut(id).ok_or("no such chat")?;
+            let chat = e.chat.clone().ok_or("the chat is still starting")?;
+            if !chat.client.is_alive()
+                || e.info["busy"] == true
+                || e.info["switching_model"] == true
+            {
+                return Err("the chat must be running and idle to change its model".into());
+            }
+            let model = &e.info["model_choice"];
+            let config_id = model["id"]
+                .as_str()
+                .ok_or("this agent did not advertise a model selector")?;
+            if !model["options"]
+                .as_array()
+                .is_some_and(|options| options.iter().any(|option| option["value"] == value))
+            {
+                return Err("this model is not available in the chat".into());
+            }
+            let config_id = config_id.to_owned();
+            e.info["switching_model"] = json!(true);
+            (chat, config_id, e.info.clone())
+        };
+        (self.notify)(Change::State(info));
+        let result = chat.client.request_wait(
+            "session/set_config_option",
+            json!({"sessionId": chat.acp_session, "configId": config_id, "value": value}),
+            Some(std::time::Duration::from_secs(10)),
+        );
+        let mut patch = json!({"switching_model": false});
+        if let Ok(response) = &result {
+            patch["model_choice"] = model_choice(&response["configOptions"]);
+        }
+        self.set_info(id, patch);
+        result.map(|_| ()).map_err(|e| {
+            let note = if e.0.contains("did not respond in time") {
+                " The model may still change; check the picker before sending."
+            } else {
+                ""
+            };
+            format!("{e}{note}")
+        })
     }
 
     /// Answer a permission request. `by` says who answered, for the transcript.
@@ -361,12 +529,66 @@ impl Host {
         self.chat_of(id)?.cancel().map_err(|e| e.to_string())
     }
 
-    /// Stop the agent, checkpoint and close its session, and forget the chat.
+    /// Stop the agent and close its session. Desktop hosts retain the transcript.
     pub fn close(&self, id: &str) -> Result<(), String> {
-        let entry = self.inner.lock().map_err(|e| e.to_string())?.map.remove(id);
+        let (entry, save) = {
+            let mut c = self.inner.lock().map_err(|e| e.to_string())?;
+            let entry = c.map.remove(id);
+            let save = match (&self.archive, &entry) {
+                (Some(dir), Some(e)) => Self::save_entry(dir, &mut c.saved, id, e),
+                _ => Ok(()),
+            };
+            (entry, save)
+        };
         if let Some(chat) = entry.and_then(|e| e.chat) {
-            let store = Store::open_default().map_err(|e| e.to_string())?;
+            let store = Store::open_default().map_err(|e| {
+                chat.client.shutdown();
+                e.to_string()
+            })?;
             chat.finish(&store).map_err(|e| e.to_string())?;
+        }
+        save.map_err(|e| format!("Chat closed. Could not save its transcript: {e}"))
+    }
+
+    pub fn save_all(&self) {
+        if let Ok(mut c) = self.inner.lock() {
+            self.save_locked(&mut c);
+        }
+    }
+
+    fn save_locked(&self, c: &mut Inner) {
+        let Some(dir) = &self.archive else { return };
+        let mut newest: Vec<_> = c
+            .map
+            .keys()
+            .cloned()
+            .chain(c.saved.keys().cloned())
+            .collect();
+        newest.sort_unstable();
+        newest.dedup();
+        for id in newest.iter().rev().take(MAX_SAVED) {
+            if let Some(e) = c.map.get_mut(id).filter(|e| e.dirty) {
+                match Self::save_entry(dir, &mut c.saved, id, e) {
+                    Ok(()) => e.dirty = false,
+                    Err(e) => eprintln!("evyro: could not save transcript {id}: {e}"),
+                }
+            }
+        }
+    }
+
+    fn save_entry(
+        dir: &std::path::Path,
+        saved: &mut HashMap<String, SavedChat>,
+        id: &str,
+        e: &Entry,
+    ) -> std::io::Result<()> {
+        let record =
+            SavedChat::capture(e.info.clone(), e.log.clone(), e.base > 0).write(dir, id)?;
+        saved.insert(id.to_owned(), record);
+        if saved.len() > MAX_SAVED {
+            let oldest = saved.keys().min().unwrap().clone();
+            archive::remove(dir, &oldest)?;
+            saved.remove(&oldest);
         }
         Ok(())
     }
@@ -374,7 +596,10 @@ impl Host {
     /// Stop every agent and close its session (when the app or server quits).
     pub fn close_all(&self) {
         let all: Vec<Arc<crate::Chat>> = match self.inner.lock() {
-            Ok(mut c) => c.map.drain().filter_map(|(_, e)| e.chat).collect(),
+            Ok(mut c) => {
+                self.save_locked(&mut c);
+                c.map.drain().filter_map(|(_, e)| e.chat).collect()
+            }
             Err(_) => return,
         };
         if all.is_empty() {
@@ -392,5 +617,69 @@ impl Host {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_history_survives_shutdown_and_stays_out_of_the_live_api() {
+        let dir = tempfile::tempdir().unwrap();
+        let open = || Host::new(Arc::new(|_| {}), None).with_archive(dir.path().to_owned());
+        let host = open();
+        let mut ids = Vec::new();
+        for method in ["end chat", "quit app"] {
+            let id = evyro_core::util::new_id("chat");
+            let project = if method == "end chat" {
+                "project"
+            } else {
+                "another-project"
+            };
+            host.inner.lock().unwrap().map.insert(id.clone(), Entry {
+                info: json!({"id": id, "kind": "chat", "running": true, "busy": true, "waiting": 1,
+                    "state": "ready", "draft_available": true, "project_id": project}),
+                chat: None, log: Vec::new(), base: 0, pending: Vec::new(), dirty: true,
+            });
+            host.push(&id, json!({"t": "user", "text": method}));
+            host.push(&id, json!({"t": "user", "text": "debug a.b"}));
+            host.push(&id, json!({"t": "permission", "request": 1, "params": {}}));
+            assert!(host.forget_saved(&id).is_err());
+            host.save_all();
+            assert!(host.search_saved(project, "a.b").unwrap().is_empty());
+            if method == "end chat" {
+                host.close(&id).unwrap();
+                assert!(host.saved_log(&id).is_some());
+            }
+            ids.push(id);
+        }
+        host.close_all();
+        let reopened = open();
+        assert!(reopened.list().is_empty());
+        assert_eq!(reopened.list_with_history().len(), 2);
+        let hits = serde_json::to_value(reopened.search_saved("project", "A.B").unwrap()).unwrap();
+        assert_eq!(hits.as_array().unwrap().len(), 1);
+        assert_eq!(hits[0]["id"], ids[0]);
+        assert_eq!(hits[0]["message_index"], 1);
+        assert!(reopened.search_saved("project", "a.b.").unwrap().is_empty());
+        for (id, method) in ids.iter().zip(["end chat", "quit app"]) {
+            let record = reopened.saved_log(id).unwrap();
+            assert_eq!(record["log"][0]["text"], method);
+            assert_eq!(record["info"]["running"], false);
+            assert_eq!(record["info"]["busy"], false);
+            assert_eq!(record["info"]["waiting"], 0);
+            assert_eq!(record["info"]["draft_available"], false);
+            assert!(reopened.log(id, None).is_err());
+            assert!(reopened.pending(id).is_err());
+        }
+        reopened.forget_saved(&ids[0]).unwrap();
+        let reopened_again = open();
+        assert!(reopened_again.saved_log(&ids[0]).is_none());
+        assert!(reopened_again
+            .search_saved("project", "a.b")
+            .unwrap()
+            .is_empty());
+        assert!(reopened_again.saved_log(&ids[1]).is_some());
     }
 }

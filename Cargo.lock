@@ -1200,6 +1200,7 @@ name = "evyro-acp"
 version = "0.2.0-rc.1"
 dependencies = [
  "evyro-core",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",
@@ -1249,6 +1250,7 @@ dependencies = [
  "evyro-core",
  "evyro-remote",
  "evyro-term",
+ "portable-pty",
  "serde",
  "serde_json",
  "tauri",
@@ -1256,6 +1258,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-notification",
  "tauri-plugin-updater",
+ "tempfile",
 ]
 
 [[package]]
@@ -1288,6 +1291,8 @@ dependencies = [
  "anyhow",
  "portable-pty",
  "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

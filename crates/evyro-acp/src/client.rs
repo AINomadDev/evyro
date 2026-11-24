@@ -169,6 +169,15 @@ impl AcpClient {
 
     /// Call a method on the agent and wait for its answer.
     pub fn request(&self, method: &str, params: Value) -> Result<Value> {
+        self.request_wait(method, params, None)
+    }
+
+    pub(crate) fn request_wait(
+        &self,
+        method: &str,
+        params: Value,
+        timeout: Option<std::time::Duration>,
+    ) -> Result<Value> {
         if !self.is_alive() {
             return Err(AcpError("the agent has stopped".into()));
         }
@@ -181,7 +190,18 @@ impl AcpClient {
             self.inner.pending.lock().unwrap().remove(&id);
             return Err(e);
         }
-        match rx.recv() {
+        use std::sync::mpsc::RecvTimeoutError;
+        let reply = match timeout {
+            Some(duration) => rx.recv_timeout(duration),
+            None => rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
+        };
+        match reply {
+            Err(RecvTimeoutError::Timeout) => {
+                self.inner.pending.lock().unwrap().remove(&id);
+                Err(AcpError(format!(
+                    "{method}: the agent did not respond in time"
+                )))
+            }
             Ok(Ok(v)) => Ok(v),
             Ok(Err(e)) => Err(AcpError(format!("{method}: {}", rpc_error_text(&e)))),
             Err(_) => Err(AcpError(format!(
@@ -218,6 +238,13 @@ impl AcpClient {
 
     /// `session/new` in `cwd` with these MCP servers. Returns the session id.
     pub fn new_session(&self, cwd: &Path, mcp: &[McpStdio]) -> Result<String> {
+        Ok(self.open_session(cwd, mcp)?["sessionId"]
+            .as_str()
+            .expect("validated by open_session")
+            .to_owned())
+    }
+
+    pub(crate) fn open_session(&self, cwd: &Path, mcp: &[McpStdio]) -> Result<Value> {
         let servers: Vec<Value> = mcp
             .iter()
             .map(|m| {
@@ -233,10 +260,10 @@ impl AcpClient {
             "session/new",
             json!({"cwd": cwd.to_string_lossy(), "mcpServers": servers}),
         )?;
-        r.get("sessionId")
-            .and_then(|s| s.as_str())
-            .map(String::from)
-            .ok_or_else(|| AcpError("session/new: the agent gave no session id".into()))
+        if !r["sessionId"].as_str().is_some_and(|id| !id.is_empty()) {
+            return Err(AcpError("session/new: the agent gave no session id".into()));
+        }
+        Ok(r)
     }
 
     /// `session/prompt`: send the person's message and wait for the turn to

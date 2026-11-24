@@ -226,6 +226,19 @@ pub struct Dependency {
 
 impl Store {
     pub fn create_task(&self, project_id: &str, t: NewTask) -> Result<Task> {
+        let tx = self.conn.unchecked_transaction()?;
+        let task = self.insert_task(project_id, t, None)?;
+        tx.commit()?;
+        Ok(task)
+    }
+
+    /// Insert a task and its creation event in the caller's transaction.
+    pub(crate) fn insert_task(
+        &self,
+        project_id: &str,
+        t: NewTask,
+        worktree: Option<(&str, &str)>,
+    ) -> Result<Task> {
         if t.title.trim().is_empty() {
             return Err(Error::Invalid("task title must not be empty".into()));
         }
@@ -246,29 +259,29 @@ impl Store {
             Some(p) => Some(self.resolve_task(project_id, &p)?.id),
             None => None,
         };
-        let tx = self.conn.unchecked_transaction()?;
-        let seq: i64 = tx
+        let seq: i64 = self
+            .conn
             .query_row(
                 "SELECT next_task_seq FROM projects WHERE id = ?1",
                 [project_id],
                 |r| r.get(0),
             )
             .map_err(|_| Error::NotFound(format!("project {project_id}")))?;
-        tx.execute(
+        self.conn.execute(
             "UPDATE projects SET next_task_seq = next_task_seq + 1 WHERE id = ?1",
             [project_id],
         )?;
         let id = util::new_id("tsk");
         let now = util::now();
         let status = t.status.unwrap_or(TaskStatus::Backlog);
-        tx.execute(
-            &format!("INSERT INTO tasks({TASK_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,NULL,NULL,NULL,?13,?13)"),
+        let (branch, path) = worktree.unzip();
+        self.conn.execute(
+            &format!("INSERT INTO tasks({TASK_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,NULL,?13,?14,?15,?15)"),
             rusqlite::params![
                 id, project_id, seq, parent, kind, t.title.trim(), t.description, priority, status.as_str(),
-                to_json(&t.acceptance), to_json(&t.constraints), to_json(&t.files), now
+                to_json(&t.acceptance), to_json(&t.constraints), to_json(&t.files), branch, path, now
             ],
         )?;
-        tx.commit()?;
         self.emit(
             Some(project_id),
             Some(&id),
@@ -498,6 +511,9 @@ impl Store {
 
     /// The directory a task's work happens in (its worktree, else project root).
     pub fn task_root(&self, t: &Task) -> Result<std::path::PathBuf> {
+        if crate::comparison::is_candidate(t) {
+            return crate::comparison::candidate_root(&self.get_project(&t.project_id)?.root(), t);
+        }
         if let Some(w) = &t.worktree {
             let p = std::path::PathBuf::from(w);
             if p.exists() {

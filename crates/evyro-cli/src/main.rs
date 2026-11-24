@@ -40,6 +40,13 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
+    /// Save reported limits from a Claude Code or Antigravity status-line hook.
+    CaptureUsage {
+        #[arg(value_parser = ["claude-code", "antigravity-cli"])]
+        harness: String,
+        #[arg(long, hide = true)]
+        output: Option<PathBuf>,
+    },
     /// Register this repository and create minimal .evyro scaffolding.
     Init(InitArgs),
     /// Register a repository without scaffolding.
@@ -819,6 +826,27 @@ fn attribute_session(store: &Store, task_id: Option<&str>) -> Option<String> {
 }
 
 fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
+    if let Cmd::CaptureUsage { harness, output } = &cli.cmd {
+        use std::io::Read;
+        let mut data = Vec::new();
+        std::io::stdin().take(1024 * 1024).read_to_end(&mut data)?;
+        // A status-line hook must never disturb its host: ignore input it cannot read.
+        let Ok(payload) = serde_json::from_slice(&data) else {
+            return Ok(0);
+        };
+        if let Some(snapshot) = evyro_core::quota::status_line_snapshot(harness, &payload) {
+            let path = match output {
+                Some(path) => path.clone(),
+                None => {
+                    let paths = evyro_core::paths::GlobalPaths::resolve()?;
+                    evyro_core::quota::cache_path(&paths, harness)
+                        .context("unsupported quota source")?
+                }
+            };
+            evyro_core::util::write_atomic(&path, snapshot.to_string().as_bytes())?;
+        }
+        return Ok(0);
+    }
     let dir = cwd(&cli.dir)?;
     if let Cmd::Completions { shell } = &cli.cmd {
         clap_complete::generate(*shell, &mut Cli::command(), "evyro", &mut std::io::stdout());
@@ -2217,15 +2245,30 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
             hooks,
             write,
         } => {
+            // The Cursor CLI and the Cursor IDE read the same .cursor/mcp.json.
+            let ide_id = if agent == "cursor" && write {
+                "cursor-ide"
+            } else {
+                agent.as_str()
+            };
             if let Some(i) = evyro_core::targets::ides()
                 .into_iter()
-                .find(|i| i.id == agent)
+                .find(|i| i.id == ide_id)
             {
                 let p = project(&store, &cli.project, &dir)?;
+                // `evyro` by name when it is on PATH, else this binary's full path.
+                let command = if adapters::which(brand::CLI_NAME).is_some() {
+                    brand::CLI_NAME.to_string()
+                } else {
+                    std::env::current_exe()
+                        .map(|e| e.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| brand::CLI_NAME.to_string())
+                };
+                let cmd = serde_json::to_string(&command)?;
                 let (rel, body) = match i.id {
-                    "cursor-ide" => (".cursor/mcp.json", "{\n  \"mcpServers\": {\n    \"evyro\": { \"command\": \"evyro\", \"args\": [\"mcp\"] }\n  }\n}\n"),
-                    "vscode" => (".vscode/mcp.json", "{\n  \"servers\": {\n    \"evyro\": { \"type\": \"stdio\", \"command\": \"evyro\", \"args\": [\"mcp\"] }\n  }\n}\n"),
-                    _ => ("", ""),
+                    "cursor-ide" => (".cursor/mcp.json", format!("{{\n  \"mcpServers\": {{\n    \"evyro\": {{ \"command\": {cmd}, \"args\": [\"mcp\"] }}\n  }}\n}}\n")),
+                    "vscode" => (".vscode/mcp.json", format!("{{\n  \"servers\": {{\n    \"evyro\": {{ \"type\": \"stdio\", \"command\": {cmd}, \"args\": [\"mcp\"] }}\n  }}\n}}\n")),
+                    _ => ("", String::new()),
                 };
                 let mut result = "printed".to_string();
                 if write && !rel.is_empty() {
@@ -2291,7 +2334,11 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 )
             });
         }
-        Cmd::Completions { .. } | Cmd::Version | Cmd::Restore { .. } | Cmd::BugReport { .. } => {
+        Cmd::Completions { .. }
+        | Cmd::Version
+        | Cmd::Restore { .. }
+        | Cmd::BugReport { .. }
+        | Cmd::CaptureUsage { .. } => {
             unreachable!()
         }
     }
@@ -2450,18 +2497,23 @@ fn task_cmd(
                     );
                 }
             }
-            let ses = store.start_session(
-                &p.id,
-                NewSession {
-                    task_id: Some(t.id.clone()),
-                    harness: agent.clone(),
-                    model,
-                    provider,
-                    worktree: t.worktree.clone(),
-                    pid: None,
-                    handoff_id: None,
-                },
-            )?;
+            // Inside `evyro run` the task goes to that run's session, so it
+            // is freed when the agent exits instead of staying held.
+            let ses = match store.running_session_from_env(&p.id) {
+                Some(run) => store.claim_task(&p.id, &run.id, &t.id)?,
+                None => store.start_session(
+                    &p.id,
+                    NewSession {
+                        task_id: Some(t.id.clone()),
+                        harness: agent.clone(),
+                        model,
+                        provider,
+                        worktree: t.worktree.clone(),
+                        pid: None,
+                        handoff_id: None,
+                    },
+                )?,
+            };
             let t = if t.status == TaskStatus::InProgress {
                 t
             } else {

@@ -117,6 +117,18 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
     for (i, a) in plan.extra_args.iter().enumerate() {
         argv.insert(1 + i, a.clone());
     }
+    let desktop_copilot = [
+        ("EVYRO_DESKTOP_COPILOT_BUDGET", "--max-ai-credits"),
+        ("EVYRO_DESKTOP_COPILOT_SESSION", "--session-id"),
+        ("EVYRO_DESKTOP_COPILOT_USAGE", "--usage-output-file"),
+    ];
+    if spec.id == "copilot" && !opts.headless {
+        for (env, flag) in desktop_copilot {
+            if let Ok(value) = std::env::var(env) {
+                argv.splice(1..1, [flag.to_string(), value]);
+            }
+        }
+    }
     if opts.headless && spec.id == "codex" {
         // The workspace-write sandbox lets Codex write only in the repo and
         // temp dirs. Its own `evyro checkpoint` / `evyro verify` calls write
@@ -163,6 +175,9 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
     }
     for (k, v) in &plan.env_set {
         cmd.env(k, v);
+    }
+    for (env, _) in desktop_copilot {
+        cmd.env_remove(env);
     }
     let mut child = match cmd.spawn() {
         Ok(c) => c,

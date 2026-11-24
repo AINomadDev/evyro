@@ -272,31 +272,7 @@ impl Store {
         let id = util::new_id("ses");
         let now = util::now();
         if let Some(tid) = &s.task_id {
-            let t = self.get_task(tid)?;
-            if t.project_id != project_id {
-                return Err(Error::Invalid("task belongs to a different project".into()));
-            }
-            let blockers = self.open_blockers(tid)?;
-            if !blockers.is_empty() {
-                return Err(Error::Conflict(format!(
-                    "{} is blocked by unfinished dependencies: {}",
-                    t.key,
-                    blockers
-                        .iter()
-                        .map(|b| b.key.clone())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )));
-            }
-            if let Some(l) = self.lease(tid)? {
-                let holder = self.get_session(&l.session_id)?;
-                if !holder.status.is_ended() {
-                    return Err(Error::Conflict(format!(
-                        "{} is owned by session {} ({}); hand off with `evyro handoff --to {}` or end that session first",
-                        t.key, holder.id, holder.harness, s.harness
-                    )));
-                }
-            }
+            self.check_claim(project_id, tid, &s.harness, None)?;
         }
         self.conn.execute(
             &format!("INSERT INTO sessions({SESSION_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'running',?9,NULL,NULL,?9,NULL,?10,NULL)"),
@@ -321,6 +297,91 @@ impl Store {
         self.emit(Some(project_id), s.task_id.as_deref(), Some(&id), "session.started",
             serde_json::json!({"harness": s.harness, "model": s.model, "provider": s.provider, "handoff_id": s.handoff_id}))?;
         self.get_session(&id)
+    }
+
+    /// Whether `harness` may take `task_id`: not blocked, and not owned by a
+    /// live session other than `by_session`.
+    fn check_claim(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        harness: &str,
+        by_session: Option<&str>,
+    ) -> Result<()> {
+        let t = self.get_task(task_id)?;
+        if t.project_id != project_id {
+            return Err(Error::Invalid("task belongs to a different project".into()));
+        }
+        let blockers = self.open_blockers(task_id)?;
+        if !blockers.is_empty() {
+            return Err(Error::Conflict(format!(
+                "{} is blocked by unfinished dependencies: {}",
+                t.key,
+                blockers
+                    .iter()
+                    .map(|b| b.key.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        }
+        if let Some(l) = self.lease(task_id)? {
+            let holder = self.get_session(&l.session_id)?;
+            if !holder.status.is_ended() && Some(holder.id.as_str()) != by_session {
+                return Err(Error::Conflict(format!(
+                    "{} is owned by session {} ({}); hand off with `evyro handoff --to {}` or end that session first",
+                    t.key, holder.id, holder.harness, harness
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// The running session named by `$EVYRO_SESSION_ID` (set by `evyro run`
+    /// for the agent it starts), if it belongs to this project.
+    pub fn running_session_from_env(&self, project_id: &str) -> Option<Session> {
+        let id = std::env::var("EVYRO_SESSION_ID")
+            .ok()
+            .filter(|v| !v.is_empty())?;
+        self.get_session(&id)
+            .ok()
+            .filter(|s| s.project_id == project_id && !s.status.is_ended())
+    }
+
+    /// Give a task to a session that is already running, for an agent that
+    /// starts a task from inside `evyro run`. The task is freed when that
+    /// session ends, so it is never left held by a session nobody watches.
+    pub fn claim_task(&self, project_id: &str, session_id: &str, task_id: &str) -> Result<Session> {
+        let ses = self.get_session(session_id)?;
+        if ses.project_id != project_id || ses.status.is_ended() {
+            return Err(Error::Invalid(format!(
+                "session {session_id} is not running in this project"
+            )));
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        self.check_claim(project_id, task_id, &ses.harness, Some(&ses.id))?;
+        let now = util::now();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO leases(task_id, session_id, harness, acquired_at) VALUES (?1,?2,?3,?4)",
+            rusqlite::params![task_id, ses.id, ses.harness, now],
+        )?;
+        self.conn.execute(
+            "UPDATE tasks SET assigned_agent = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![ses.harness, now, task_id],
+        )?;
+        // The session works on this task now; checkpoints go to it.
+        self.conn.execute(
+            "UPDATE sessions SET task_id = ?1 WHERE id = ?2",
+            rusqlite::params![task_id, ses.id],
+        )?;
+        self.emit(
+            Some(project_id),
+            Some(task_id),
+            Some(&ses.id),
+            "session.task_claimed",
+            serde_json::json!({"harness": ses.harness}),
+        )?;
+        tx.commit()?;
+        self.get_session(&ses.id)
     }
 
     pub fn get_session(&self, id: &str) -> Result<Session> {
