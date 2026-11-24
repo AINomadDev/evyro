@@ -33,6 +33,17 @@ evyro verify -- cargo test --workspace --locked  # proof, not a claim
 
 Start with the epics in the tracker: each epic's subtasks are written to be independent, so different AIs can take different ones.
 
+## Tasks that need a person
+
+Some work cannot be done by an AI: pairing a real phone, signing with a certificate, signing in to an account. Mark it so Evyro never hands it to one:
+
+```bash
+evyro task add "Sign the Windows installer" --needs-person "a code-signing certificate"
+evyro task update T-22 --needs-person "a code-signing certificate"
+```
+
+`evyro work` and **Work on next task** skip these tasks however important they are, and `evyro tasks` marks them "(needs a person)". Naming one explicitly (`evyro run --task T-22`) still works.
+
 ## Where an AI works (no worktree unless needed)
 
 Evyro does not make a worktree for every task. Before an AI starts, it picks the first rule that applies:

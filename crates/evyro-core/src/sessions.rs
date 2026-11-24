@@ -503,7 +503,7 @@ impl Store {
         harness: &str,
     ) -> Result<Option<crate::tasks::Task>> {
         for t in self.ready_tasks(project_id)? {
-            if crate::comparison::is_candidate(&t) {
+            if crate::comparison::is_candidate(&t) || t.needs_person().is_some() {
                 continue;
             }
             if self.check_claim(project_id, &t.id, harness, None).is_ok() {

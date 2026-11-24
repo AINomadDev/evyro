@@ -1329,6 +1329,34 @@ mod switch_tests {
     }
 
     #[test]
+    fn work_that_needs_a_person_is_never_picked_for_an_ai() {
+        let (_dir, store, pid) = store_with_project();
+        let phone = store
+            .create_task(
+                &pid,
+                NewTask {
+                    title: "Pair a phone".into(),
+                    priority: Some(0),
+                    constraints: vec!["needs a person: a real phone on mobile data".into()],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let code = task(&store, &pid, "Write code", &[]);
+        assert_eq!(phone.needs_person(), Some("a real phone on mobile data"));
+        assert!(code.needs_person().is_none());
+        // The phone task is more important, yet only the code task is offered.
+        let next = store
+            .next_claimable_task(&pid, "claude-code")
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.key, code.key);
+        // Once the only AI-workable task is taken, nothing is picked rather than the person's task.
+        start(&store, &pid, &code, "claude-code").unwrap();
+        assert!(store.next_claimable_task(&pid, "codex").unwrap().is_none());
+    }
+
+    #[test]
     fn one_ai_at_a_time_on_a_set_of_files() {
         let (_dir, store, pid) = store_with_project();
         let a = task(&store, &pid, "Limiter", &["src/limiter"]);
