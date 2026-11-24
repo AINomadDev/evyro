@@ -1,0 +1,21 @@
+name: dependency-review
+
+# A monthly check that nothing we ship has a new advisory, even when no pull
+# request is open. A failure here opens nothing by itself: read the run, then
+# either update the dependency or record why it cannot move yet in deny.toml.
+on:
+  schedule:
+    - cron: "0 6 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
