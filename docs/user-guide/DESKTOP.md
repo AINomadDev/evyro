@@ -88,6 +88,8 @@ Choose **Search → Saved chats** to find a word or phrase in user messages and 
 
 If the account limit is shared across the available models, use **Continue with…** in a task's pane to move to another AI. Evyro fills the handoff from the last checkpoint. Review the summary and next action, prepare the handoff, then start the chosen AI. Its first message is an editable draft that points to the signed task checkpoint and the repo changes. Send it when you're ready.
 
+When an AI's usage is low and Evyro has read another AI's usage, the banner also offers **Hand off to <AI>**. One confirmation prepares the handoff from the latest checkpoint and opens that AI with the same editable draft. Only the checkpoint moves, so ask the first AI to save one beforehand if it can.
+
 ## Away-from-home access
 
 Keep the Mac awake with Evyro serving on `127.0.0.1`. Connect the Mac and phone to the same Tailscale network. They can use different Wi-Fi networks, or the phone can use mobile data. In **Settings → Remote access → Away from home**, choose **Check private address**, then **Enable private address** if needed. Select **Pair over Tailscale** and use the displayed address and one-time code on the phone. Use the **control** pairing scope to start or message ACP chats remotely. See [Remote access](../REMOTE_ACCESS.md) for setup and troubleshooting.

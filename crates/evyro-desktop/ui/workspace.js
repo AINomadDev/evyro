@@ -369,6 +369,29 @@ function bestFallback(exclude) {
   return best;
 }
 
+/** Hand a task to another AI from its latest checkpoint, without the notes form. */
+async function quickHandoff(t, to) {
+  const projectId = state.project.id;
+  let cp;
+  try { cp = await act(() => invoke("handoff_checkpoint", { projectId, task: t.task })); }
+  catch { return; }
+  if (state.project?.id !== projectId) return;
+  if (!cp) { toast(`${t.task} has no checkpoint yet. Use Continue with… to write a short summary.`, true); return; }
+  const when = cp.created_at ? ` from ${ago(cp.created_at)}` : "";
+  if (!(await confirmDialog(`Hand ${t.task} to ${to}?`,
+    `${to} gets the latest checkpoint${when}, not this conversation. Anything done since that checkpoint is not included. Ask ${t.title} to checkpoint first if it can.`, "Hand off"))) return;
+  try {
+    const r = await act(() => invoke("prepare_handoff", { projectId, input: {
+      task: t.task, to,
+      summary: (cp.summary || "").slice(0, 800),
+      completed: (cp.completed || []).slice(-5).map((line) => line.slice(0, 240)),
+      remaining: (cp.remaining || []).slice(0, 5).map((line) => line.slice(0, 240)),
+      next_action: (cp.next_action || "").slice(0, 500),
+    } }, "Handoff prepared"));
+    if (state.project?.id === projectId) await handTo(to, t.task, null, false, r.record.id);
+  } catch { /* act reported the error */ }
+}
+
 /** A running AI whose account is out of usage (or nearly) gets a way to carry its task to another AI. */
 function quotaBanner(t) {
   if (!t.running || t.kind !== "agent") return null;
@@ -384,7 +407,12 @@ function quotaBanner(t) {
       : `${t.title} is low on usage (${Math.floor(left)}% left).${hint}`),
     h("div", { class: "row" },
       checkpointPrompt(t) ? h("button", { class: "btn small", onclick: () => stageCheckpointDraft(t, true) }, "Draft checkpoint prompt") : null,
-      h("button", { class: "btn small" + (out ? " primary" : ""), onclick: go }, t.task ? "Continue with…" : "Hand off…")));
+      t.task && alt ? h("button", { class: "btn small primary", onclick: (e) => {
+        const button = e.currentTarget;
+        button.disabled = true;
+        quickHandoff(t, alt.ai).finally(() => { if (button.isConnected) button.disabled = false; });
+      } }, `Hand off to ${alt.ai}`) : null,
+      h("button", { class: "btn small" + (out && !(t.task && alt) ? " primary" : ""), onclick: go }, t.task ? "Continue with…" : "Hand off…")));
 }
 
 function continueButton(t) {

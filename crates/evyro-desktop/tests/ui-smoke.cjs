@@ -1132,6 +1132,32 @@ const FIX = {
     if (!/no usage left/.test(r.out) || !/codex has about 66%/.test(r.out)) throw new Error("banner text: " + r.out);
     if (r.fine) throw new Error("banner shown with plenty of usage left");
   });
+  await step("usage banner hands the task to the AI with the most usage left in one click", async () => {
+    await page.evaluate(() => {
+      const t = { id: "term_quick", title: "Quick handoff", kind: "agent", target: "claude-code", task: "T-1",
+        project_id: state.project.id, started_at: 1, running: true };
+      window.__terms.push(t);
+      state.threads.push(t);
+      accountQuota.set("claude-code", { state: "ready", windows: [{ remaining: 0, resets_at: Date.now() / 1000 + 3600 }], credits: null });
+      accountQuota.set("codex", { state: "ready", windows: [{ remaining: 66 }], credits: null });
+      window.__handoff = null;
+      document.body.append(Object.assign(document.createElement("div"), { id: "quick-host" }));
+      document.querySelector("#quick-host").append(quotaBanner(t));
+    });
+    await page.locator("#quick-host").getByRole("button", { name: "Hand off to codex", exact: true }).click();
+    await page.getByRole("dialog").getByText(/Anything done since that checkpoint/).waitFor();
+    await page.getByRole("button", { name: "Hand off", exact: true }).click();
+    await page.waitForFunction(() => window.__handoff && window.__handoff.to === "codex" && window.__handoff.task === "T-1" && window.__lastTermOpen && window.__lastTermOpen.target === "codex" && window.__lastTermOpen.handoffId === "hnd_continue");
+    const h = await page.evaluate(() => window.__handoff);
+    if (h.next_action !== "Write the failing test first" || h.completed.length !== 1) throw new Error("handoff did not carry the checkpoint: " + JSON.stringify(h));
+    await page.evaluate(() => {
+      document.querySelector("#quick-host").remove();
+      accountQuota.delete("claude-code"); accountQuota.delete("codex");
+      window.__terms = window.__terms.filter((t) => t.id !== "term_quick" && t.target !== "codex");
+      state.threads = state.threads.filter((t) => t.id !== "term_quick" && t.target !== "codex");
+    });
+    await page.evaluate(() => loadThreads().then(() => render()));
+  });
   await step("low usage prepares an unsent checkpoint message without replacing an existing draft", async () => {
     await page.evaluate(() => {
       const t = { id: "term_quota_probe", title: "Quota probe", kind: "agent", target: "claude-code", task: "T-1",
