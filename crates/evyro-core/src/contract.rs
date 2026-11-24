@@ -267,41 +267,55 @@ impl ContinuationContract {
                 m.push('\n');
             }
         }
+        // Everything the previous agent wrote is data: it sits in fences it cannot close, so a note
+        // cannot pose as part of this document or as an instruction.
         if !self.summary.text.is_empty() {
             m.push_str(&format!(
                 "## Summary (*{}*)\n\n{}\n\n",
                 prov(self.summary.provenance),
-                self.summary.text
+                fence_untrusted("previous-agent notes", &self.summary.text)
             ));
         }
         m.push_str("## Completed (do not redo)\n\n");
+        let mut done = String::new();
         if self.completed.is_empty() {
-            m.push_str("- Nothing recorded yet.\n");
+            done.push_str("- Nothing recorded yet.\n");
         }
         for f in &self.completed {
-            m.push_str(&format!("- {} (*{}*)\n", f.text, prov(f.provenance)));
+            done.push_str(&format!("- {} (*{}*)\n", f.text, prov(f.provenance)));
         }
-        m.push_str("\n## Remaining\n\n");
+        m.push_str(&fence_untrusted("previous-agent notes", &done));
+        m.push_str("\n\n## Remaining\n\n");
+        let mut left = String::new();
         if self.remaining.is_empty() {
-            m.push_str("- Nothing recorded. Re-read the objective and acceptance criteria.\n");
+            left.push_str("- Nothing recorded. Re-read the objective and acceptance criteria.\n");
         }
         for f in &self.remaining {
-            m.push_str(&format!("- [ ] {}\n", f.text));
+            left.push_str(&format!("- [ ] {}\n", f.text));
         }
+        m.push_str(&fence_untrusted("previous-agent notes", &left));
+        m.push('\n');
         if !self.blockers.is_empty() {
             m.push_str("\n## Blockers\n\n");
-            for b in &self.blockers {
-                m.push_str(&format!("- {}\n", b.text));
-            }
+            let blockers: String = self
+                .blockers
+                .iter()
+                .map(|b| format!("- {}\n", b.text))
+                .collect();
+            m.push_str(&fence_untrusted("previous-agent notes", &blockers));
+            m.push('\n');
         }
         m.push_str(&format!(
-            "\n## Next action\n\n{} (*{}*)\n\n",
-            if self.next_action.text.is_empty() {
-                "Inspect the current diff and continue the remaining items."
-            } else {
-                &self.next_action.text
-            },
-            prov(self.next_action.provenance)
+            "\n## Next action (*{}*)\n\n{}\n\n",
+            prov(self.next_action.provenance),
+            fence_untrusted(
+                "previous-agent notes",
+                if self.next_action.text.is_empty() {
+                    "Inspect the current diff and continue the remaining items."
+                } else {
+                    &self.next_action.text
+                }
+            )
         ));
         if !self.decisions.is_empty() {
             m.push_str("## Decisions\n\n");
@@ -376,6 +390,14 @@ impl ContinuationContract {
         }
         m
     }
+}
+
+/// Put text written by another agent inside a fence it cannot close from the inside.
+pub(crate) fn fence_untrusted(label: &str, text: &str) -> String {
+    let safe = text
+        .replace("UNTRUSTED>>>", "UNTRUSTED\u{203a}\u{203a}\u{203a}")
+        .replace("<<<UNTRUSTED", "\u{2039}\u{2039}\u{2039}UNTRUSTED");
+    format!("<<<UNTRUSTED {label}\n{}\nUNTRUSTED>>>", safe.trim())
 }
 
 fn prov(p: Provenance) -> &'static str {
