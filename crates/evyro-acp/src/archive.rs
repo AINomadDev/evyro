@@ -120,6 +120,7 @@ impl SavedChat {
 
     pub fn write(mut self, dir: &Path, id: &str) -> io::Result<Self> {
         fs::create_dir_all(dir)?;
+        private(dir, 0o700)?;
         let log = std::mem::take(&mut self.log);
         let overhead = serde_json::to_vec(&self)?.len() as u64;
         if overhead > MAX_BYTES {
@@ -148,9 +149,23 @@ impl SavedChat {
         let mut temp = tempfile::NamedTempFile::new_in(dir)?;
         serde_json::to_writer(&mut temp, &self)?;
         temp.flush()?;
-        temp.persist(dir.join(format!("{id}.json")))?;
+        let path = dir.join(format!("{id}.json"));
+        temp.persist(&path)?;
+        private(&path, 0o600)?;
         Ok(self)
     }
+}
+
+/// Transcripts can hold secrets, so only the current user may read them (Unix).
+fn private(path: &Path, mode: u32) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (path, mode);
+    Ok(())
 }
 
 pub(crate) fn load(dir: &Path) -> io::Result<HashMap<String, SavedChat>> {
@@ -261,6 +276,13 @@ mod tests {
         SavedChat::capture(json!({"id": id}), log, false)
             .write(dir.path(), &id)
             .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(dir.path()), 0o700);
+            assert_eq!(mode(&dir.path().join(format!("{id}.json"))), 0o600);
+        }
         let saved = load(dir.path()).unwrap();
         assert_eq!(saved[&id].log, vec![json!({"t": "user", "text": "hello"})]);
         assert_eq!(saved[&id].info["history_truncated"], true);
