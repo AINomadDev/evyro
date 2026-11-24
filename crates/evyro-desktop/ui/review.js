@@ -61,37 +61,39 @@ function commentForm(path, line, snippet, refresh, onCancel) {
 async function sendReviewDialog(refresh) {
   const pid = state.project.id;
   await loadThreads();
-  const running = state.threads.filter((t) => t.project_id === pid && t.running && t.kind === "agent");
-  const preview = await invoke("review_prompt_text", { projectId: pid, markSent: false });
+  if (state.project?.id !== pid) return;
+  const running = projThreads().filter((t) => t.running && (t.kind === "agent"
+    || (t.kind === "chat" && t.state === "ready" && !t.busy && !t.switching_model && !needsYou(t))));
+  const preview = await act(() => invoke("review_prompt_text", { projectId: pid }));
+  if (state.project?.id !== pid) return;
   if (!preview.count) { toast("No open comments to send."); return; }
   const sel = h("select", null,
-    running.map((t) => h("option", { value: t.id }, `${t.title} (running thread)`)),
+    running.map((t) => h("option", { value: t.id }, `${t.title} (${t.kind === "chat" ? "chat" : "terminal"})`)),
     h("option", { value: "copy" }, "Copy as a prompt for any AI"));
   modal(`Send ${preview.count} comment${preview.count === 1 ? "" : "s"}`, [
-    field("Send to", sel, running.length ? "The comments are typed into the agent's terminal as one message." : "No agent is running in a thread. Copy the prompt and paste it into any AI, or start an agent thread first."),
+    field("Send to", sel, running.length ? "Deliver the preview as one message or copy it for later." : "Copy the prompt for another AI, or start an agent thread first."),
     h("pre", { class: "rv-preview" }, preview.prompt),
   ], [{
     label: "Send", primary: true, run: async () => {
-      const r = await invoke("review_prompt_text", { projectId: pid, markSent: true });
+      if (state.project?.id !== pid) return;
       if (sel.value === "copy") {
-        await copy(r.prompt, "Review comments copied. Paste them into the AI.");
+        await copy(preview.prompt, "Review comments copied. Paste them into the AI.");
       } else {
-        // Paste like a terminal does: bracketed when the agent asked for it, so a
-        // multi-line message stays one message. Enter submits it.
-        const x = ensureXterm(sel.value);
-        await new Promise((res) => setTimeout(res, 300)); // let a fresh view load its output first
-        let bracketed = false;
-        try { bracketed = !!x.term.modes.bracketedPasteMode; } catch { /* unknown: send plain */ }
-        const text = r.prompt.replace(/\r?\n/g, "\r");
-        await invoke("term_write", { id: sel.value, data: bracketed ? "\x1b[200~" + text + "\x1b[201~" : text });
-        await new Promise((res) => setTimeout(res, 150));
-        await invoke("term_write", { id: sel.value, data: "\r" });
-        state.thread = sel.value;
+        const id = sel.value;
+        try { await sendToThread(id, preview.prompt); }
+        catch (e) { toast(errMsg(e), true); return false; }
         toast("Comments sent to the agent.");
+        await recordReviewDelivery(pid, preview.ids);
+        if (state.project?.id === pid) placeThread(id);
       }
       refresh();
     },
   }]);
+}
+
+async function recordReviewDelivery(projectId, ids) {
+  try { await invoke("review_mark_sent", { projectId, ids }); }
+  catch (e) { toast(`The agent received the comments, but Evyro could not record delivery. ${errMsg(e)}`, true); }
 }
 
 async function viewChanges(v) {

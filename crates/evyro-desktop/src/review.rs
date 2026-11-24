@@ -65,9 +65,9 @@ pub async fn delete_review_comment(id: String) -> CmdResult {
     .await
 }
 
-/// The open comments as one prompt. With `mark_sent`, they become "sent".
+/// The open comments and their IDs, captured together for delivery.
 #[tauri::command]
-pub async fn review_prompt_text(project_id: String, mark_sent: Option<bool>) -> CmdResult {
+pub async fn review_prompt_text(project_id: String) -> CmdResult {
     with_store(move |s| {
         let cs = s.list_review_comments(&project_id, &["open"])?;
         let text = if cs.is_empty() {
@@ -75,12 +75,17 @@ pub async fn review_prompt_text(project_id: String, mark_sent: Option<bool>) -> 
         } else {
             review_prompt(&cs)
         };
-        if mark_sent.unwrap_or(false) {
-            for c in &cs {
-                s.set_review_status(&c.id, "sent", "human")?;
-            }
-        }
-        Ok(json!({"prompt": text, "count": cs.len()}))
+        let ids: Vec<_> = cs.iter().map(|c| &c.id).collect();
+        Ok(json!({"prompt": text, "count": cs.len(), "ids": ids}))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn review_mark_sent(project_id: String, ids: Vec<String>) -> CmdResult {
+    with_store(move |s| {
+        s.mark_review_sent(&project_id, &ids, "human")?;
+        Ok(Value::Null)
     })
     .await
 }

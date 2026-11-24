@@ -311,6 +311,7 @@ function drawPaneAt(i, takeFocus) {
     return;
   }
   const x = ensureXterm(t.id);
+  const banner = quotaBanner(t);
   const restart = t.running ? null : restartTerminalButton(t);
   const subtitle = t.running ? ([t.target, t.task].filter(Boolean).join(" · ") || "Project shell") : "Saved output · read-only";
   el.append(h("div", { class: "thread-head" },
@@ -319,12 +320,12 @@ function drawPaneAt(i, takeFocus) {
         h("div", { class: "muted small mono", title: `${t.command} · F6 leaves the terminal` }, subtitle))),
     h("div", { class: "row" },
       t.running && t.kind === "agent" ? h("button", { class: "btn small", onclick: () => sendContext(t), title: "Paste the shared context packet into this AI" }, "Send context") : null,
-      t.running && terminalDrafts.has(t.id) ? h("button", { class: "btn small", onclick: () => loadTerminalDraft(t) }, "Load draft") : null,
+      t.running && terminalDrafts.has(t.id) ? h("button", { class: "btn small", onclick: () => loadThreadDraft(t, terminalDrafts.get(t.id)) }, "Load draft") : null,
       t.kind === "agent" ? continueButton(t) : null,
       restart,
       h("button", { class: "btn small", onclick: () => closeThread(t.id) }, t.running ? "Stop" : "Close"),
       paneRemoveBtn(t.id))),
-  ...(quotaBanner(t) ? [quotaBanner(t)] : []), x.el, seesStrip(t));
+  ...(banner ? [banner] : []), x.el, seesStrip(t));
   if (t.kind === "agent" && !t.running) offerRelease(el, t);
   if (!x.opened) { x.term.open(x.el); x.opened = true; }
   requestAnimationFrame(() => fitThread(t.id));
@@ -332,11 +333,29 @@ function drawPaneAt(i, takeFocus) {
     if (restart) restart.focus();
     else x.term.focus();
   }
+  stageCheckpointDraft(t);
 }
 
 const quotaLeft = (q) => q?.state === "ready" && q.windows?.length
   ? Math.min(...q.windows.filter((w) => !w.resets_at || w.resets_at * 1000 > Date.now()).map((w) => w.remaining))
   : null;
+
+function checkpointPrompt(t) {
+  if (!t.running || t.kind !== "agent" || !t.task) return null;
+  const quota = accountQuota.get(quotaKey(agentKey(t), t.project_id));
+  const left = quotaLeft(quota);
+  if (quota?.stale || !(left > 0 && left <= 10)) return null;
+  return `Use Evyro to save a checkpoint for ${t.task} with what is complete, what remains, and the next action. Then wait for my next message.`;
+}
+
+function stageCheckpointDraft(t, manual = false) {
+  const x = XTERMS.get(t.id);
+  const prompt = checkpointPrompt(t);
+  if (!x || !prompt) return;
+  // A PTY can be at a login, approval, or command prompt. Leave submission to the composer.
+  if (!manual && (x.checkpointStaged || state.thread !== t.id || $(".ws-input") === document.activeElement)) return;
+  if (loadThreadDraft(t, prompt, !manual)) x.checkpointStaged = true;
+}
 
 /** The other AI with the most usage left, from the readings already taken (null when none is known). */
 function bestFallback(exclude) {
@@ -362,8 +381,10 @@ function quotaBanner(t) {
   return h("div", { class: "quota-banner small" + (out ? " out" : ""), role: "status" },
     h("span", null, out
       ? `${t.title} has no usage left. Only the latest checkpoint moves to the next AI, not this conversation.${hint}`
-      : `${t.title} is low on usage (${Math.floor(left)}% left). Ask it to checkpoint its progress, then hand off if it runs out.${hint}`),
-    h("button", { class: "btn small" + (out ? " primary" : ""), onclick: go }, t.task ? "Continue with…" : "Hand off…"));
+      : `${t.title} is low on usage (${Math.floor(left)}% left).${hint}`),
+    h("div", { class: "row" },
+      checkpointPrompt(t) ? h("button", { class: "btn small", onclick: () => stageCheckpointDraft(t, true) }, "Draft checkpoint prompt") : null,
+      h("button", { class: "btn small" + (out ? " primary" : ""), onclick: go }, t.task ? "Continue with…" : "Hand off…")));
 }
 
 function continueButton(t) {
@@ -403,7 +424,9 @@ async function offerRelease(el, t) {
   if (!m || el.dataset.id !== t.id || el.querySelector(".pane-fix")) return;
   const [, key, sid, who] = m;
   const fix = async () => {
-    const r = await act(() => invoke("release_session", { projectId: state.project.id, sessionId: sid }));
+    // The session id comes from terminal output, so show it and ask first.
+    if (!(await confirmDialog(`Free ${key} from session ${sid}?`, `Only do this if that ${who} agent has stopped. If it is still working, it loses the task.`, "Free it"))) return;
+    const r = await act(() => invoke("release_session", { projectId: state.project.id, sessionId: sid, confirmed: true }));
     if (!r) return;
     toast(`Freed ${key} from the earlier ${who} session. A recovery checkpoint was saved.`);
     resumeThread(t);
@@ -529,14 +552,16 @@ function workspaceDraft(projectId) {
   return workspaceDrafts.get(projectId);
 }
 
-function loadTerminalDraft(t, quiet = false) {
+function loadThreadDraft(t, text, quiet = false) {
+  if (!text) return false;
   const draft = workspaceDraft(t.project_id);
   if (draft.text.trim() || draft.sending) {
     if (!quiet) toast("Finish the current message before loading another draft.");
     return false;
   }
-  draft.text = terminalDrafts.get(t.id);
+  draft.text = text;
   draft.recipients = [t.id];
+  draft.status = "";
   $(".ws-compose")?.dispatchEvent(new Event("delivery-updated"));
   return true;
 }
@@ -553,7 +578,7 @@ async function prepareTerminalDraft(t, handoffId) {
     }
     if (typeof text !== "string" || !text.trim() || !state.threads.some((x) => x.id === t.id)) return;
     terminalDrafts.set(t.id, text);
-    if (state.project?.id === t.project_id && state.thread === t.id) loadTerminalDraft(t, true);
+    if (state.project?.id === t.project_id && state.thread === t.id) loadThreadDraft(t, text, true);
     drawThreadPane(t.id);
   } catch { /* The terminal is ready for a message without task context. */ }
 }
@@ -566,6 +591,14 @@ function composer() {
   const to = h("div", { class: "ws-to", role: "group", "aria-label": "Send to" });
   input.value = draft.text;
   const meta = h("span", { class: "ws-meta muted small" });
+  const updateText = () => {
+    draft.text = input.value;
+    if (!draft.sending) {
+      draft.status = "";
+      status.textContent = "";
+    }
+    fit();
+  };
   const fit = () => {
     input.style.height = "auto";
     input.style.height = `${Math.min(input.scrollHeight + 2, 120)}px`;
@@ -573,10 +606,10 @@ function composer() {
     clear(meta);
     if (lines > 3 || input.value.length > 300) {
       meta.append(`${plural(lines, "line", "lines")} · ${input.value.length.toLocaleString()} characters `,
-        h("button", { class: "link-btn", type: "button", onclick: () => { draft.text = ""; input.value = ""; fit(); input.focus(); } }, "Discard"));
+        h("button", { class: "link-btn", type: "button", onclick: () => { input.value = ""; updateText(); input.focus(); } }, "Discard"));
     } else meta.append("Enter sends · Shift+Enter adds a line");
   };
-  input.addEventListener("input", () => { draft.text = input.value; fit(); });
+  input.addEventListener("input", updateText);
   const drawTo = () => {
     const running = projThreads().filter((t) => t.running && t.kind !== "shell");
     const sel = running.filter((t) => !draft.recipients || draft.recipients.includes(t.id)).map((t) => t.id);
@@ -692,6 +725,12 @@ async function drawContext() {
   // Task ownership can change from inside an agent, so refresh the thread list too.
   const side = $("#side-threads");
   if (side && !side.contains(document.activeElement)) drawThreadList();
+  if (state.view === "workspace") {
+    for (const t of projThreads()) {
+      const ai = agentKey(t);
+      if (t.running && t.kind === "agent" && t.task && canReadQuota(ai)) refreshQuota(ai, pid);
+    }
+  }
   const body = $("#ctx-body");
   // Do not pull a control out from under someone using it.
   if (!state.ctxOpen || body.contains(document.activeElement)) return;
@@ -794,11 +833,23 @@ function refreshQuota(ai, projectId, force = false) {
     if (state.project?.id !== projectId) return;
     const el = document.querySelector(`.ctx-quota[data-ai="${CSS.escape(ai)}"]`);
     if (el) drawQuota(el, q);
-    // Show or clear the out-of-usage banner on this AI's panes.
+    // Update the banners and fallback suggestions without detaching live terminals.
     for (const t of state.threads) {
-      if (t.project_id !== projectId || !t.running || t.kind !== "agent" || agentKey(t) !== ai) continue;
+      if (t.project_id !== projectId || !t.running || t.kind !== "agent") continue;
+      const x = XTERMS.get(t.id);
+      if (x && agentKey(t) === ai) {
+        const left = quotaLeft(q);
+        if (!q.stale && Number.isFinite(left) && left > 10) x.checkpointStaged = false;
+      }
       const pane = document.querySelector(`.ws-grid > .pane[data-id="${CSS.escape(t.id)}"]`);
-      if (pane && !!pane.querySelector(".quota-banner") !== !!quotaBanner(t)) drawThreadPane(t.id);
+      if (!pane || x?.el.parentElement !== pane) continue;
+      const old = pane.querySelector(".quota-banner");
+      const banner = quotaBanner(t);
+      if (old?.textContent !== banner?.textContent) {
+        if (banner) pane.insertBefore(banner, x.el);
+        old?.remove();
+      }
+      if (agentKey(t) === ai) stageCheckpointDraft(t);
     }
   };
   if (!accountQuota.has(key)) update({ state: "loading" });
@@ -999,9 +1050,10 @@ async function ctxChanges() {
 }
 async function sendOpenNotes() {
   const projectId = state.project.id;
-  const r = await act(() => invoke("review_prompt_text", { projectId, markSent: false }));
+  const r = await act(() => invoke("review_prompt_text", { projectId }));
+  if (!r.count) { toast("No open review notes to send."); return; }
   if (state.project?.id === projectId && await sendToFocused(r.prompt, "review notes")) {
-    await invoke("review_prompt_text", { projectId, markSent: true }).catch(() => {});
+    await recordReviewDelivery(projectId, r.ids);
     drawContext();
   }
 }

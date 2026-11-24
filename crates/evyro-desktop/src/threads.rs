@@ -19,7 +19,7 @@ fn bad(e: impl std::fmt::Display) -> Value {
 
 /// The `evyro` CLI next to the app binary if it is there, otherwise the name,
 /// left for the login shell's PATH to find.
-fn evyro_cli() -> String {
+pub(crate) fn evyro_cli() -> String {
     let exe = if cfg!(windows) { "evyro.exe" } else { "evyro" };
     std::env::current_exe()
         .ok()
@@ -29,7 +29,26 @@ fn evyro_cli() -> String {
         .unwrap_or_else(|| brand::CLI_NAME.to_string())
 }
 
-fn quote(s: &str, windows: bool) -> String {
+/// Environment for a thread: the folder holding `evyro_cli()` goes first on
+/// PATH, so an agent can run `evyro context` and other commands by name.
+fn thread_env(cli: &str) -> Vec<(String, String)> {
+    let Some(dir) = std::path::Path::new(cli)
+        .parent()
+        .filter(|d| !d.as_os_str().is_empty())
+    else {
+        return vec![];
+    };
+    let mut parts = vec![dir.to_path_buf()];
+    if let Some(p) = std::env::var_os("PATH") {
+        parts.extend(std::env::split_paths(&p).filter(|x| x != dir));
+    }
+    match std::env::join_paths(parts) {
+        Ok(p) => vec![("PATH".into(), p.to_string_lossy().into_owned())],
+        Err(_) => vec![],
+    }
+}
+
+pub(crate) fn quote(s: &str, windows: bool) -> String {
     if windows {
         format!("\"{}\"", s.replace('"', "\"\""))
     } else {
@@ -66,34 +85,52 @@ pub async fn term_open(
     target: Option<String>,
     task: Option<String>,
     handoff_id: Option<String>,
+    title: Option<String>,
+    resume_id: Option<String>,
+    credit_budget: Option<u32>,
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> CmdResult {
     let t2 = target.clone();
+    let task_root = (kind == "agent").then(|| task.clone()).flatten();
     let resolved = with_store(move |s| {
         let p = s.get_project(&project_id)?;
-        let name = match t2.as_deref().filter(|t| !t.is_empty()) {
-            Some(t) => Some(targets::resolve_target(&s.paths, t)?.name),
+        let root = match task_root {
+            Some(key) => s.task_root(&s.resolve_task(&project_id, &key)?)?,
+            None => p.root(),
+        };
+        let target = match t2.as_deref().filter(|t| !t.is_empty()) {
+            Some(t) => Some(targets::resolve_target(&s.paths, t)?),
             None => None,
         };
-        Ok(json!({"root": p.root().to_string_lossy(), "project_id": p.id, "target": name}))
+        Ok(json!({"root": root.to_string_lossy(), "project_id": p.id,
+            "target": target.as_ref().map(|t| &t.name), "harness": target.and_then(|t| t.effective_harness())}))
     })
     .await?;
     let root = PathBuf::from(resolved["root"].as_str().unwrap_or("."));
     let pid = resolved["project_id"].as_str().map(String::from);
     let target = resolved["target"].as_str().map(String::from);
+    if credit_budget
+        .is_some_and(|limit| limit < 30 || resolved["harness"] != "copilot" || kind != "agent")
+    {
+        return Err(bad(
+            "Copilot thread budgets must be at least 30 AI credits.",
+        ));
+    }
 
-    let (program, args, title) = if kind == "agent" {
+    let cli = evyro_cli();
+    let (program, args, default_title) = if kind == "agent" {
         let Some(t) = target.as_deref() else {
             return Err(json!({"code": "invalid_input", "message": "choose an AI to start"}));
         };
-        let line = agent_line(
-            &evyro_cli(),
+        let mut line = agent_line(
+            &cli,
             t,
             task.as_deref(),
             handoff_id.as_deref(),
             cfg!(windows),
         );
+        line.push_str(&format!(" --prompt {}", quote("", cfg!(windows))));
         let (p, a) = shell_command(Some(&line));
         let title = match task.as_deref().filter(|k| !k.is_empty()) {
             Some(k) => format!("{t} on {k}"),
@@ -105,37 +142,64 @@ pub async fn term_open(
         (p, a, "Shell".to_string())
     };
 
+    let custom_title = title
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    if custom_title
+        .as_ref()
+        .is_some_and(|s| s.chars().count() > 80 || s.chars().any(char::is_control))
+    {
+        return Err(bad(
+            "Use a thread name of at most 80 characters on one line.",
+        ));
+    }
     let spec = Spawn {
         program,
         args,
         cwd: root,
-        env: vec![],
+        env: thread_env(&cli),
         cols: cols.unwrap_or(100),
         rows: rows.unwrap_or(30),
-        title,
+        title: custom_title.unwrap_or(default_title),
         kind,
         target,
         task: task.filter(|k| !k.is_empty()),
         project_id: pid,
+        credit_budget,
     };
     let (a1, a2) = (app.clone(), app);
-    let info = terms
-        .open(
-            spec,
-            Arc::new(move |id, data, end| {
-                let _ = a1.emit("term-output", json!({"id": id, "data": data, "end": end}));
-            }),
-            Arc::new(move |id, code| {
-                let _ = a2.emit("term-exit", json!({"id": id, "code": code}));
-            }),
-        )
-        .map_err(bad)?;
+    let exit_terms = Arc::clone(&terms);
+    let on_output: evyro_term::OnOutput = Arc::new(move |id, data, end| {
+        let _ = a1.emit("term-output", json!({"id": id, "data": data, "end": end}));
+    });
+    let on_exit: evyro_term::OnExit = Arc::new(move |id, code| {
+        let _ = a2.emit(
+            "term-exit",
+            json!({"id": id, "code": code, "credits_used": exit_terms.credits_used(id)}),
+        );
+    });
+    let info = match resume_id {
+        Some(id) => terms.resume(&id, spec, on_output, on_exit),
+        None => terms.open(spec, on_output, on_exit),
+    }
+    .map_err(bad)?;
     Ok(json!(info))
 }
 
 #[tauri::command]
 pub fn term_list(terms: State<'_, Terms>) -> CmdResult {
-    Ok(json!(terms.list()))
+    let rows: Vec<_> = terms
+        .list()
+        .into_iter()
+        .map(|t| {
+            let mut row = json!(t);
+            if t.credit_budget.is_some() {
+                row["credits_used"] = json!(terms.credits_used(&t.id));
+            }
+            row
+        })
+        .collect();
+    Ok(json!(rows))
 }
 
 #[tauri::command]
@@ -151,7 +215,11 @@ pub fn term_resize(terms: State<'_, Terms>, id: String, cols: u16, rows: u16) ->
 }
 
 #[tauri::command]
-pub fn term_snapshot(terms: State<'_, Terms>, id: String) -> CmdResult {
+pub fn term_snapshot(terms: State<'_, Terms>, id: String, attach: Option<bool>) -> CmdResult {
+    if attach == Some(true) {
+        let snap = terms.attach_snapshot(&id).map_err(bad)?;
+        return Ok(json!({"data": snap.data, "live": snap.live, "end": snap.end}));
+    }
     let (data, end) = terms.snapshot(&id).map_err(bad)?;
     Ok(json!({"data": data, "end": end}))
 }
@@ -165,6 +233,18 @@ pub fn term_close(terms: State<'_, Terms>, id: String) -> CmdResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn thread_env_puts_the_cli_folder_first_on_path() {
+        let dir = std::env::temp_dir().join("evyro-bin");
+        let cli = dir.join("evyro");
+        let env = thread_env(&cli.to_string_lossy());
+        let path = &env.iter().find(|(k, _)| k == "PATH").unwrap().1;
+        let first = std::env::split_paths(path).next().unwrap();
+        assert_eq!(first, dir);
+        // A bare name (found on PATH by the shell) changes nothing.
+        assert!(thread_env("evyro").is_empty());
+    }
 
     #[test]
     fn agent_line_quotes_for_each_shell() {

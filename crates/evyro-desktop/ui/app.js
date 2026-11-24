@@ -398,12 +398,14 @@ async function viewTasks(v) {
   v.append(head);
   const board = h("div", { class: "board" });
   v.append(board);
+  const canRefresh = () => board.isConnected && state.project?.id === pid && !board.contains(document.activeElement);
   const draw = async () => {
+    if (!canRefresh()) return;
     let rows;
     await loadThreads();
     try { rows = await invoke("list_tasks", { projectId: pid, includeClosed: true }); }
-    catch (e) { clear(board).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
-    if (!board.isConnected || state.project.id !== pid) return;
+    catch (e) { if (canRefresh()) clear(board).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
+    if (!canRefresh()) return;
     clear(board);
     for (const [st, label] of COLUMNS) {
       const items = rows.filter((r) => r.task.status === st);
@@ -415,7 +417,7 @@ async function viewTasks(v) {
     if (other.length) board.append(h("div", { class: "column" }, h("div", { class: "column-head" }, h("span", null, "Closed"), h("span", null, other.length)), other.map(taskCard)));
   };
   await draw();
-  state.timer = setInterval(draw, 5000);
+  if (board.isConnected) state.timer = setInterval(draw, 5000);
 }
 
 function taskCard(r) {
@@ -558,6 +560,7 @@ async function openTask(key) {
   body.append(h("h3", null, "Actions"));
   body.append(h("div", { class: "row" },
     h("button", { class: "btn small", onclick: () => runVerify(t.key, refresh) }, "Run tests"),
+    h("button", { class: "btn small", onclick: () => openComparison(t) }, "Compare agents"),
     h("button", { class: "btn small", onclick: () => handoffDialog(t.key) }, "Hand off"),
     h("button", { class: "btn small", onclick: () => copyContext(t.key) }, "Copy context"),
     h("button", { class: "btn small", onclick: () => copy(`evyro run --agent claude-code --task ${t.key}`, "Command copied") }, "Copy run command")));
@@ -1011,7 +1014,11 @@ function onLiveEvents(evs) {
     || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
   if (busy) return;
   clearTimeout(liveTimer);
-  liveTimer = setTimeout(() => render(), 300);
+  const view = state.view;
+  const projectId = state.project.id;
+  liveTimer = setTimeout(() => {
+    if (state.view === view && state.project?.id === projectId && !document.activeElement?.closest(".board")) render();
+  }, 300);
 }
 async function updateLiveBadge() {
   const b = $("#live-badge");
@@ -1039,6 +1046,7 @@ async function paletteActions() {
     acts.push({ label: "Go to file", hint: `${MOD} P`, run: () => openSearch("files") });
     acts.push({ label: "Search in code", hint: `${MOD} ⇧ F`, run: () => openSearch("text") });
     acts.push({ label: "Go to symbol", hint: `${MOD} ⇧ O`, run: () => openSearch("symbols") });
+    acts.push({ label: "Search saved chats", run: () => openSearch("chats") });
     acts.push({ label: "New chat with an AI (ACP)", run: () => { setTab("threads"); newChatDialog(); } });
     acts.push({ label: "Copy context for an agent", run: () => copyContext(null) });
     acts.push({ label: "Layout: one pane", run: () => { setTab("workspace"); setLayout(1); } });

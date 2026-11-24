@@ -74,7 +74,8 @@ const FIX = {
   },
   list_tasks: [{ task, criteria_met: 0, criteria_total: 1, owner: "claude-code", blocked_by: [] }],
   // The shared-context panel reads the active task's criteria; their shape comes from the real CLI.
-  task_detail: { task, criteria: evj("task", "show", "T-1").acceptance, dependencies: [], blocked_by: [], owner: null, allowed_next: ["in_review", "blocked"] },
+  task_detail: { task, criteria: evj("task", "show", "T-1").acceptance, dependencies: [], blocked_by: [], owner: null,
+    verifications: [], checkpoints: [], comments: [], allowed_next: ["in_review", "blocked"] },
   repo_changes: { files: [{ path: "app.txt", status: " M" }, { path: "new.rs", status: "??" }],
     diff: "diff --git a/app.txt b/app.txt\nindex 1..2 100644\n--- a/app.txt\n+++ b/app.txt\n@@ -1 +1,2 @@\n one\n+two\n", redactions: 0, truncated: false },
   list_handoffs: evj("handoffs"),
@@ -116,6 +117,33 @@ const FIX = {
           window.__mockLog(cmd);
           if (cmd === "list_sessions" && window.__sessions) return window.__sessions;
           if (cmd in fix) return JSON.parse(JSON.stringify(fix[cmd]));
+          if (cmd === "comparison_list") return window.__comparisons || [];
+          if (cmd === "comparison_create") {
+            const run = { id: "cmp_fixture", base: "abcd1234ef002102abfe", preferred: null,
+              candidates: args.targets.map((target, i) => ({ key: `T-${i + 2}`, target, worktree: `/scratch/comparison/${i}`, branch: `feature/compare-fixture-${i}` })) };
+            (window.__comparisons ||= []).push(run);
+            return run;
+          }
+          if (cmd === "comparison_results") return { comparison: window.__comparisons.find((r) => r.id === args.id), results: [
+            { status: "in_review", running: false, diff: "+first candidate", verification: { passed: true, command: ["cargo", "test"] } },
+            { status: "in_progress", running: false, diff: "+second candidate", verification: { passed: false, command: ["cargo", "test"] }, verification_current: false },
+          ] };
+          if (cmd === "comparison_prefer") { window.__comparisons.find((r) => r.id === args.id).preferred = args.candidate; return null; }
+          if (cmd === "comparison_preview_stage") {
+            if (window.__blockStagePreview) throw new Error("Commit or set aside changes in the destination checkout before staging");
+            return window.__stagePlan = {
+              candidate: window.__comparisons.find((r) => r.id === args.id).preferred, candidate_commit: "cd5d5e123456789",
+              destination: "/scratch/my-app", destination_branch: "main", destination_commit: "abcd1234ef002102abfe",
+              files: ["app.txt", "image.bin"],
+            };
+          }
+          if (cmd === "comparison_stage") {
+            if (JSON.stringify(args.plan) !== JSON.stringify(window.__stagePlan) || args.id !== "cmp_fixture" || args.task !== "T-1") {
+              throw new Error("Stage did not receive the reviewed plan");
+            }
+            window.__staged = args.plan.candidate;
+            return null;
+          }
           if (cmd === "add_target") return args.target;
           // Skills: the real list, with on/off kept in memory.
           const sk = (window.__skills = window.__skills || fix.skills_list);
@@ -132,6 +160,7 @@ const FIX = {
           if (cmd === "remote_status") return rm.running ? { running: true, url: "http://" + rm.host + ":" + rm.port + "/", reach: "loopback" } : { running: false };
           if (cmd === "remote_start") { Object.assign(rm, { running: true, host: args.host, port: args.port }); return { running: true }; }
           if (cmd === "remote_tailscale") {
+            if (rm.public) return { state: "public" };
             if (args.enable) rm.private = true;
             return rm.private ? { state: "ready", url: "https://mac.test-tailnet.ts.net:8443/" } : { state: "setup", port: rm.port, https_port: 8443 };
           }
@@ -156,12 +185,17 @@ const FIX = {
             const open = rv.filter((c) => c.status === "open");
             const prompt = open.map((c, i) => `${i + 1}. ${c.path}${c.line ? ":" + c.line : ""}\n   ${c.body}`).join("\n");
             if (args.markSent) open.forEach((c) => (c.status = "sent"));
-            return { prompt, count: open.length };
+            return { prompt, count: open.length, ids: open.map((c) => c.id) };
+          }
+          if (cmd === "review_mark_sent") {
+            rv.filter((c) => c.project_id === args.projectId && c.status === "open" && args.ids.includes(c.id)).forEach((c) => (c.status = "sent"));
+            return null;
           }
           // Terminals: a stand-in that echoes input back, like a PTY would.
           const terms = (window.__terms = window.__terms || []);
           if (cmd === "context_packet") return { text: "Terminal task context draft", packet: { approx_tokens: 5 } };
           if (cmd === "agent_quota") {
+            if (window.__quotaOverrides?.[args.target]) return window.__quotaOverrides[args.target];
             if (args.target === "codex") return { state: "ready", windows: [{ remaining: 73, minutes: 300 }], credits: null, observed_at: new Date().toISOString(), stale: true };
             if (args.target === "antigravity-cli") return { state: "ready", windows: [{ label: "Gemini", remaining: 26, minutes: 300 }], credits: null, observed_at: new Date().toISOString(), source: "Antigravity CLI" };
             if (args.target === "claude-code") return { state: "setup", capture_command: "evyro capture-usage claude-code" };
@@ -180,6 +214,7 @@ const FIX = {
           };
           if (cmd === "term_list") return JSON.parse(JSON.stringify(terms));
           if (cmd === "term_open") {
+            window.__lastTermOpen = args;
             const earlier = terms.find((t) => t.id === args.resumeId);
             const t = { id: earlier?.id || "term_" + (terms.length + 1), title: args.title || (args.kind === "agent" ? `${args.target} on ${args.task}` : "Shell"), kind: args.kind,
               target: args.target, task: args.task, project_id: args.projectId, cwd: "/repo", command: "evyro run", started_at: earlier?.started_at || Math.floor(Date.now() / 1000), running: true, exit_code: null };
@@ -195,11 +230,13 @@ const FIX = {
             return t;
           }
           if (cmd === "term_snapshot") {
+            const startup = window.__startupSnapshots?.[args.id];
+            if (startup) return args.attach ? startup : { data: startup.data + startup.live, end: startup.end };
             const d = (window.__snap || {})[args.id];
             if (d !== undefined) return { data: d, end: d.length };
             return terms.some((t) => t.id === args.id && /^(term_9|term_own)$/.test(t.id)) ? { data: "\x1b[?2004h", end: 8 } : { data: "", end: 0 };
           }
-          if (cmd === "release_session") { window.__released = args.sessionId; return { session_id: args.sessionId, harness: "claude-code", checkpoint_id: "chk_1", changed_since_last_checkpoint: [] }; }
+          if (cmd === "release_session") { window.__released = args.confirmed === true ? args.sessionId : "unconfirmed"; return { session_id: args.sessionId, harness: "claude-code", checkpoint_id: "chk_1", changed_since_last_checkpoint: [] }; }
           if (cmd === "term_resize") return null;
           if (cmd === "term_write") {
             if (window.__rejectWrite === args.id) throw { message: "Test recipient is unavailable" };
@@ -217,6 +254,15 @@ const FIX = {
             { harness: "gemini", display_name: "Gemini CLI", command: null, install: "npm install -g @google/gemini-cli", evidence: "" },
             { harness: "antigravity-cli", command: "agy" }, { harness: "opencode", command: "opencode" }];
           if (cmd === "chat_list") return Object.values(chats).map((c) => JSON.parse(JSON.stringify(c.info)));
+          if (cmd === "chat_search_saved") {
+            const query = args.query.toLowerCase();
+            return Object.values(chats).filter(({ info }) => info.archived && info.project_id === args.projectId).flatMap(({ info, log }) =>
+              log.flatMap((item, message_index) => {
+                const excerpt = item.t === "user" ? item.text
+                  : item.update?.sessionUpdate === "agent_message_chunk" ? item.update.content.text : "";
+                return typeof excerpt === "string" && excerpt.toLowerCase().includes(query) ? [{ id: info.id, title: info.title, message_index, excerpt }] : [];
+              }));
+          }
           if (cmd === "chat_log") return JSON.parse(JSON.stringify({ info: chats[args.id].info, log: chats[args.id].log, draft: chats[args.id].info.draft_available ? "Draft for the rate limit task" : null }));
           if (cmd === "chat_open") {
             const id = "chat_" + (Object.keys(chats).length + 1);
@@ -271,7 +317,11 @@ const FIX = {
             return null;
           }
           if (cmd === "chat_cancel") return null;
-          if (cmd === "chat_close") { delete chats[args.id]; return null; }
+          if (cmd === "chat_close") {
+            if (args.forget === false) Object.assign(chats[args.id].info, { running: false, busy: false, waiting: 0, archived: true, draft_available: false });
+            else delete chats[args.id];
+            return null;
+          }
           throw { code: "not_mocked", message: `no fixture for ${cmd}` };
         },
       },
@@ -348,12 +398,21 @@ const FIX = {
     await page.waitForSelector("text=1 open comment");
     await page.click("text=Send comments to agent");
     await page.waitForSelector(".rv-preview >> text=app.txt:2");
+    await page.evaluate(() => { window.__rejectWrite = "term_9"; });
+    try {
+      await page.click(".modal .btn.primary");
+      await page.waitForSelector(".modal .btn.primary:enabled");
+      if (await page.evaluate(() => window.__rv.some((c) => c.status === "sent"))) throw new Error("a failed delivery marked the review note as sent");
+    } finally { await page.evaluate(() => { window.__rejectWrite = null; }); }
+    await page.evaluate(() => invoke("add_review_comment", { projectId: state.project.id, path: "app.txt", body: "Check behavior after reload" }));
     await page.click(".modal .btn.primary");
     await page.waitForSelector(".modal", { state: "detached" });
     await page.waitForFunction(() => window.__lastTermWrite && window.__lastTermWrite.includes("Read the limit from config"));
     await page.waitForSelector(".rv-comment.sent");
-    await page.click(".rv-comment >> text=Resolve");
-    await page.waitForSelector(".rv-comment", { state: "detached" });
+    if (await page.evaluate(() => window.__rv.find((c) => c.body === "Check behavior after reload").status !== "open"
+      || window.__lastTermWrite.includes("Check behavior after reload"))) throw new Error("a late note was included in the earlier review batch");
+    await page.click(".rv-comment.sent >> text=Resolve");
+    await page.waitForSelector(".rv-comment.sent", { state: "detached" });
   });
   await step("chat thread over ACP: plan, permission, diff, reply", async () => {
     await tab("workspace");
@@ -386,9 +445,31 @@ const FIX = {
     await tab("workspace");
     await page.click(".thread-item >> text=chat");
     await page.waitForSelector(".chat-msg.agent >> text=You said: thanks");
+    await tab("changes");
+    await page.click("text=Send comments to agent");
+    await page.getByLabel("Send to").selectOption(chatId);
+    await page.click(".modal .btn.primary");
+    await page.waitForSelector(".rv-comment.sent >> text=Check behavior after reload");
+    await page.click(".rv-comment.sent >> text=Resolve");
+    await page.waitForSelector(".rv-comment.sent", { state: "detached" });
+    await tab("workspace");
+    await page.waitForSelector(".chat-msg.agent >> text=Check behavior after reload");
     await page.click("text=End chat");
     await page.click(".modal >> text=Stop it");
     await page.waitForFunction(() => !document.querySelector(".chat"));
+    await page.locator("#search-btn").click();
+    await page.getByRole("tab", { name: "Saved chats" }).click({ timeout: 3000 });
+    await page.getByRole("textbox", { name: "Search", exact: true }).fill("you said: thanks");
+    await page.waitForSelector(".search-row mark >> text=You said: thanks");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".chat-search-hit:focus >> text=You said: thanks");
+    if (await page.locator(".chat-input, .chat-send, .chat-perm.open").count()) throw new Error("saved chat still offers live controls");
+    await page.getByRole("button", { name: "Delete transcript", exact: true }).click();
+    await page.locator(".modal").getByRole("button", { name: "Delete transcript", exact: true }).click();
+    await page.waitForSelector(".thread-item:has-text('saved chat')", { state: "detached" });
+    await page.locator("#search-btn").click();
+    await page.waitForSelector(".search-status >> text=No matches in saved chats");
+    await page.keyboard.press("Escape");
   });
 
   // ---------- multi-AI workspace ----------
@@ -418,7 +499,7 @@ const FIX = {
     await page.waitForSelector(".side-group >> text=Ended");
     await page.waitForSelector("#statusbar >> text=2 AIs running");
     // A missing value must never show up as the word "null" or "undefined".
-    const stray = await page.evaluate(() => [".ws", "#ctx", "#statusbar", "#side-threads"].map((q) => document.querySelector(q).innerText).join("\n").match(/\b(null|undefined)\b/));
+    const stray = await page.evaluate(() => [".ws", "#ctx", "#statusbar", "#side-threads"].map((q) => document.querySelector(q).innerText).join("\n").match(/[^\n]*\b(?:null|undefined)\b[^\n]*/));
     if (stray) throw new Error(`"${stray[0]}" shown in the window`);
     // Same for a project with no checkpoint yet.
     const strip = await page.evaluate(() => {
@@ -451,6 +532,7 @@ const FIX = {
     await page.waitForSelector(".pane-fix >> text=Free T-1 and retry");
     const before = await page.evaluate(() => window.__terms.length);
     await page.click(".pane-fix >> text=Free T-1 and retry");
+    await page.getByRole("button", { name: "Free it", exact: true }).click();
     await page.waitForFunction((n) => window.__released === "ses_01dead" && window.__terms.length === n && window.__terms.some((t) => t.id === "term_old_1" && t.running), before);
     const started = await page.evaluate(() => window.__terms.find((t) => t.id === "term_old_1"));
     if (started.target !== "codex" || started.task !== "T-1") throw new Error("retried as " + JSON.stringify(started));
@@ -578,6 +660,7 @@ const FIX = {
     await page.waitForSelector(".ws-send-status >> text=Review Copilot's folder trust prompt");
     if ((await page.inputValue(".ws-input")) !== "Wait for folder trust" || (await page.evaluate(() => window.__writes.length))) throw new Error("trust prompt received composer input");
     await page.fill(".ws-input", "");
+    await page.waitForSelector(".ws-send-status", { state: "hidden" });
     await page.evaluate(() => { window.__terms = window.__terms.filter((t) => t.id !== "term_trust"); render(); });
   });
   await step("layouts: adjustable pane count and columns", async () => {
@@ -668,6 +751,19 @@ const FIX = {
     await page.click(".task-card.live .card-ai >> text=Open");
     await page.waitForSelector('.tab.active[data-view="workspace"]');
   });
+  await step("a task card keeps keyboard focus through a live refresh", async () => {
+    await tab("tasks");
+    const card = page.locator(".task-card.live").first();
+    await card.focus();
+    await page.waitForTimeout(5300);
+    if (!(await card.evaluate((el) => document.activeElement === el))) throw new Error("the Tasks board poll dropped keyboard focus");
+    await page.evaluate(() => window.__emit("evyro-events", [{ project_id: state.project.id, kind: "task.updated" }]));
+    await page.waitForTimeout(450);
+    if (!(await card.evaluate((el) => document.activeElement === el))) throw new Error("a live task event dropped keyboard focus");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector("#drawer:not(.hidden) #drawer-body >> text=429 after 100 a minute");
+    await page.keyboard.press("Escape");
+  });
   await step("skills: read one, turn it off, sync to an agent", async () => {
     await tab("skills");
     await page.waitForSelector(".skill-row >> text=debugging");
@@ -729,10 +825,18 @@ const FIX = {
     await page.getByRole("button", { name: "Check private address" }).click();
     await page.getByRole("button", { name: "Enable private address" }).click();
     await page.waitForSelector("text=https://mac.test-tailnet.ts.net:8443/");
-    await page.click("text=+ Pair a device");
+    await page.getByRole("button", { name: "Pair over Tailscale" }).click({ timeout: 3000 });
     await page.fill(".modal input[type=text]", "My phone");
+    await page.evaluate(() => { window.__rm.public = true; });
+    await page.click(".modal .actions .btn.primary");
+    await page.waitForSelector(".toast >> text=The private address changed");
+    if (await page.evaluate(() => window.__rm.devices.length)) throw new Error("a pairing code was created for a public route");
+    await page.evaluate(() => { window.__rm.public = false; });
     await page.click(".modal .actions .btn.primary");
     await page.waitForSelector(".modal .pair-code >> text=K7QM-4XPZ");
+    await page.waitForSelector(".modal >> text=https://mac.test-tailnet.ts.net:8443/");
+    await page.getByRole("button", { name: "Copy pairing code" }).waitFor();
+    await page.getByRole("dialog", { name: "Pairing code" }).getByRole("button", { name: "Copy address", exact: true }).waitFor();
     await page.click(".modal .actions .btn");
     await page.waitForSelector(".list li:has-text('My phone') .pill:text-is('waiting')");
     await page.click(".list li:has-text('My phone') >> text=Revoke");
@@ -939,6 +1043,81 @@ const FIX = {
     const sent = await page.evaluate(() => window.__writes.filter((w) => w.id === "term_reply_probe"));
     if (sent.length) throw new Error("replay answered terminal queries: " + JSON.stringify(sent));
   });
+  await step("a live startup query in the snapshot gets one reply", async () => {
+    const replies = await page.evaluate(async () => {
+      const id = "term_startup_probe";
+      const data = "\x1b[4;7H\x1b[6n";
+      const live = "\x1b[2;5H\x1b[6n";
+      const end = data.length + live.length;
+      window.__startupSnapshots = { [id]: { data, live, end } };
+      window.__writes = [];
+      state.threads.push({ id, title: "Startup probe", kind: "shell", project_id: state.project.id, running: true });
+      const x = ensureXterm(id);
+      threadOutput({ id, data: live, end }); // Same bytes also arrived through the event stream.
+      await x.loaded;
+      await new Promise((resolve) => x.term.write("", resolve));
+      return window.__writes.filter((w) => w.id === id).map((w) => w.data);
+    });
+    if (replies.length !== 1 || replies[0] !== "\x1b[2;5R") throw new Error(`expected one live cursor reply, got ${JSON.stringify(replies)}`);
+  });
+  await step("Tasks board wraps with shared context open", async () => {
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.evaluate(() => { setCtxOpen(true); setTab("tasks"); });
+    await page.waitForSelector(".board .column:last-child");
+    const fits = await page.locator(".board").evaluate((board) => board.scrollWidth <= board.clientWidth
+      && board.lastElementChild.offsetTop > board.firstElementChild.offsetTop
+      && board.firstElementChild.offsetHeight < 70);
+    if (!fits) throw new Error("Tasks board overflows with the context panel open");
+    await page.setViewportSize({ width: 1300, height: 860 });
+  });
+  await step("shared context leaves workspace controls clickable at the minimum window width", async () => {
+    await page.setViewportSize({ width: 900, height: 600 });
+    await page.evaluate(() => { setCtxOpen(true); setTab("workspace"); });
+    await page.waitForSelector(".ws-compose");
+    const blocked = [];
+    const prior = await page.evaluate(() => {
+      const { sidebarWidth, inspectorWidth, inspectorSide } = appearance();
+      saveAppearance({ sidebarWidth: 360, inspectorWidth: 520 });
+      return { sidebarWidth, inspectorWidth, inspectorSide };
+    });
+    for (const inspectorSide of ["right", "left"]) {
+      await page.evaluate((side) => saveAppearance({ inspectorSide: side }), inspectorSide);
+      if (process.env.EVYRO_SHOTS) await page.screenshot({ path: path.join(process.env.EVYRO_SHOTS, `workspace-900-${inspectorSide}.png`) });
+      await page.fill(".ws-input", "First line\nSecond line\nThird line\nFourth line");
+      if (inspectorSide === "left") await page.evaluate(() => toast("Delivery status is visible while you compose. ".repeat(8)));
+      const covered = await page.evaluate(() => ["#ctx-btn", "#search-btn", ".ws-layout input", ".ws-compose-foot .primary", ".ws-meta .link-btn"].filter((selector) => {
+        const el = document.querySelector(selector);
+        const { x, y, width, height } = el.getBoundingClientRect();
+        return !el.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+      }));
+      if (covered.length) blocked.push(`${inspectorSide}: ${covered.join(", ")}`);
+      const aligned = await page.locator(".ws-compose-foot > .row").evaluate((row) => row.firstElementChild.offsetTop === row.lastElementChild.offsetTop);
+      if (!aligned) blocked.push(`${inspectorSide}: composer actions wrap`);
+      if (!covered.includes(".ws-meta .link-btn")) await page.getByRole("button", { name: "Discard", exact: true }).click();
+    }
+    await page.evaluate(save => saveAppearance(save), prior);
+    await page.setViewportSize({ width: 1300, height: 860 });
+    if (blocked.length) throw new Error(`workspace controls are unreachable at 900px (${blocked.join("; ")})`);
+  });
+  await step("saved output keeps its recorded width in a narrower pane", async () => {
+    await page.evaluate(() => {
+      window.__terms.push({ id: "term_size_probe", title: "Saved size probe", kind: "shell", project_id: state.project.id,
+        started_at: 1, running: false, cols: 180, rows: 30 });
+      window.__snap.term_size_probe = "x".repeat(150);
+      setTab("workspace"); placeThread("term_size_probe"); render();
+    });
+    await page.waitForSelector('.pane[data-id="term_size_probe"] .xterm');
+    const result = await page.evaluate(async () => {
+      const x = XTERMS.get("term_size_probe");
+      await x.loaded;
+      fitThread("term_size_probe");
+      return { cols: x.term.cols, rows: x.term.rows,
+        line: x.term.buffer.active.getLine(0).translateToString(true), scrollable: x.el.scrollWidth > x.el.clientWidth };
+    });
+    if (result.cols !== 180 || result.rows !== 30 || result.line.length !== 150 || !result.scrollable) {
+      throw new Error("saved output did not keep its size in a scrollable pane");
+    }
+  });
   await step("usage banner offers a handoff and names the AI with the most usage left", async () => {
     const r = await page.evaluate(() => {
       const t = { id: "q1", project_id: state.project.id, running: true, kind: "agent", target: "claude-code", title: "claude-code", task: "T-1" };
@@ -952,6 +1131,90 @@ const FIX = {
     });
     if (!/no usage left/.test(r.out) || !/codex has about 66%/.test(r.out)) throw new Error("banner text: " + r.out);
     if (r.fine) throw new Error("banner shown with plenty of usage left");
+  });
+  await step("low usage prepares an unsent checkpoint message without replacing an existing draft", async () => {
+    await page.evaluate(() => {
+      const t = { id: "term_quota_probe", title: "Quota probe", kind: "agent", target: "claude-code", task: "T-1",
+        project_id: state.project.id, started_at: 1, running: true };
+      window.__terms.push(t);
+      state.threads.push(t);
+      setCtxOpen(false);
+      setTab("workspace"); placeThread(t.id); render();
+    });
+    const pane = page.locator('.pane[data-id="term_quota_probe"]');
+    await pane.locator(".xterm").waitFor();
+    await page.fill(".ws-input", "My existing draft");
+    await page.evaluate(() => {
+      window.__writes = [];
+      window.__quotaOverrides = { "claude-code": { state: "ready", windows: [{ remaining: 8 }] } };
+      refreshQuota("claude-code", state.project.id, true);
+    });
+    await pane.getByText(/low on usage/).waitFor();
+    if (await page.inputValue(".ws-input") !== "My existing draft") throw new Error("the checkpoint prompt replaced an existing draft");
+    await page.fill(".ws-input", "");
+    await pane.getByRole("button", { name: "Draft checkpoint prompt" }).click();
+    await page.waitForFunction(() => /checkpoint for T-1/i.test(document.querySelector(".ws-input").value));
+    await page.fill(".ws-input", "");
+    await pane.locator(".pane-title").click();
+    await page.evaluate(() => {
+      window.__quotaOverrides["claude-code"].windows[0].remaining = 60;
+      refreshQuota("claude-code", state.project.id, true);
+    });
+    await pane.getByText(/low on usage/).waitFor({ state: "detached" });
+    await page.evaluate(() => {
+      window.__quotaOverrides["claude-code"].windows[0].remaining = 8;
+      refreshQuota("claude-code", state.project.id, true);
+    });
+    await page.waitForFunction(() => /checkpoint for T-1/i.test(document.querySelector(".ws-input").value)
+      && workspaceDraft(state.project.id).recipients.join() === "term_quota_probe");
+    if (await page.evaluate(() => window.__writes.some((w) => w.id === "term_quota_probe"))) throw new Error("the checkpoint prompt was typed into the terminal");
+  });
+  await step("task comparisons show both diffs and receipts and retain the preferred result", async () => {
+    await page.evaluate(() => { setTab("tasks"); openTask("T-1"); });
+    const drawer = page.locator("#drawer");
+    await drawer.getByRole("button", { name: "Compare agents" }).click();
+    const compare = page.getByRole("dialog", { name: "Compare agents on T-1" });
+    await compare.getByLabel("First agent").selectOption("codex");
+    await compare.getByLabel("Second agent").selectOption("claude-code");
+    await compare.getByRole("button", { name: "Prepare comparison" }).click();
+    await compare.getByText("+first candidate").waitFor();
+    await compare.getByText("+second candidate").waitFor();
+    await compare.getByText("Last check passed").waitFor();
+    await compare.getByText("Last check failed").waitFor();
+    await compare.getByText("Earlier snapshot").waitFor();
+    const second = compare.locator("article").nth(1);
+    await second.getByRole("button", { name: "Prefer this result" }).click();
+    await second.getByText("Preferred", { exact: true }).waitFor();
+    if (process.env.EVYRO_SHOTS) {
+      await page.evaluate(() => document.querySelectorAll(".toast").forEach((t) => t.remove()));
+      await page.screenshot({ path: path.join(process.env.EVYRO_SHOTS, "comparison.png") });
+    }
+    await compare.getByRole("button", { name: "Close", exact: true }).click();
+    await drawer.getByRole("button", { name: "Compare agents" }).click();
+    await second.getByText("Preferred", { exact: true }).waitFor();
+    const stagePreview = compare.getByRole("region", { name: "Staging preview" });
+    const stageButton = second.getByRole("button", { name: "Preview staging" });
+    await page.evaluate(() => { window.__blockStagePreview = true; });
+    await stageButton.click();
+    await stagePreview.getByRole("alert").getByText(/destination checkout/).waitFor();
+    await page.evaluate(() => { window.__blockStagePreview = false; });
+    await stageButton.click();
+    await stagePreview.getByRole("heading", { name: "Stage changes from T-3?" }).waitFor();
+    await stagePreview.getByText("/scratch/my-app").waitFor();
+    await stagePreview.getByText("image.bin").waitFor();
+    await stagePreview.getByRole("button", { name: "Cancel staging" }).click();
+    if (await page.evaluate(() => window.__staged)) throw new Error("Staging happened without confirmation");
+    await stageButton.click();
+    if (process.env.EVYRO_SHOTS) {
+      await stagePreview.getByText("image.bin").waitFor();
+      await page.screenshot({ path: path.join(process.env.EVYRO_SHOTS, "comparison-stage.png") });
+    }
+    await stagePreview.getByRole("button", { name: "Stage changes", exact: true }).click();
+    await stagePreview.getByRole("status").getByText("/scratch/my-app").waitFor();
+    await page.waitForFunction(() => window.__staged === "T-3");
+    await second.getByRole("button", { name: "Start agent" }).click();
+    await page.waitForFunction(() => window.__lastTermOpen?.task === "T-3" && window.__lastTermOpen?.target === "claude-code");
+    await compare.waitFor({ state: "detached" });
   });
   await step("first-run setup when there are no projects", async () => {
     await page.evaluate(() => { state.projects = []; state.project = null; setTab("overview"); });

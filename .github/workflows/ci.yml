@@ -100,6 +100,9 @@ jobs:
       - name: playwright
         run: npm install --no-save playwright@1.49.1 axe-core@4.10.2 && npx playwright install chromium
       - run: node crates/evyro-desktop/tests/ui-smoke.cjs
+      - name: Phone companion against the real server
+        if: runner.os == 'Linux'
+        run: node crates/evyro-remote/tests/companion-smoke.cjs
 
   bundle:
     needs: [lint, audit, test, cli-e2e, ui-smoke]

@@ -15,8 +15,9 @@
         <span>Evyro</span>
       </div>
       <div class="side-label">Projects</div>
-      <nav id="project-list" class="project-list"></nav>
+      <nav id="project-list" class="project-list" aria-label="Projects"></nav>
       <button id="add-project-btn" class="btn ghost small side-add">+ Add project</button>
+      <div id="side-threads" class="side-threads"></div>
       <div class="side-foot" id="side-foot"></div>
     </aside>
 
@@ -28,17 +29,16 @@
         </div>
         <div class="top-actions">
           <span id="live-badge" class="live-badge" aria-live="polite"></span>
-          <button id="search-btn" class="btn small ghost" title="Search the code"></button>
+          <button id="ctx-btn" class="btn small ghost hidden" aria-controls="ctx" title="Show or hide the shared context"></button>
+          <button id="search-btn" class="btn small ghost" title="Search the project"></button>
           <button id="palette-btn" class="btn small ghost" title="Command palette"></button>
         </div>
         <nav class="tabs" id="tabs">
-          <button data-view="overview" class="tab active">Overview</button>
+          <button data-view="workspace" class="tab active">Workspace</button>
           <button data-view="tasks" class="tab">Tasks</button>
           <button data-view="changes" class="tab">Changes</button>
-          <button data-view="threads" class="tab">Threads</button>
-          <button data-view="handoffs" class="tab">Handoffs</button>
-          <button data-view="sessions" class="tab">Sessions</button>
-          <button data-view="knowledge" class="tab">Decisions &amp; memory</button>
+          <button data-view="history" class="tab">History</button>
+          <button data-view="knowledge" class="tab" title="Decisions and project memory">Knowledge</button>
           <button data-view="skills" class="tab">Skills</button>
           <button data-view="agents" class="tab">AI targets</button>
           <button data-view="settings" class="tab">Settings</button>
@@ -47,6 +47,18 @@
       <section id="view" class="view"></section>
     </main>
 
+    <aside id="ctx" class="ctx hidden" aria-label="Shared context" aria-hidden="true">
+      <div class="ctx-tabs">
+        <div role="tablist" aria-label="Inspector" class="row">
+          <button class="ctx-tab active" role="tab" data-pane="context" aria-selected="true" aria-controls="ctx-body">Context</button>
+          <button class="ctx-tab" role="tab" data-pane="changes" aria-selected="false" aria-controls="ctx-body">Changes</button>
+        </div>
+        <span class="spacer"></span>
+        <button id="ctx-close" class="btn ghost small" aria-label="Hide the shared context">✕</button>
+      </div>
+      <div id="ctx-body" class="ctx-body" role="tabpanel"></div>
+    </aside>
+
     <aside id="drawer" class="drawer hidden" aria-hidden="true">
       <div class="drawer-head">
         <div id="drawer-title" class="drawer-title"></div>
@@ -54,6 +66,7 @@
       </div>
       <div id="drawer-body" class="drawer-body"></div>
     </aside>
+    <footer id="statusbar" class="statusbar hidden" aria-label="Status"></footer>
   </div>
 
   <div id="modal-root"></div>
@@ -62,6 +75,7 @@
   <script src="vendor/xterm/xterm.js"></script>
   <script src="vendor/xterm/addon-fit.js"></script>
   <script src="app.js"></script>
+  <script src="appearance.js"></script>
   <script src="threads.js"></script>
   <script src="search.js"></script>
   <script src="skills.js"></script>
@@ -69,5 +83,7 @@
   <script src="update.js"></script>
   <script src="chat.js"></script>
   <script src="review.js"></script>
+  <script src="workspace.js"></script>
+  <script src="comparison.js"></script>
 </body>
 </html>

@@ -52,15 +52,20 @@ async function startThread({ kind, target = null, task = null, handoffId = null,
 
 /** Load the snapshot before applying live output, including output from a fast startup. */
 function ensureXterm(id) {
-  const running = state.threads.some((t) => t.id === id && t.running);
+  const info = state.threads.find((t) => t.id === id);
+  const running = !!info?.running;
   const existing = XTERMS.get(id);
   if (existing) {
+    existing.running = running;
+    existing.el.classList.toggle("saved-size", !running && existing.savedSize);
     existing.term.options.disableStdin = !running;
     existing.term.options.cursorBlink = running;
     return existing;
   }
-  const el = h("div", { class: "term-host" });
+  const savedSize = info?.cols > 0 && info?.rows > 0;
+  const el = h("div", { class: "term-host" + (savedSize && !running ? " saved-size" : "") });
   const term = new Terminal({
+    ...(savedSize ? { cols: info.cols, rows: info.rows } : {}),
     fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--mono").trim() || "ui-monospace, Menlo, Consolas, monospace",
     fontSize: appearance().termSize, cursorBlink: running, disableStdin: !running, scrollback: 5000, allowProposedApi: false, theme: termTheme(),
     // Keep agent output readable: xterm raises any color below WCAG AA (4.5:1).
@@ -68,7 +73,8 @@ function ensureXterm(id) {
   });
   const fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
-  const x = { term, fit, el, end: 0, queue: [], opened: false };
+  const x = { term, fit, el, end: 0, queue: [], opened: false,
+    running, savedSize, cols: info?.cols, rows: info?.rows };
   XTERMS.set(id, x);
   // Fit to the pane whenever its size changes (window resize, layout settling).
   new ResizeObserver(() => fitThread(id)).observe(el);
@@ -87,15 +93,17 @@ function ensureXterm(id) {
   });
   x.loaded = (async () => {
     try {
-      const snap = await invoke("term_snapshot", { id });
+      const snap = await invoke("term_snapshot", { id, attach: true });
       x.replaying = true;
-      await new Promise((resolve) => term.write(snap.data, resolve));
+      if (snap.data) await new Promise((resolve) => term.write(snap.data, resolve));
       x.replaying = false;
+      if (snap.live) await new Promise((resolve) => term.write(snap.live, resolve));
       x.end = snap.end;
     } catch { x.replaying = false; /* live output is still available */ }
     const queue = x.queue;
     x.queue = null;
     for (const ev of queue) threadOutput(ev);
+    fitThread(id);
   })();
   return x;
 }
@@ -115,6 +123,9 @@ function threadExit(p) {
   if (t) { t.running = false; t.exit_code = p.code; t.credits_used = p.credits_used; }
   const x = XTERMS.get(p.id);
   if (x) {
+    x.running = false;
+    x.savedSize = true;
+    x.el.classList.add("saved-size");
     x.term.options.disableStdin = true;
     x.term.options.cursorBlink = false;
     x.term.write(`\r\n\x1b[2m[${t ? t.title : "thread"} ended${p.code != null ? `, exit code ${p.code}` : ""}]\x1b[0m\r\n`);
@@ -128,8 +139,15 @@ function threadExit(p) {
 async function closeThread(id) {
   const t = state.threads.find((t) => t.id === id);
   if (t && t.kind === "chat") {
-    if (t.running && !(await confirmDialog(`End the chat with ${t.agent || t.target}?`, "Evyro stops the agent, records a checkpoint and closes its session."))) return;
-    await act(() => invoke("chat_close", { id }));
+    if (t.running && !(await confirmDialog(`End the chat with ${t.agent || t.target}?`, "Evyro stops the agent, records a checkpoint and keeps the transcript in the sidebar."))) return;
+    if (t.archived && !(await confirmDialog("Delete this transcript?", "Evyro permanently removes the saved chat messages from this computer.", "Delete transcript"))) return;
+    await act(() => invoke("chat_close", { id, forget: !!t.archived }));
+    if (state.project?.id === t.project_id) {
+      const slots = panes();
+      const index = slots.indexOf(id);
+      if (index >= 0) slots[index] = null;
+    }
+    if (state.focusOverlay === id) state.focusOverlay = null;
     CHATS.delete(id);
     state.threads = state.threads.filter((x) => x.id !== id);
     if (state.thread === id) state.thread = null;
@@ -145,7 +163,7 @@ async function closeThread(id) {
   render();
 }
 
-function confirmDialog(title, text) {
+function confirmDialog(title, text, action = "Stop it") {
   return new Promise((resolve) => {
     const root = $("#modal-root");
     const done = (v) => { clear(root); resolve(v); };
@@ -153,7 +171,7 @@ function confirmDialog(title, text) {
       h("h2", null, title), h("p", { class: "muted" }, text),
       h("div", { class: "actions" },
         h("button", { class: "btn", onclick: () => done(false) }, "Cancel"),
-        h("button", { class: "btn primary", onclick: () => done(true) }, "Stop it")))));
+        h("button", { class: "btn primary", onclick: () => done(true) }, action)))));
   });
 }
 
@@ -219,6 +237,7 @@ async function newThreadDialog(taskKey = null) {
 
 function threadStatus(t) {
   if (t.kind === "chat") {
+    if (t.archived) return pill("", "saved chat");
     if (t.state === "failed") return pill("bad", "failed");
     if (!t.running) return pill("", "ended");
     if (t.state === "starting") return pill("warn", "starting");
@@ -235,11 +254,13 @@ const agoSecs = (s) => ago(new Date(s * 1000).toISOString());
 
 function fitThread(id) {
   const x = XTERMS.get(id);
-  if (!x || !x.el.getClientRects().length) return;
+  if (!x?.opened || !x.el.getClientRects().length || (x.savedSize && (x.queue || !x.running))) return;
   try { x.fit.fit(); } catch { return; }
+  if (!x.running) return;
   const { cols, rows } = x.term;
   if (x.cols !== cols || x.rows !== rows) {
     x.cols = cols; x.rows = rows;
+    x.savedSize = true;
     state.termSize = { cols, rows };
     invoke("term_resize", { id, cols, rows }).catch(() => {});
   }
