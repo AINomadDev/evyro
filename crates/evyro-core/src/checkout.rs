@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use crate::projects::Project;
 use crate::sessions::Session;
 use crate::tasks::{Actor, Task, TaskUpdate};
-use crate::{comparison, git, sessions, util};
+use crate::{comparison, git, util};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -121,10 +121,7 @@ impl Store {
                     .worktree
                     .as_deref()
                     .map_or(true, |w| same_dir(Path::new(w), &root));
-                let alive = s.pid.map_or(true, |pid| {
-                    sessions::session_process_alive(pid, s.pid_started)
-                });
-                in_main && alive && s.task_id.as_deref() != Some(task.id.as_str())
+                in_main && s.is_live() && s.task_id.as_deref() != Some(task.id.as_str())
             })
             .collect())
     }
@@ -140,9 +137,7 @@ impl Store {
             s.worktree
                 .as_deref()
                 .is_some_and(|w| same_dir(Path::new(w), dir))
-                && s.pid.map_or(true, |pid| {
-                    sessions::session_process_alive(pid, s.pid_started)
-                })
+                && s.is_live()
         }))
     }
 

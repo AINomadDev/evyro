@@ -881,9 +881,9 @@ impl Store {
                     s.id, s.harness
                 )));
             }
-            None if !confirm_unknown => {
+            None if s.is_live() && !confirm_unknown => {
                 return Err(Error::Conflict(format!(
-                    "Evyro cannot tell whether session {} ({}) is still running because no process was recorded; confirm that its agent has stopped",
+                    "Evyro cannot tell whether session {} ({}) is still running: no process was recorded and it reported in within the last 30 minutes; confirm that its agent has stopped",
                     s.id, s.harness
                 )));
             }
@@ -1139,6 +1139,72 @@ mod recover_session_tests {
         assert!(!store.get_session(&session.id).unwrap().status.is_ended());
         store
             .recover_session(&project.id, &session.id, true)
+            .unwrap();
+        assert!(store.get_session(&session.id).unwrap().status.is_ended());
+    }
+
+    #[test]
+    fn a_session_with_no_process_is_stale_only_after_it_stops_reporting_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::paths::GlobalPaths {
+            data_dir: dir.path().join("data"),
+            config_dir: dir.path().join("config"),
+        };
+        paths.ensure().unwrap();
+        let store = Store::open_at(&paths.db_path(), paths).unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "t"]);
+        std::fs::write(root.join("a.txt"), "a\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "init"]);
+        let project = store.register_project(&root, None).unwrap().project;
+        let session = store
+            .start_session(
+                &project.id,
+                NewSession {
+                    harness: "claude-code".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        // Just started: live, not stale.
+        assert!(store.stale_sessions(&project.id, false).unwrap().is_empty());
+        // Silent for an hour: stale, and recoverable without confirmation.
+        let hour_ago = "2000-01-01T00:00:00.000Z";
+        let silence = || {
+            store
+                .conn
+                .execute(
+                    "UPDATE sessions SET last_event_at = ?1, started_at = ?1 WHERE id = ?2",
+                    rusqlite::params![hour_ago, session.id],
+                )
+                .unwrap();
+        };
+        silence();
+        assert_eq!(store.stale_sessions(&project.id, false).unwrap().len(), 1);
+        // A heartbeat brings it back.
+        store.heartbeat(&session.id).unwrap();
+        assert!(store.stale_sessions(&project.id, false).unwrap().is_empty());
+        let err = store
+            .recover_session(&project.id, &session.id, false)
+            .unwrap_err();
+        assert!(matches!(err, Error::Conflict(_)), "{err}");
+        // Silent again: the confirmation is no longer needed.
+        silence();
+        store
+            .recover_session(&project.id, &session.id, false)
             .unwrap();
         assert!(store.get_session(&session.id).unwrap().status.is_ended());
     }
