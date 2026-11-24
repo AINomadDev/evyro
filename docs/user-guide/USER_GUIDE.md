@@ -126,7 +126,7 @@ Each agent target also has a **sign-in mode**:
 | `auto` | The tool is already set up the way you like. | Starts it with your normal environment. |
 | `app_login` | You pay with a subscription (Claude Pro or Max, ChatGPT Plus or Pro, Gemini, Copilot). | Removes API-key variables like `ANTHROPIC_API_KEY` for that run, so the tool uses your signed-in account instead of billing a key. |
 | `api_key` | You pay per token with a key. | Reads the key from the variable or Keychain item you named, only for that run. |
-| `local` | The model runs on your Mac (Ollama, LM Studio). | No key needed. |
+| `local` | The model runs on your Mac (Ollama, LM Studio, MLX, llama.cpp with Unsloth models, vLLM). | No key needed. |
 
 ### 3.1 Coding agents (Claude Code, Codex, Gemini CLI and others)
 
@@ -355,7 +355,7 @@ evyro chat --to codex --task T-1        # type messages; an empty line ends the 
 evyro chat --to claude-code --approve reads "Start with the failing test"
 ```
 
-`--approve` decides what runs without asking: `ask` (the default), `reads` (reading and searching only), `all` or `none`. In the desktop app, **+ Chat** on the Threads screen starts one; permission requests appear as buttons in the conversation.
+`--approve` decides what runs without asking: `ask` (the default), `reads` (reading and searching only), `all` or `none`. In the desktop app, **+ Chat** in the sidebar starts one; permission requests appear as buttons in the conversation.
 
 Each agent needs its ACP side installed once, for example `npm install -g @agentclientprotocol/claude-agent-acp` for Claude Code or `npm install -g @agentclientprotocol/codex-acp` for Codex. `evyro chat --list` prints the command for each. Evyro shares only files inside the project with a chat agent, never `.env` or keys. See [ACP](../protocols/ACP.md) for the details.
 
@@ -396,9 +396,9 @@ The app shows the same data as the CLI. See the [Desktop guide](DESKTOP.md) for 
 | Where | What to do |
 |---|---|
 | **AI targets** | Every target grouped by kind with status and next step. **+ Add target** opens a form for agents, API keys (variable name or Keychain item), IDEs and chat apps. **Switch to** hands the work over. |
-| **Handoffs** | Open a handoff, pick any AI under **Continue with**, then **Start with this AI**. Coding agents start in a thread inside the window; IDEs and chat apps open with the text on your clipboard. **Accept only** starts the session and copies the prompt, and you start the AI yourself. |
-| **Threads** | Every agent you started from the app, each in its own terminal, or as a chat (**+ Chat**, for agents that speak ACP) where you approve each tool call. Type into it as in any terminal. **+ Agent** starts another AI on a task, **+ Shell** opens a shell in the repo, **Hand off** passes a running agent's task on. |
-| **Overview** and **Tasks** | **Hand off** on any task writes a handoff to the AI you pick. |
+| **History** | Open a handoff, pick any AI under **Continue with**, then **Start with this AI**. Coding agents start in a thread inside the window; IDEs and chat apps open with the text on your clipboard. **Accept only** starts the session and copies the prompt, and you start the AI yourself. |
+| **Workspace** | Every agent you started from the app, in 1, 2 or 4 panes side by side, each in its own terminal or as a chat (**+ Chat**, for agents that speak ACP) where you approve each tool call. The sidebar groups them as Needs you, Working, Your turn and Ended. The shared-context panel shows the task, decisions, review notes, memory and handoff every AI can read, and sends any of them to the focused AI. The box under the panes messages several AIs at once. **Hand off** passes a running agent's task on. |
+| **Tasks** | Cards show which AI is on each task, live. **Hand off** on any task writes a handoff to the AI you pick. |
 | **Search** (⌘ P) | Go to a file, search the code or jump to a symbol, then read the file with its outline. |
 
 If the task still belongs to another AI, **Switch to** opens the handoff form instead, so nothing is taken over silently.
