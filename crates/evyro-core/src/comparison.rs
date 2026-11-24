@@ -477,6 +477,8 @@ mod tests {
         git(&root, &["init", "-q", "-b", "main"]);
         git(&root, &["config", "user.name", "Test"]);
         git(&root, &["config", "user.email", "test@example.com"]);
+        // Keep LF in checked-out files on Windows, where Git converts by default.
+        git(&root, &["config", "core.autocrlf", "false"]);
         std::fs::write(root.join("app.txt"), "base\n").unwrap();
         git(&root, &["add", "app.txt"]);
         git(&root, &["commit", "-qm", "base"]);
