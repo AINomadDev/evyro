@@ -12,13 +12,25 @@ function chatData(id) {
   return CHATS.get(id);
 }
 
+async function openSavedMessage(projectId, hit) {
+  await loadThreads();
+  if (state.project?.id !== projectId) return;
+  if (!projThreads().some((t) => t.id === hit.id && t.archived)) {
+    toast("That saved chat is no longer available.", true);
+    return;
+  }
+  chatData(hit.id).searchHit = hit.message_index;
+  placeThread(hit.id);
+  setTab("workspace");
+}
+
 async function loadChats() {
   try { return await invoke("chat_list"); } catch { return []; }
 }
 
 /** Ask which AI and task, then start a chat thread. */
 async function newChatDialog() {
-  const sel = await targetSelect("claude-code");
+  const sel = await targetSelect("antigravity-cli");
   for (const g of [...sel.querySelectorAll("optgroup")]) {
     if (![KIND_LABEL.harness, KIND_LABEL.api].includes(g.label)) g.remove();
   }
@@ -27,7 +39,7 @@ async function newChatDialog() {
   const ready = agents.filter((a) => a.command).map((a) => a.harness);
   // "Needs setup" is about the agent's terminal CLI; for a chat what matters is its ACP side.
   for (const o of sel.options) if (ready.includes(o.value)) o.textContent = o.value;
-  if (ready.length && [...sel.options].some((o) => ready.includes(o.value))) sel.value = [...sel.options].find((o) => ready.includes(o.value)).value;
+  if (!ready.includes(sel.value) && ready.length && [...sel.options].some((o) => ready.includes(o.value))) sel.value = [...sel.options].find((o) => ready.includes(o.value)).value;
   let tasks = [];
   try { tasks = await invoke("list_tasks", { projectId: state.project.id }); } catch { /* no tasks */ }
   const taskSel = h("select", null, h("option", { value: "" }, "No task (let the AI ask)"),
@@ -42,6 +54,8 @@ async function newChatDialog() {
     clear(status).append(a
       ? (a.command ? h("span", null, "Ready: ", h("code", null, a.command)) : h("span", null, `${a.display_name} needs its ACP side: `, h("code", null, a.install)))
       : "This AI has no chat (ACP) mode Evyro knows of. Use a terminal thread instead.");
+    const hint = { gemini: "Individual Gemini accounts should use Antigravity CLI.", cursor: "Sign in with cursor-agent login before opening a chat.", "antigravity-cli": "Sign in with agy acp --login." }[harness];
+    if (hint) status.append(h("div", null, hint));
   };
   sel.addEventListener("change", showStatus);
   showStatus();
@@ -56,10 +70,10 @@ async function newChatDialog() {
 
 async function startChat({ target, task = null, handoffId = null }) {
   const info = await act(() => invoke("chat_open", { projectId: state.project.id, target, task, handoffId }));
-  state.threads.push(info);
-  state.thread = info.id;
+  if (!state.threads.some((t) => t.id === info.id)) state.threads.push(info);
   chatData(info.id).loaded = true;
-  setTab("threads");
+  placeThread(info.id, true);
+  setTab("workspace");
   return true;
 }
 
@@ -67,11 +81,14 @@ function chatEvent(p) {
   if (!p) return;
   const d = chatData(p.id);
   d.log.push(p.item);
-  if (p.item.t === "permission" && document.hidden === false && state.thread !== p.id) toast("An agent is asking for permission in Threads.");
-  if (["permission", "permission_answer", "turn_end", "exit"].includes(p.item.t) && state.view === "threads") {
+  if (p.item.t === "permission" && document.hidden === false && !chatBox(p.id)) {
+    const t = state.threads.find((x) => x.id === p.id);
+    toast(`${t ? t.title : "An agent"} is asking for permission. It is under Needs you on the left.`);
+  }
+  if (["permission", "permission_answer", "turn_end", "exit"].includes(p.item.t)) {
     drawThreadList();
     const t = state.threads.find((x) => x.id === p.id);
-    if (t && state.thread === p.id) drawChatHead(t);
+    if (t) drawChatHead(t);
   }
   scheduleChatDraw(p.id);
 }
@@ -80,16 +97,28 @@ function chatState(info) {
   if (!info) return;
   const i = state.threads.findIndex((t) => t.id === info.id);
   if (i >= 0) state.threads[i] = info; else state.threads.push(info);
-  if (state.view === "threads") { drawThreadList(); if (state.thread === info.id) drawChatHead(info); }
+  const d = chatData(info.id);
+  if (!info.draft_available && d.openingDraft) {
+    d.draft = "";
+    d.openingDraft = false;
+    const input = chatPart("chat-input", info.id);
+    if (input) input.value = "";
+  }
+  drawThreadList();
+  drawChatHead(info);
+  loadOpeningDraft(info);
   scheduleChatDraw(info.id);
   updateLiveBadge();
 }
 
-let chatDrawPending = null;
+const chatDrawPending = new Map();
+// A chat can show in any workspace pane, so its parts are found by thread id, not by a page-wide id.
+const chatPart = (cls, id) => document.querySelector(`.${cls}[data-id="${CSS.escape(id)}"]`);
+const chatBox = (id) => chatPart("chat-log", id);
 function scheduleChatDraw(id) {
-  if (state.view !== "threads" || state.thread !== id) return;
-  if (chatDrawPending) return;
-  chatDrawPending = requestAnimationFrame(() => { chatDrawPending = null; drawChatLog(id); });
+  if (!chatBox(id)) return;
+  if (chatDrawPending.has(id)) return;
+  chatDrawPending.set(id, requestAnimationFrame(() => { chatDrawPending.delete(id); drawChatLog(id); }));
 }
 
 /** Turn the event log into blocks: messages, merged text, tool calls updated in place. */
@@ -99,8 +128,8 @@ function chatBlocks(log) {
   const perms = new Map();
   let text = null, thought = null, plan = null, named = false;
   const endText = () => { text = null; thought = null; };
-  for (const it of log) {
-    if (it.t === "user") { endText(); plan = null; named = false; blocks.push({ k: "user", text: it.text }); continue; }
+  for (const [index, it] of log.entries()) {
+    if (it.t === "user") { endText(); plan = null; named = false; blocks.push({ k: "user", text: it.text, index }); continue; }
     if (it.t === "turn_end") { endText(); blocks.push({ k: "turn", reason: it.reason }); continue; }
     if (it.t === "error") { endText(); blocks.push({ k: "error", message: it.message }); continue; }
     if (it.t === "exit") { endText(); blocks.push({ k: "exit", code: it.code }); continue; }
@@ -112,7 +141,7 @@ function chatBlocks(log) {
     switch (u.sessionUpdate) {
       case "agent_message_chunk": {
         const s = u.content && u.content.type === "text" ? u.content.text : "";
-        if (!text) { thought = null; text = { k: "agent", text: "", first: !named }; named = true; blocks.push(text); }
+        if (!text) { thought = null; text = { k: "agent", text: "", first: !named, index }; named = true; blocks.push(text); }
         text.text += s;
         break;
       }
@@ -181,9 +210,9 @@ function blockNode(b, t, id) {
       if (b.text && typeof b.text === "object" && b.text.context) {
         return h("details", { class: "chat-context" }, h("summary", null, "Evyro gave the agent the task context"), h("pre", null, b.text.context));
       }
-      return h("div", { class: "chat-msg you" }, h("div", { class: "chat-who" }, "You"), h("div", { class: "chat-text" }, b.text));
+      return h("div", { class: "chat-msg you", "data-message-index": b.index }, h("div", { class: "chat-who" }, "You"), h("div", { class: "chat-text" }, b.text));
     case "agent":
-      return h("div", { class: "chat-msg agent" }, b.first ? h("div", { class: "chat-who" }, t.agent || t.target) : null, h("div", { class: "chat-text" }, b.text));
+      return h("div", { class: "chat-msg agent", "data-message-index": b.index }, b.first ? h("div", { class: "chat-who" }, t.agent || t.target) : null, h("div", { class: "chat-text" }, b.text));
     case "thought":
       return h("details", { class: "chat-thought" }, h("summary", null, "Thinking"), h("div", { class: "chat-text muted" }, b.text));
     case "tool": {
@@ -203,14 +232,15 @@ function blockNode(b, t, id) {
       const tc = b.params.toolCall || {};
       const opts = b.params.options || [];
       const chosen = opts.find((o) => o.optionId === b.answer);
-      return h("div", { class: "chat-perm" + (b.answer === undefined ? " open" : "") },
+      const canAnswer = t.running && b.answer === undefined;
+      return h("div", { class: "chat-perm" + (canAnswer ? " open" : "") },
         h("div", null, h("strong", null, "The agent asks: "), tc.title || "run a tool", tc.kind ? h("span", { class: "muted small" }, ` (${tc.kind})`) : null),
-        b.answer === undefined
+        canAnswer
           ? h("div", { class: "row" }, opts.map((o) => h("button", {
             class: "btn small" + (o.kind && o.kind.startsWith("allow") ? " primary" : ""),
             onclick: (ev) => { ev.target.disabled = true; act(() => invoke("chat_permission", { id, request: b.request, optionId: o.optionId })); },
           }, o.name)))
-          : h("div", { class: "muted small" }, chosen ? `You chose: ${chosen.name}` : "Cancelled"));
+          : h("div", { class: "muted small" }, chosen ? `You chose: ${chosen.name}` : b.answer === undefined ? "No answer recorded" : "Cancelled"));
     }
     case "file":
       if (b.op === "write") return h("div", { class: "chat-note" }, `✎ Wrote ${b.path}`);
@@ -227,9 +257,9 @@ function blockNode(b, t, id) {
 }
 
 function drawChatLog(id) {
-  const box = $("#chat-log");
+  const box = chatBox(id);
   const t = state.threads.find((x) => x.id === id);
-  if (!box || !t || box.dataset.id !== id) return;
+  if (!box || !t) return;
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   const blocks = chatBlocks(chatData(id).log);
   clear(box).append(...blocks.map((b) => blockNode(b, t, id)).filter(Boolean));
@@ -240,49 +270,110 @@ function drawChatLog(id) {
 }
 
 function drawChatHead(t) {
-  const head = $("#chat-head");
+  const head = chatPart("chat-head", t.id);
   if (!head) return;
   clear(head).append(
-    h("div", null, h("div", { class: "thread-name" }, t.title, " ", threadStatus(t)),
-      h("div", { class: "muted small" }, t.agent ? `${t.agent} over ACP` : "ACP chat", t.session ? ` · session ${short(t.session, 12)}` : "")),
+    h("div", { class: "pane-title" }, agentBadge(t), h("div", null, h("div", { class: "thread-name" }, h("span", { class: "thread-title" }, t.title), threadStatus(t)),
+      h("div", { class: "row muted small", title: t.session ? `Session ${t.session}` : null },
+        t.archived ? "Saved transcript · read-only" : t.agent ? `${t.agent} over ACP` : "ACP chat", chatModelPicker(t)))),
     h("div", { class: "row" },
+      t.running ? h("button", { class: "btn small", onclick: () => sendContext(t), disabled: t.busy || t.switching_model || t.state !== "ready", title: "Send the shared context packet as a message" }, "Send context") : null,
       t.busy && t.state !== "starting" ? h("button", { class: "btn small", onclick: () => act(() => invoke("chat_cancel", { id: t.id })) }, "Stop turn") : null,
-      t.running && t.task ? h("button", { class: "btn small", onclick: () => handoffDialog(t.task, null) }, "Hand off") : null,
-      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, t.running ? "End chat" : "Close")));
+      continueButton(t),
+      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, t.running ? "End chat" : t.archived ? "Delete transcript" : "Close chat"),
+      paneRemoveBtn(t.id)));
+}
+
+function chatModelPicker(t) {
+  const model = t.model_choice;
+  if (!t.running || !model?.options?.length) return null;
+  const select = h("select", { class: "chat-model", "aria-label": "Chat model", title: "Change model for this chat",
+    disabled: t.busy || t.switching_model || t.state !== "ready" },
+    model.options.map((item) => h("option", { value: item.value }, item.name)));
+  select.value = model.current;
+  select.addEventListener("change", async () => {
+    select.disabled = true;
+    try {
+      await act(() => invoke("chat_set_model", { id: t.id, model: select.value }));
+    } catch {
+      select.value = model.current;
+    } finally {
+      select.disabled = false;
+    }
+  });
+  return select;
 }
 
 function drawChatComposer(t) {
-  const send = $("#chat-send"), input = $("#chat-input");
+  const send = chatPart("chat-send", t.id), input = chatPart("chat-input", t.id);
   if (!send || !input) return;
-  const can = t.running && !t.busy && t.state === "ready";
+  const can = t.running && !t.busy && !t.switching_model && t.state === "ready";
   send.disabled = !can;
   input.placeholder = !t.running ? "The chat has ended." : t.busy ? "The agent is working…" : `Message ${t.agent || t.target}…  (Enter sends, Shift+Enter for a new line)`;
 }
 
-async function drawChatPane(pane, t) {
+async function loadOpeningDraft(t) {
   const d = chatData(t.id);
-  if (!d.loaded) {
-    try { const r = await invoke("chat_log", { id: t.id }); d.log = r.log; Object.assign(t, r.info); } catch { /* gone */ }
+  if (!t.draft_available || d.draft !== undefined || d.loadingDraft) return;
+  d.loadingDraft = true;
+  try {
+    const { draft } = await invoke("chat_log", { id: t.id });
+    if (typeof draft === "string" && d.draft === undefined && state.threads.some((x) => x.id === t.id && x.draft_available)) {
+      d.draft = draft;
+      d.openingDraft = true;
+      const input = chatPart("chat-input", t.id);
+      if (input) input.value = draft;
+    }
+  } catch { /* The draft can be retried when this pane is shown again. */ }
+  finally { d.loadingDraft = false; }
+}
+
+async function drawChatPane(pane, t, takeFocus = true) {
+  const d = chatData(t.id);
+  if (!d.loaded || (t.archived && !d.archiveLoaded)) {
+    try {
+      const r = await invoke("chat_log", { id: t.id });
+      d.log = r.log;
+      d.archiveLoaded = !!r.info.archived;
+      Object.assign(t, r.info);
+    } catch (e) {
+      if (t.archived) { toast(errMsg(e), true); return; }
+    }
     d.loaded = true;
   }
-  const input = h("textarea", { id: "chat-input", rows: "2", "aria-label": "Message" });
+  if (!pane.isConnected || pane.dataset.id !== t.id) return;
+  const input = h("textarea", { class: "chat-input", "data-id": t.id, rows: "2", "aria-label": `Message to ${t.title}` });
+  input.value = d.draft || "";
+  input.addEventListener("input", () => { d.draft = input.value; d.openingDraft = false; });
   const submit = async () => {
     const text = input.value.trim();
     const cur = state.threads.find((x) => x.id === t.id) || t;
-    if (!text || !cur.running || cur.busy) return;
-    try { await invoke("chat_send", { id: t.id, text }); input.value = ""; }
+    if (!text || !cur.running || cur.busy || cur.switching_model || cur.state !== "ready") return;
+    try {
+      await invoke("chat_send", { id: t.id, text });
+      if (input.value.trim() === text) d.draft = input.value = "";
+    }
     catch (e) { toast(errMsg(e), true); }
   };
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); }
   });
   pane.append(h("div", { class: "chat" },
-    h("div", { id: "chat-head", class: "thread-head" }),
-    h("div", { id: "chat-log", class: "chat-log", "data-id": t.id, "aria-live": "polite" }),
-    h("div", { class: "chat-compose" }, input, h("button", { id: "chat-send", class: "btn primary", onclick: submit }, "Send"))));
+    h("div", { class: "thread-head chat-head", "data-id": t.id }),
+    t.history_truncated ? h("div", { class: "chat-note" }, "Earlier messages were trimmed from this transcript.") : null,
+    h("div", { class: "chat-log", "data-id": t.id, "aria-live": "polite", tabindex: "0", "aria-label": `Conversation with ${t.title}` }),
+    t.archived ? null : h("div", { class: "chat-compose" }, input, h("button", { class: "btn primary chat-send", "data-id": t.id, onclick: submit }, "Send"))));
   drawChatHead(t);
+  loadOpeningDraft(t);
   drawChatLog(t.id);
-  const box = $("#chat-log");
+  const box = chatBox(t.id);
   if (box) box.scrollTop = box.scrollHeight;
-  input.focus();
+  const hit = d.searchHit == null ? null : box?.querySelector(`[data-message-index="${d.searchHit}"]`);
+  delete d.searchHit;
+  if (hit) {
+    hit.classList.add("chat-search-hit");
+    hit.tabIndex = -1;
+    hit.scrollIntoView({ block: "center", inline: "nearest" });
+    hit.focus({ preventScroll: true });
+  } else if (takeFocus) (t.archived ? box : input)?.focus();
 }

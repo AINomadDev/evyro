@@ -22,5 +22,4 @@ time.workspace = true
 directories.workspace = true
 regex.workspace = true
 
-[dev-dependencies]
 tempfile.workspace = true

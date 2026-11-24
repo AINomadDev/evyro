@@ -838,6 +838,83 @@ fn export_import_and_backup_restore() {
         .any(|c| c["name"] == "database integrity" && c["status"] == "ok"));
 }
 
+/// The status-line hook saves a recognised payload and ignores anything else without failing.
+#[test]
+fn capture_usage_ignores_unreadable_input() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut env = Env::new();
+    let repo = env.repo("usage");
+    let out = env.home.path().join("quota.json");
+    let run = |input: &str| {
+        let mut child = env
+            .cmd(
+                &repo,
+                &[
+                    "capture-usage",
+                    "claude-code",
+                    "--output",
+                    out.to_str().unwrap(),
+                ],
+            )
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait().unwrap()
+    };
+    assert!(run("not json").success());
+    assert!(!out.exists());
+    assert!(run(r#"{"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":1}}}"#).success());
+    let saved: Value = serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
+    assert_eq!(saved["windows"][0]["remaining"], 75.0);
+}
+
+/// Doctor flags a registered project whose folder is gone, and archiving it dismisses the failure.
+#[test]
+fn doctor_skips_archived_missing_projects() {
+    let mut env = Env::new();
+    let repo = env.repo("keep");
+    let gone = env.repo("gone");
+    env.init(&repo);
+    env.init(&gone);
+    std::fs::remove_dir_all(&gone).unwrap();
+    let failing = |env: &Env| {
+        // doctor exits non-zero while any check fails, so read stdout directly.
+        let out = env.run(&repo, &["--json", "doctor"]);
+        let checks: Value = serde_json::from_slice(&out.stdout).unwrap();
+        checks.as_array().unwrap().iter().any(|c| {
+            c["name"]
+                .as_str()
+                .is_some_and(|n| n.starts_with("project: gone"))
+                && c["status"] == "fail"
+        })
+    };
+    assert!(failing(&env), "missing project should fail doctor");
+    let projects = env.json(&repo, &["projects"]);
+    let id = projects
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| {
+            p["project"]["name"]
+                .as_str()
+                .is_some_and(|n| n.starts_with("gone"))
+        })
+        .and_then(|p| p["project"]["id"].as_str())
+        .unwrap()
+        .to_string();
+    env.ok(&repo, &["project", "--project", &id, "--archive", "true"]);
+    assert!(!failing(&env), "archived project should not fail doctor");
+}
+
 /// Scenario P: an incompatible harness version fails safely with diagnostics.
 #[test]
 fn incompatible_agent_version() {
@@ -2517,4 +2594,42 @@ fn closed_pipe_exits_quietly() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!stderr.contains("panicked"), "{stderr}");
     assert_eq!(out.status.code(), Some(141), "{stderr}");
+}
+
+/// An agent that starts tasks itself from inside `evyro run` holds them only
+/// while it runs; a second AI can take them as soon as it exits, and a run
+/// with no task named skips a task another AI is working on.
+#[cfg(unix)]
+#[test]
+fn tasks_an_agent_starts_are_freed_when_it_exits() {
+    let mut env = Env::new();
+    let repo = env.repo("claims");
+    env.init(&repo);
+    env.ok(&repo, &["task", "add", "First"]);
+    env.ok(&repo, &["task", "add", "Second"]);
+    // The fake agent takes both tasks with the CLI, as Claude Code did.
+    env.agent(
+        "claude",
+        "2.1.0",
+        "evyro task start T-1 --agent claude-code >/dev/null || exit 9\nevyro task start T-2 --agent claude-code >/dev/null || exit 9\nevyro --json sessions --active > \"$PWD/.during\"\n",
+    );
+    env.ok(&repo, &["run", "--agent", "claude", "--headless"]);
+    // While it ran, its one session held both tasks (no extra sessions).
+    let during: Value = serde_json::from_str(&read(&repo.join(".during"))).unwrap();
+    assert_eq!(during.as_array().unwrap().len(), 1, "{during}");
+    // After it exited nothing is held, so codex can start T-2 straight away.
+    assert!(env
+        .json(&repo, &["sessions", "--active"])
+        .as_array()
+        .unwrap()
+        .is_empty());
+    env.agent("codex", "0.50.0", "exit 0\n");
+    env.ok(
+        &repo,
+        &["run", "--agent", "codex", "--task", "T-2", "--headless"],
+    );
+
+    // A run with no task named does not fail on a task someone else holds.
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "gemini"]);
+    env.ok(&repo, &["run", "--agent", "codex", "--headless"]);
 }

@@ -6,6 +6,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use evyro_core::comparison::ComparisonStagePlan;
 use evyro_core::handoff::HandoffRequest;
 use evyro_core::init::InitOptions;
 use evyro_core::memory::NewMemory;
@@ -25,6 +26,7 @@ mod skills;
 mod threads;
 mod tray;
 mod updater;
+mod usage;
 
 type CmdResult = Result<Value, Value>;
 
@@ -162,6 +164,68 @@ async fn list_tasks(project_id: String, include_closed: Option<bool>) -> CmdResu
             }));
         }
         Ok(json!(out))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn comparison_list(project_id: String, task: String) -> CmdResult {
+    with_store(move |s| Ok(json!(s.comparisons(&project_id, &task)?))).await
+}
+
+#[tauri::command]
+async fn comparison_create(project_id: String, task: String, targets: [String; 2]) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(s.create_comparison(
+            &project_id,
+            &task,
+            [&targets[0], &targets[1]]
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn comparison_results(project_id: String, task: String, id: String) -> CmdResult {
+    with_store(move |s| s.comparison_results(&project_id, &task, &id)).await
+}
+
+#[tauri::command]
+async fn comparison_prefer(
+    project_id: String,
+    task: String,
+    id: String,
+    candidate: String,
+) -> CmdResult {
+    with_store(move |s| {
+        s.prefer_comparison(&project_id, &task, &id, &candidate)?;
+        Ok(Value::Null)
+    })
+    .await
+}
+
+#[tauri::command]
+async fn comparison_preview_stage(project_id: String, task: String, id: String) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(s.preview_comparison_stage(
+            &project_id,
+            &task,
+            &id
+        )?))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn comparison_stage(
+    project_id: String,
+    task: String,
+    id: String,
+    plan: ComparisonStagePlan,
+) -> CmdResult {
+    with_store(move |s| {
+        s.stage_comparison(&project_id, &task, &id, &plan)?;
+        Ok(Value::Null)
     })
     .await
 }
@@ -358,6 +422,23 @@ async fn recover_sessions(project_id: String, include_unknown: bool) -> CmdResul
     .await
 }
 
+/// Free the tasks of one session whose agent is gone (see `recover_session`).
+#[tauri::command]
+async fn release_session(
+    project_id: String,
+    session_id: String,
+    confirmed: Option<bool>,
+) -> CmdResult {
+    with_store(move |s| {
+        Ok(json!(s.recover_session(
+            &project_id,
+            &session_id,
+            confirmed == Some(true)
+        )?))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn list_handoffs(project_id: String) -> CmdResult {
     with_store(move |s| Ok(json!(s.list_handoffs(&project_id, 100)?))).await
@@ -377,6 +458,15 @@ async fn handoff_detail(handoff_id: String) -> CmdResult {
             "integrity_error": integrity.err().map(|e| e.to_string()),
             "contract": c,
         }))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn handoff_checkpoint(project_id: String, task: String) -> CmdResult {
+    with_store(move |s| {
+        let task = s.resolve_task(&project_id, &task)?;
+        Ok(json!(s.latest_checkpoint(&project_id, Some(&task.id))?))
     })
     .await
 }
@@ -868,8 +958,23 @@ fn adopt_login_path() {
 fn main() {
     evyro_core::crash::install_panic_hook("Evyro desktop");
     adopt_login_path();
-    let terms: threads::Terms = std::sync::Arc::new(evyro_term::Terminals::new());
+    // Threads are saved under the data folder, so they are still listed
+    // (with their output) after the app restarts.
+    let terms: threads::Terms =
+        std::sync::Arc::new(match evyro_core::paths::GlobalPaths::resolve() {
+            Ok(p) => evyro_term::Terminals::with_store(p.data_dir.join("threads")),
+            Err(_) => evyro_term::Terminals::new(),
+        });
     let chats: chat::Chats = chat::new_chats();
+    {
+        let terms = terms.clone();
+        let chats = chats.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(std::time::Duration::from_secs(10));
+            terms.save_all();
+            chats.host.save_all();
+        });
+    }
     let remote: remote::Remote = Default::default();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -885,6 +990,12 @@ fn main() {
             overview,
             list_tasks,
             task_detail,
+            comparison_list,
+            comparison_create,
+            comparison_results,
+            comparison_prefer,
+            comparison_preview_stage,
+            comparison_stage,
             create_task,
             set_task_status,
             add_criterion,
@@ -893,8 +1004,10 @@ fn main() {
             run_verification,
             list_sessions,
             recover_sessions,
+            release_session,
             list_handoffs,
             handoff_detail,
+            handoff_checkpoint,
             prepare_handoff,
             resume_handoff,
             context_packet,
@@ -918,6 +1031,7 @@ fn main() {
             search::find_files,
             skills::list_skills,
             remote::remote_status,
+            remote::remote_tailscale,
             remote::remote_start,
             remote::remote_stop,
             remote::remote_devices,
@@ -937,15 +1051,20 @@ fn main() {
             review::set_review_status,
             review::delete_review_comment,
             review::review_prompt_text,
+            review::review_mark_sent,
             chat::acp_agents,
             chat::chat_open,
             chat::chat_list,
+            chat::chat_search_saved,
             chat::chat_log,
             chat::chat_send,
+            chat::chat_set_model,
             chat::chat_permission,
             chat::chat_cancel,
             chat::chat_close,
             threads::term_open,
+            usage::agent_quota,
+            usage::opencode_usage,
             threads::term_list,
             threads::term_write,
             threads::term_resize,

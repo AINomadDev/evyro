@@ -138,6 +138,19 @@ impl Store {
         self.list_review_comments(project_id, &["open", "sent"])
     }
 
+    /// Record delivery of the open comments included in a particular prompt.
+    pub fn mark_review_sent(&self, project_id: &str, ids: &[String], actor: &str) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let delivered: std::collections::HashSet<_> = ids.iter().map(String::as_str).collect();
+        for comment in self.list_review_comments(project_id, &["open"])? {
+            if delivered.contains(comment.id.as_str()) {
+                self.set_review_status(&comment.id, "sent", actor)?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn set_review_status(&self, id: &str, status: &str, actor: &str) -> Result<ReviewComment> {
         if !STATUSES.contains(&status) {
             return Err(Error::Invalid(format!(
@@ -312,5 +325,56 @@ mod tests {
         assert!(p.contains("review resolve <id>"));
         let s = context_section(&[c("a.rs", Some(1), "line\nbreak")]);
         assert!(s.contains("- `a.rs:1` (aaaa1111): line break"));
+    }
+
+    #[test]
+    fn delivery_marks_only_selected_open_comments_in_the_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::paths::GlobalPaths {
+            data_dir: dir.path().join("data"),
+            config_dir: dir.path().join("config"),
+        };
+        paths.ensure().unwrap();
+        let store = Store::open_at(&paths.db_path(), paths).unwrap();
+        let root = dir.path().join("project");
+        let other_root = dir.path().join("other");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&other_root).unwrap();
+        let project = store.register_project(&root, None).unwrap().project;
+        let other = store.register_project(&other_root, None).unwrap().project;
+        let add = |project_id| {
+            store
+                .add_review_comment(
+                    project_id,
+                    NewReviewComment {
+                        task_id: None,
+                        path: "src/lib.rs",
+                        line: None,
+                        snippet: "",
+                        body: "Review note",
+                        author: "human",
+                        commit_sha: None,
+                    },
+                )
+                .unwrap()
+                .id
+        };
+        let delivered = add(&project.id);
+        let resolved = add(&project.id);
+        let foreign = add(&other.id);
+        let late = add(&project.id);
+        store
+            .set_review_status(&resolved, "resolved", "human")
+            .unwrap();
+        let ids = [delivered.clone(), resolved.clone(), foreign.clone()];
+        store.mark_review_sent(&project.id, &ids, "human").unwrap();
+        for (id, expected) in [
+            (delivered, "sent"),
+            (resolved, "resolved"),
+            (foreign, "open"),
+            (late, "open"),
+        ] {
+            assert_eq!(store.get_review_comment(&id).unwrap().status, expected);
+        }
     }
 }

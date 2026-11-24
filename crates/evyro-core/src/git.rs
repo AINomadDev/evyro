@@ -4,8 +4,10 @@
 use crate::error::{Error, Result};
 use crate::util;
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::{Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn git(dir: &Path, args: &[&str]) -> Result<String> {
     let out = Command::new("git")
@@ -129,6 +131,103 @@ pub fn is_ancestor(dir: &Path, ancestor: &str, descendant: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+pub(crate) fn is_clean(root: &Path) -> Result<bool> {
+    let status = git(
+        root,
+        &[
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--no-renames",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+    )?;
+    // Claiming a task can write this local file even before Evyro's ignore file exists.
+    Ok(status
+        .split_terminator('\0')
+        .all(|entry| entry == "?? .evyro/CURRENT_TASK.md"))
+}
+
+pub(crate) fn commit_patch(root: &Path, base: &str, head: &str) -> Result<(Vec<String>, File)> {
+    let paths = git(
+        root,
+        &[
+            "diff",
+            "--name-only",
+            "-z",
+            "--no-color",
+            "--no-relative",
+            "--no-renames",
+            "--ignore-submodules=none",
+            base,
+            head,
+            "--",
+        ],
+    )?;
+    let files = paths
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_owned)
+        .collect();
+    let patch = tempfile::tempfile()?;
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "diff",
+            "--binary",
+            "--full-index",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-relative",
+            "--no-textconv",
+            "--no-renames",
+            "--ignore-submodules=none",
+            "--submodule=short",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
+            base,
+            head,
+            "--",
+        ])
+        .stdout(patch.try_clone()?)
+        .output()?;
+    if !out.status.success() {
+        return Err(Error::Git(format!(
+            "cannot read candidate patch: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok((files, patch))
+}
+
+pub(crate) fn apply_to_index(root: &Path, patch: &mut File, check: bool) -> Result<()> {
+    patch.seek(SeekFrom::Start(0))?;
+    let mut cmd = Command::new("git");
+    cmd.arg("-C").arg(root).args([
+        "-c",
+        "apply.ignoreWhitespace=no",
+        "apply",
+        "--index",
+        "--whitespace=nowarn",
+    ]);
+    if check {
+        cmd.arg("--check");
+    }
+    let out = cmd
+        .arg("-")
+        .stdin(Stdio::from(patch.try_clone()?))
+        .output()?;
+    if !out.status.success() {
+        return Err(Error::Conflict(format!(
+            "Cannot stage the candidate in this checkout. {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -319,6 +418,10 @@ pub fn worktrees(root: &Path) -> Result<Vec<Worktree>> {
 
 /// Create a worktree on a new branch. Refuses if the path exists.
 pub fn add_worktree(root: &Path, path: &Path, branch: &str) -> Result<()> {
+    add_worktree_at(root, path, branch, "HEAD")
+}
+
+pub(crate) fn add_worktree_at(root: &Path, path: &Path, branch: &str, base: &str) -> Result<()> {
     if path.exists() {
         return Err(Error::Conflict(format!(
             "{} already exists",
@@ -328,8 +431,25 @@ pub fn add_worktree(root: &Path, path: &Path, branch: &str) -> Result<()> {
     validate_ref_name(branch)?;
     git(
         root,
-        &["worktree", "add", "-b", branch, &path.to_string_lossy()],
+        &[
+            "worktree",
+            "add",
+            "-b",
+            branch,
+            &path.to_string_lossy(),
+            base,
+        ],
     )?;
+    Ok(())
+}
+
+/// Roll back a branch created for a comparison only while it still points at its original base.
+pub(crate) fn drop_unchanged_branch(root: &Path, branch: &str, base: &str) -> Result<()> {
+    let full = format!("refs/heads/{branch}");
+    if git(root, &["rev-parse", "--verify", &full])?.trim() != base {
+        return Err(Error::Conflict(format!("branch {branch} has new work")));
+    }
+    git(root, &["update-ref", "-d", &full, base])?;
     Ok(())
 }
 
@@ -370,11 +490,15 @@ pub fn validate_ref_name(name: &str) -> Result<()> {
 /// Unified diff of the working tree against HEAD (tracked files), capped.
 /// Sensitive paths are left out. The caller must still redact the text.
 pub fn diff_text(root: &Path, max_bytes: usize) -> String {
+    diff_text_from(root, "HEAD", max_bytes).unwrap_or_default()
+}
+
+pub(crate) fn diff_text_from(root: &Path, base: &str, max_bytes: usize) -> Result<String> {
     let mut s = git(
         root,
         &[
             "diff",
-            "HEAD",
+            base,
             "--no-color",
             "--",
             ".",
@@ -384,8 +508,7 @@ pub fn diff_text(root: &Path, max_bytes: usize) -> String {
             ":(exclude)*.pem",
             ":(exclude)*.key",
         ],
-    )
-    .unwrap_or_default();
+    )?;
     if s.len() > max_bytes {
         let mut cut = max_bytes;
         while !s.is_char_boundary(cut) {
@@ -394,7 +517,7 @@ pub fn diff_text(root: &Path, max_bytes: usize) -> String {
         s.truncate(cut);
         s.push_str("\n… diff truncated …\n");
     }
-    s
+    Ok(s)
 }
 
 /// New, untracked text files as "added" diffs, so they can be reviewed like

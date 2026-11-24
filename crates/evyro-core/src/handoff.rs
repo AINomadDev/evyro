@@ -718,53 +718,102 @@ impl Store {
     ) -> Result<Vec<RecoveredSession>> {
         let mut out = Vec::new();
         for s in self.stale_sessions(project_id, include_unknown)? {
-            self.set_session_status(
-                &s.id,
-                SessionStatus::Recovering,
-                Some("process_not_running"),
-            )?;
-            let prev = match &s.task_id {
-                Some(t) => self.latest_checkpoint(project_id, Some(t))?,
-                None => None,
-            };
-            let cp = self.create_checkpoint(
-                project_id,
-                NewCheckpoint {
-                    task_id: s.task_id.clone(),
-                    session_id: Some(s.id.clone()),
-                    trigger: Some("recovery".into()),
-                    summary: String::new(),
-                    dedupe: false,
-                    ..Default::default()
-                },
-            )?;
-            let changed: Vec<String> = match &prev {
-                Some(p) => {
-                    let root = PathBuf::from(&cp.checkpoint.git.root);
-                    let d = detect_drift(&p.git, &root)?;
-                    d.modified_since.into_iter().chain(d.newly_dirty).collect()
-                }
-                None => cp
-                    .checkpoint
-                    .git
-                    .files
-                    .iter()
-                    .map(|f| f.path.clone())
-                    .collect(),
-            };
-            self.set_session_status(
-                &s.id,
-                SessionStatus::Failed,
-                Some("process_exited_unexpectedly"),
-            )?;
-            out.push(RecoveredSession {
-                session_id: s.id,
-                harness: s.harness,
-                checkpoint_id: cp.checkpoint.id,
-                changed_since_last_checkpoint: changed,
-            });
+            out.push(self.recover_one(project_id, s)?);
         }
         Ok(out)
+    }
+
+    /// Close one session whose agent is gone, saving a recovery checkpoint and
+    /// freeing its tasks. A session whose process is still running is refused.
+    /// A session with no process recorded (started outside `evyro run`) cannot
+    /// be checked, so it is freed only when `confirm_unknown` says the person
+    /// knows its agent is gone.
+    pub fn recover_session(
+        &self,
+        project_id: &str,
+        session_id: &str,
+        confirm_unknown: bool,
+    ) -> Result<RecoveredSession> {
+        let s = self.get_session(session_id)?;
+        if s.project_id != project_id {
+            return Err(Error::Invalid(
+                "session belongs to a different project".into(),
+            ));
+        }
+        if s.status.is_ended() {
+            return Err(Error::Invalid(format!(
+                "session {} has already ended",
+                s.id
+            )));
+        }
+        match s.pid {
+            Some(pid) if crate::sessions::session_process_alive(pid, s.pid_started) => {
+                return Err(Error::Conflict(format!(
+                    "session {} ({}) is still running; stop it or hand off instead",
+                    s.id, s.harness
+                )));
+            }
+            None if !confirm_unknown => {
+                return Err(Error::Conflict(format!(
+                    "Evyro cannot tell whether session {} ({}) is still running because no process was recorded; confirm that its agent has stopped",
+                    s.id, s.harness
+                )));
+            }
+            _ => {}
+        }
+        self.recover_one(project_id, s)
+    }
+
+    fn recover_one(
+        &self,
+        project_id: &str,
+        s: crate::sessions::Session,
+    ) -> Result<RecoveredSession> {
+        self.set_session_status(
+            &s.id,
+            SessionStatus::Recovering,
+            Some("process_not_running"),
+        )?;
+        let prev = match &s.task_id {
+            Some(t) => self.latest_checkpoint(project_id, Some(t))?,
+            None => None,
+        };
+        let cp = self.create_checkpoint(
+            project_id,
+            NewCheckpoint {
+                task_id: s.task_id.clone(),
+                session_id: Some(s.id.clone()),
+                trigger: Some("recovery".into()),
+                summary: String::new(),
+                dedupe: false,
+                ..Default::default()
+            },
+        )?;
+        let changed: Vec<String> = match &prev {
+            Some(p) => {
+                let root = PathBuf::from(&cp.checkpoint.git.root);
+                let d = detect_drift(&p.git, &root)?;
+                d.modified_since.into_iter().chain(d.newly_dirty).collect()
+            }
+            None => cp
+                .checkpoint
+                .git
+                .files
+                .iter()
+                .map(|f| f.path.clone())
+                .collect(),
+        };
+        self.set_session_status(
+            &s.id,
+            SessionStatus::Failed,
+            Some("process_exited_unexpectedly"),
+        )?;
+        Ok(RecoveredSession {
+            session_id: s.id,
+            harness: s.harness,
+            checkpoint_id: cp.checkpoint.id,
+            changed_since_last_checkpoint: changed,
+        })
     }
 }
 
@@ -911,5 +960,58 @@ impl Store {
         });
         out.push_str("UNTRUSTED>>>\n");
         Ok(crate::redact::redact(&out).0)
+    }
+}
+
+#[cfg(test)]
+mod recover_session_tests {
+    use super::*;
+    use crate::sessions::NewSession;
+
+    #[test]
+    fn a_session_with_no_recorded_process_needs_confirmation() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = crate::paths::GlobalPaths {
+            data_dir: dir.path().join("data"),
+            config_dir: dir.path().join("config"),
+        };
+        paths.ensure().unwrap();
+        let store = Store::open_at(&paths.db_path(), paths).unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "user.email", "t@example.com"]);
+        git(&["config", "user.name", "t"]);
+        std::fs::write(root.join("a.txt"), "a\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-qm", "init"]);
+        let project = store.register_project(&root, None).unwrap().project;
+        let session = store
+            .start_session(
+                &project.id,
+                NewSession {
+                    harness: "claude-code".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let err = store
+            .recover_session(&project.id, &session.id, false)
+            .unwrap_err();
+        assert!(matches!(err, Error::Conflict(_)), "{err}");
+        assert!(!store.get_session(&session.id).unwrap().status.is_ended());
+        store
+            .recover_session(&project.id, &session.id, true)
+            .unwrap();
+        assert!(store.get_session(&session.id).unwrap().status.is_ended());
     }
 }

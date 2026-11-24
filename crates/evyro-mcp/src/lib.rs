@@ -242,15 +242,20 @@ impl Server {
                         );
                     }
                 }
-                let ses = s.start_session(
-                    &pid,
-                    NewSession {
-                        task_id: Some(t.id.clone()),
-                        harness: agent.clone(),
-                        model: arg_str(args, "model").map(String::from),
-                        ..Default::default()
-                    },
-                )?;
+                // An agent started by `evyro run` passes its session down to
+                // this server; the task joins that session and is freed with it.
+                let ses = match s.running_session_from_env(&pid) {
+                    Some(run) => s.claim_task(&pid, &run.id, &t.id)?,
+                    None => s.start_session(
+                        &pid,
+                        NewSession {
+                            task_id: Some(t.id.clone()),
+                            harness: agent.clone(),
+                            model: arg_str(args, "model").map(String::from),
+                            ..Default::default()
+                        },
+                    )?,
+                };
                 let t = if t.status == TaskStatus::InProgress {
                     t
                 } else {

@@ -6,7 +6,7 @@
 
 - **The chat is an Evyro session.**
   - Starting a chat claims the task, or picks up the handoff waiting for that agent, exactly like `evyro run`.
-  - The first message is Evyro's task context or the handoff's resume prompt.
+  - Desktop and paired web chats open with Evyro's task context or handoff as an editable draft. A turn starts when you send it.
   - Evyro records a checkpoint after every turn, skipping turns where nothing changed. It records another when the chat ends. Each checkpoint holds the agent's last reply as the summary and the files it wrote as completed items. Both are stored as *agent-reported*.
   - Ending the chat closes the session. If the agent crashes, the session is marked failed, and any handoff it accepted opens again.
 - **The agent gets Evyro's MCP server.** In `session/new`, Evyro passes itself as a stdio MCP server, scoped to the project and the session. From inside the chat, the agent can read the task, record checkpoints and decisions, run the configured tests, and prepare a handoff. Use `--no-mcp` to leave it out.
@@ -35,6 +35,7 @@ Evyro uses each agent's documented ACP command. It never downloads an agent to s
 | `claude-code` | `claude-agent-acp` | `npm install -g @agentclientprotocol/claude-agent-acp` |
 | `codex` | `codex-acp` | `npm install -g @agentclientprotocol/codex-acp` |
 | `gemini` | `gemini --experimental-acp` | `npm install -g @google/gemini-cli` |
+| `antigravity-cli` | `agy acp` | [Antigravity CLI](https://antigravity.google/docs/cli/acp/), then `agy acp --login` for individual Gemini Code Assist accounts |
 | `goose` | `goose acp` | Goose |
 | `opencode` | `opencode acp` | OpenCode |
 | `copilot` | `copilot --acp` | `npm install -g @github/copilot` |
@@ -61,7 +62,7 @@ How these are used:
 | `session/cancel` | **Stop turn** in the app. |
 | `fs/read_text_file`, `fs/write_text_file` | Inside the project only (see above). |
 | `terminal/*` | Not offered. Agents run their commands themselves, and report them as tool calls. |
-| `authenticate` | Not supported. Sign in to the agent on its own, for example `claude` and `/login` once. |
+| `authenticate` | Evyro sends `cursor_login` when Cursor advertises it. Run `cursor-agent login` to sign in to the CLI first. |
 | `session/load`, `session/set_mode`, images, audio | Not supported yet. |
 
 ## Evidence

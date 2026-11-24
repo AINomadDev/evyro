@@ -54,11 +54,11 @@ pub fn new_chats() -> Chats {
             }
         }
     });
-    Arc::new(ChatState {
-        host: Host::new(notify, evyro_mcp()),
-        feed,
-        app,
-    })
+    let mut host = Host::new(notify, evyro_mcp());
+    if let Ok(paths) = evyro_core::paths::GlobalPaths::resolve() {
+        host = host.with_archive(paths.data_dir.join("chat-history"));
+    }
+    Arc::new(ChatState { host, feed, app })
 }
 
 pub fn attach(chats: &Chats, app: AppHandle) {
@@ -94,13 +94,43 @@ pub async fn chat_open(
 
 #[tauri::command]
 pub async fn chat_list(chats: State<'_, Chats>) -> CmdResult {
-    Ok(json!(chats.host.list()))
+    Ok(json!(chats.host.list_with_history()))
+}
+
+#[tauri::command]
+pub async fn chat_search_saved(
+    chats: State<'_, Chats>,
+    project_id: String,
+    query: String,
+) -> CmdResult {
+    let host = chats.host.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        host.search_saved(&project_id, &query)
+            .map(|hits| json!(hits))
+            .map_err(bad)
+    })
+    .await
+    .map_err(bad)?
 }
 
 #[tauri::command]
 pub async fn chat_log(chats: State<'_, Chats>, id: String) -> CmdResult {
-    let v = chats.host.log(&id, None).map_err(bad)?;
-    Ok(json!({"info": v["info"], "log": v["log"]}))
+    let v = chats
+        .host
+        .log(&id, None)
+        .or_else(|e| chats.host.saved_log(&id).ok_or(e))
+        .map_err(bad)?;
+    Ok(json!({"info": v["info"], "log": v["log"], "draft": v["draft"]}))
+}
+
+#[tauri::command]
+pub async fn chat_set_model(chats: State<'_, Chats>, id: String, model: String) -> CmdResult {
+    let host = chats.host.clone();
+    tauri::async_runtime::spawn_blocking(move || host.set_model(&id, &model))
+        .await
+        .map_err(bad)?
+        .map_err(bad)?;
+    Ok(Value::Null)
 }
 
 #[tauri::command]
@@ -129,14 +159,20 @@ pub async fn chat_cancel(chats: State<'_, Chats>, id: String) -> CmdResult {
     Ok(Value::Null)
 }
 
-/// Stop the agent, checkpoint and close its session, and forget the chat.
+/// Stop a live chat or delete an already saved transcript.
 #[tauri::command]
-pub async fn chat_close(chats: State<'_, Chats>, id: String) -> CmdResult {
+pub async fn chat_close(chats: State<'_, Chats>, id: String, forget: Option<bool>) -> CmdResult {
     let host = chats.host.clone();
-    tauri::async_runtime::spawn_blocking(move || host.close(&id))
-        .await
-        .map_err(bad)?
-        .map_err(bad)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if forget == Some(true) {
+            host.forget_saved(&id)
+        } else {
+            host.close(&id)
+        }
+    })
+    .await
+    .map_err(bad)?
+    .map_err(bad)?;
     Ok(Value::Null)
 }
 

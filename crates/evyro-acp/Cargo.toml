@@ -12,6 +12,5 @@ publish = false
 evyro-core = { path = "../evyro-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
+regex = { workspace = true }
 tempfile = { workspace = true }

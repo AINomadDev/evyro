@@ -26,27 +26,94 @@ Or run `xattr -dr com.apple.quarantine /Applications/Evyro.app` once in Terminal
 
 **Windows:** in the SmartScreen box, click **More info**, then **Run anyway**.
 
+## The window
+
+| Area | What it shows | What you can do |
+|---|---|---|
+| Sidebar | Your projects, then the open project's AI threads grouped as **Needs you** (a chat waiting for approval), **Working**, **Your turn** (a chat waiting for your next message) and **Ended**, each with a colored agent badge and its task | Click a thread to show it in the focused pane; **+ Agent**, **+ Chat**, **+ Shell** |
+| Shared context (right, or left in Appearance) | What every AI in the project can draw from, live: the active task and its acceptance criteria, owner and next step, a waiting handoff, decisions, open review notes, memory, and activity from all AIs. The **Changes** tab lists changed files and which have review notes | **Send** a decision, memory note, the task's context or the open review notes to the focused AI; open the task or the handoff. ⌘. / Ctrl+. or **Hide context** hides it |
+| Status bar | Branch and changed files, how many AIs are running, how many need you, a waiting handoff | |
+
 ## Screens
 
 | Screen | What it shows | What you can do |
 |---|---|---|
-| Overview | Active task and owner, last checkpoint and next step, Git branch and changed files, health findings, recent activity (refreshes every few seconds) | Open the task, hand it off, copy a context packet for any agent |
+| Workspace | Terminal and chat threads with an adjustable pane count and column count, saved per project | Use the **Panes** stepper and **Columns** menu to adjust the grid. A new thread fills a free pane or adds one. **Focus pane** expands the selected thread, the picker switches threads in Focus, and **Exit focus** restores the grid. **Review changes** opens the diff and review comments |
 | Changes | Files changed since the last commit (new files included) with line numbers, secrets hidden, and review comments inline | Comment on any line or file, **Send comments to agent** (into a running thread, or copied as a prompt), resolve or delete comments, copy the diff |
-| Threads | Coding agents and shells running inside the window, one terminal each, with status and exit code; chats with agents over ACP | **+ Agent** starts any coding agent or API target on a task through `evyro run`; **+ Shell** opens a shell in the repository; type straight into the terminal, **Hand off** from a running agent, **Stop** or **Close** a thread |
-| Tasks | Board by status with criteria progress, owner and blockers | Create tasks with acceptance criteria; open a task to tick criteria, change status, run tests, add notes |
-| Handoffs | Every handoff with quality score and status | Prepare a handoff to any AI, read the signed contract, see drift, then **Start with this AI** or **Accept only** |
-| Sessions | Every agent session with status and exit reason | Recover sessions whose agent is gone |
-| Decisions & memory | Recorded decisions and project memory with search | Record a decision, save a memory |
+| Tasks | Board by status with criteria progress, owner and blockers. A card with an AI on it shows that AI, its status and its latest line of output | Create tasks with acceptance criteria; open a task to tick criteria, change status, run tests, add notes; **Start with…** puts an AI on a card; **Open** or **Answer** jumps to its thread |
+| History | Every handoff with quality score and status, then every agent session with status and exit reason | Prepare a handoff to any AI, read the signed contract, see drift, then **Start with this AI** or **Accept only**; recover sessions whose agent is gone |
+| Knowledge | Recorded decisions and project memory with search | Record a decision, save a memory |
 | Skills | Every skill (built in, yours, this project's) with its source, version and whether it is on; type a task to see which fit | Read a skill, **Turn on** or **Turn off** here or in every project, **+ New skill**, **Import…**, **Add to agent files…** (never replaces a file someone wrote) |
 | AI targets | Every AI you can switch to, grouped as coding agents, API keys, AI IDEs and chat apps, with status and next step; installed agent versions below | **+ Add target** (agent, API key by variable name or Keychain item, IDE, chat app), **Switch to**, open a target to see its checks or remove it |
-| Settings | Verification commands, project details, Evyro data folder, doctor checks | Edit test/lint/build commands (saved to `.evyro/project.toml`), archive a project, back up the database. **Remote access**: start or stop serving to paired devices (they see this window's chats), **+ Pair a device** shows a one-time code, **Revoke** cuts a device off |
+| Settings | Appearance, verification commands, project details, Evyro data folder, doctor checks | Change the look (see below). Edit test/lint/build commands (saved to `.evyro/project.toml`), archive a project, back up the database. **Remote access**: start or stop serving to paired devices (they see this window's chats), **+ Pair a device** shows a one-time code, **Revoke** cuts a device off |
+
+Choose **Columns → Side by side** to keep panes in one horizontal row. New threads extend the row and scroll into view when needed. Choose a numbered column count for a grid with a fixed width in columns.
+
+## Threads and shared messages
+
+- Choose **+ Agent**, pick an AI and a task, and enter an optional thread name. **Resume** reopens the saved terminal thread in place, keeps its scrollback, and relaunches the agent with Evyro's task and checkpoint context. A Copilot thread created with a session credit budget also retains its Copilot session ID.
+- The shared composer can target any running AI thread in the current project, including threads outside the visible panes. Use the recipient buttons or **All AIs**. If some deliveries fail, the composer keeps the message and selects the failed recipients for retry.
+- Opening an agent terminal prepares a task-context draft in the shared composer or through **Load draft** when the composer already has text. A new ACP chat prepares its own opening draft. Edit the text and choose **Send** to start work.
+- Use **+ Shell** for shell commands and **+ Chat** for agents that support ACP. The shared composer sends multiline messages to ACP chats and terminal agents that are ready for bracketed paste.
+- A stopped terminal displays saved output. Choose **Restart shell** to open a fresh shell in the same pane with its scrollback, or **Resume** to relaunch a saved agent thread.
+- If Cursor opens to a sign-in screen, run `cursor-agent login` or follow the pane's prompt. If Copilot asks about folder trust, review the directory and answer in its pane before retrying the message.
+- For individual Gemini Code Assist accounts, choose `antigravity-cli` in **+ Chat** after signing in with `agy acp --login`. Cursor chat uses the CLI account from `cursor-agent login`.
+
+## Compare two agent implementations
+
+Open a task and choose **Compare agents**. Pick two agent targets and select **Prepare comparison**. Evyro creates two child tasks and two Git worktrees at the same committed revision. Uncommitted edits in your checkout stay there.
+
+Use **Start agent** on each candidate when you’re ready. Choose **Run tests in both** to run the project's test command in each worktree one after the other (it can take a while), or run your own verification there. **Refresh results** shows each candidate's diff, a files and lines summary, and its latest test result. **Prefer this result** records your choice and leaves both worktrees available.
+
+To move the preferred result into the original task’s checkout, finish any active sessions in both checkouts and commit the candidate’s changes. Both checkouts must be clean. Select **Preview staging** to check the destination and review the file list, then choose **Stage changes**. Evyro rechecks the preview and stages the candidate’s committed changes for you to review and commit. If Git detects a conflict, handle it before trying again.
+
+## Usage and continuation
+
+**Usage, by AI** refreshes supported readings in the background while you use the Context panel. Click **Refresh** to check sooner. The timestamp identifies the last successful reading. Account limits are shared across the account's threads.
+
+| Agent | How to get usage | Change the model in a running terminal |
+|---|---|---|
+| Codex | The signed-in CLI reports quota windows, resets, and any credit balance. | `/model` |
+| GitHub Copilot | The CLI reports a plan snapshot that can lag. Choose a session credit budget of 30 or more when starting a thread. The remaining budget updates from Copilot's complete report on a normal CLI exit with `/exit`. | `/model` |
+| Antigravity | On macOS and Linux, Evyro reads the installed CLI's status line in a separate session without sending a prompt. The terminal's `/usage` shows quota if you want to check it directly. | `/model` |
+| Claude Code | Choose **Connect usage** for the status-line command. Claude Code can report eligible subscription limits after its first normal model response. For API usage and cost, use [Claude Console](https://platform.claude.com/usage). | `/model` |
+| Cursor | Check the Cursor or Grok usage dashboard for the account's plan. Both dashboard links are available in the panel. | `/model` |
+| OpenCode | Evyro runs `opencode stats` in the background for the current project's last seven days. The connected provider reports balances and resets. | `/models` |
+
+An ACP chat shows **Chat model** when its agent advertises model selection. Pick a model while the chat is idle to keep using that session and its transcript.
+
+Ended ACP chats stay in the desktop sidebar as **saved chats**. Open one to read its transcript, or use **Delete transcript** to remove the saved copy. Evyro keeps up to 60 saved chats on this computer, with up to 512 KiB per transcript. It saves active chats about every 10 seconds and when the app quits. Saved chats are read-only and only appear on the desktop.
+
+Choose **Search → Saved chats** to find a word or phrase in user messages and agent replies for the current project. Select a result to open its transcript at that message.
+
+If the account limit is shared across the available models, use **Continue with…** in a task's pane to move to another AI. Evyro fills the handoff from the last checkpoint. Review the summary and next action, prepare the handoff, then start the chosen AI. Its first message is an editable draft that points to the signed task checkpoint and the repo changes. Send it when you're ready.
+
+When an AI's usage is low and Evyro has read another AI's usage, the banner also offers **Hand off to <AI>**. One confirmation prepares the handoff from the latest checkpoint and opens that AI with the same editable draft. Only the checkpoint moves, so ask the first AI to save one beforehand if it can.
+
+## Away-from-home access
+
+Keep the Mac awake with Evyro serving on `127.0.0.1`. Connect the Mac and phone to the same Tailscale network. They can use different Wi-Fi networks, or the phone can use mobile data. In **Settings → Remote access → Away from home**, choose **Check private address**, then **Enable private address** if needed. Select **Pair over Tailscale** and use the displayed address and one-time code on the phone. Use the **control** pairing scope to start or message ACP chats remotely. See [Remote access](../REMOTE_ACCESS.md) for setup and troubleshooting.
+
+## Appearance
+
+Settings › **Appearance** changes the look at once and keeps it on this computer.
+
+| Group | Options |
+|---|---|
+| Theme and color | Theme: System, Light, Dark, Midnight, Paper. Accent: seven colors, or any color you pick (Evyro warns when it is too faint to read as text). Density: Comfortable or Compact. Corner radius |
+| Typography | Interface font (System, Inter, Atkinson Hyperlegible, Rounded, Serif, or any installed font by name), text size, code and terminal font (JetBrains Mono, system mono, Fira Code, Cascadia Code, Iosevka, or any installed font), terminal text size |
+| Layout | How many panes the Workspace opens with, which side the shared context sits on and whether it opens on start, sidebar, context and terminal drawer sizes, sidebar threads by state or newest first, status bar on or off |
+
+**Copy settings** puts them on the clipboard as JSON, and **Paste settings** applies JSON someone shared (unknown keys and bad values are ignored). **Reset** goes back to the defaults. Fonts are not downloaded: a font that is not installed falls back to the system font.
 
 ## Working faster
 
 | Shortcut | Does |
 |---|---|
 | ⌘K / Ctrl+K | Command palette: every screen, new task, new handoff, switch to any AI, open any project |
-| ⌘1 to ⌘9 / Ctrl+1 to Ctrl+9 | Jump to a screen, in tab order (Settings has no number; use ⌘K) |
+| ⌘1 to ⌘8 / Ctrl+1 to Ctrl+8 | Jump to a screen, in tab order |
+| ⌘. / Ctrl+. | Show or hide the shared context |
+| Ctrl+` | Open or close the terminal drawer |
 | ⌘N / Ctrl+N | New task |
 | ⌘P / Ctrl+P | Go to a file by name |
 | ⌘⇧F / Ctrl+Shift+F | Search the code for text or a regex |
@@ -61,10 +128,10 @@ Everything works from the keyboard alone. Tab reaches every button, row and card
 
 **Notifications.** While the window is in the background, Evyro shows a desktop notification when an agent stops, a handoff is prepared, accepted or reopened, or tests fail. macOS asks once for permission.
 
-**Agent threads.** **Switch to** a coding agent (or **+ Agent** on the Threads screen) starts it in a thread inside the window. The thread runs `evyro run --to <target> --task <key>` through your login shell, so the agent sees the same PATH and keys as in your own terminal, and Evyro tracks the session, claims any waiting handoff and checkpoints when the agent exits. Threads keep running while you look at other screens and stop when you quit the app. To use your own terminal instead, pick **Open in Terminal instead** in the new-thread dialog.
+**Agent threads.** **Switch to** a coding agent (or **+ Agent** in the sidebar) starts it in a thread inside the window. The thread runs `evyro run --to <target> --task <key>` through your login shell, so the agent sees the same PATH and keys as in your own terminal, and Evyro tracks the session, claims any waiting handoff and checkpoints when the agent exits. Threads keep running while you look at other screens and stop when you quit the app. To use your own terminal instead, pick **Open in Terminal instead** in the new-thread dialog.
 
 **Code search.** **Search** in the top bar (or ⌘P) opens one panel with three modes: **Files** (fuzzy names, like `ratelim` for `rate_limiter.rs`), **Text** (with **Regex**, **Match case** and a path filter) and **Symbols**. **Tab** switches mode, the arrow keys move and Enter opens. A file opens read only with line numbers and an outline; click a symbol to jump to it, or **Copy path** for a `path:line` to paste to an AI. Search skips ignored, binary, very large and sensitive files, and hides secrets in what it shows.
-**Chat threads (ACP).** **+ Chat** on the Threads screen talks to an agent over ACP (Agent Client Protocol) instead of a terminal. The conversation shows the agent's reply, its plan as a checklist, each tool call with its status (edits as a diff), and a card with the agent's options whenever it asks to run something; nothing runs until you pick one. **Stop turn** cancels the current turn, **Hand off** passes the task on, **End chat** stops the agent, checkpoints and closes the session. The agent gets Evyro's MCP tools and can read or write files only inside the project, never `.env` or keys. The thread list shows **needs you** while a permission request waits. Agents need their ACP side installed (the new-chat dialog shows the command); see [ACP](../protocols/ACP.md).
+**Chat threads (ACP).** **+ Chat** in the sidebar talks to an agent over ACP (Agent Client Protocol) instead of a terminal. The conversation shows the agent's reply, its plan as a checklist, each tool call with its status (edits as a diff), and a card with the agent's options whenever it asks to run something; nothing runs until you pick one. **Stop turn** cancels the current turn, **Continue with…** prepares a checkpoint handoff for a tracked task, **End chat** stops the agent, checkpoints and closes the session. The agent gets Evyro's MCP tools and can read or write files only inside the project, never `.env` or keys. The sidebar lists the chat under **Needs you** while a permission request waits. Agents need their ACP side installed (the new-chat dialog shows the command); see [ACP](../protocols/ACP.md).
 
 **First run.** With no projects yet, the welcome screen walks through adding a project (with a folder picker), checking your AIs and handing work over.
 

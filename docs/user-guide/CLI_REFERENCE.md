@@ -22,49 +22,50 @@ Evyro: switch agents, keep building.
 Usage: evyro [OPTIONS] <COMMAND>
 
 Commands:
-  init         Register this repository and create minimal .evyro scaffolding
-  register     Register a repository without scaffolding
-  projects     List registered projects (global tracker)
-  project      Set project alias / archive / favorite
-  status       Project status: active task, owner, git state, last checkpoint
-  doctor       Diagnose installation, database, agents and projects
-  tasks        List tasks
-  task         Create, inspect and update tasks
-  context      Print the budgeted context packet for agents
-  checkpoint   Record a checkpoint (git state captured automatically)
-  handoff      Prepare a signed continuation contract for another agent
-  switch       Handoff and launch the target agent now (same as `handoff --launch`). Use `handoff` to prepare the contract without launching anything
-  resume       Accept a pending handoff as the receiving agent (validates state first)
-  run          Launch an agent with session tracking (pid, exit checkpoint)
-  chat         Chat with a coding agent over ACP (Agent Client Protocol): its reply, plan and tool calls in the terminal, and you approve each tool call. `evyro chat --list` shows which agents can
-  agents       Detected agents and their capabilities
-  targets      Switch targets: every AI you can hand work to (agent CLIs, IDEs, chat apps, API models). `evyro targets` lists them with their setup status
-  models       Model selection support per agent
-  sessions     Agent sessions
-  recover      Recover sessions whose process died (quota kill, crash)
-  worktrees    Git worktrees
-  verify       Run a verification command and record a receipt: `evyro verify -- cargo test`
-  decide       Record a decision. Record a decision: `evyro decide "<title>" "<decision>" [--why ...]`
-  decisions    Decisions for the project
-  search       Search the code: file names, text or regex, symbols, a file's outline
-  serve        Let paired devices (a phone, another computer) follow and approve the work over HTTP: an API, an event stream, MCP over HTTP and a web companion
-  remote       Devices that may use `evyro serve`: pair a new one, list, revoke
-  skills       Skills: reusable instructions agents load when a task needs them
-  review       Review comments on the working-tree changes: leave them on files and lines, send the open ones to an agent, resolve them when addressed
-  memory       Project memory
-  handoffs     Handoff history
-  health       Evidence-linked project health
-  export       Export this project's records (redacted, portable JSON)
-  import       Import a project export into this machine's database
-  backup       Snapshot the global database
-  restore      Replace the global database with a backup (keeps the old one)
-  logs         Event log (timeline)
-  mcp          Run the MCP server on stdio for this project
-  integrate    Integration helpers (MCP registration, hooks)
-  completions  Shell completions
-  version      Version information
-  bug-report   Write a bug report: versions, system, doctor checks and recent crash logs, with secrets redacted. Read it before you share it
-  help         Print this message or the help of the given subcommand(s)
+  capture-usage  Save reported limits from a Claude Code or Antigravity status-line hook
+  init           Register this repository and create minimal .evyro scaffolding
+  register       Register a repository without scaffolding
+  projects       List registered projects (global tracker)
+  project        Set project alias / archive / favorite
+  status         Project status: active task, owner, git state, last checkpoint
+  doctor         Diagnose installation, database, agents and projects
+  tasks          List tasks
+  task           Create, inspect and update tasks
+  context        Print the budgeted context packet for agents
+  checkpoint     Record a checkpoint (git state captured automatically)
+  handoff        Prepare a signed continuation contract for another agent
+  switch         Handoff and launch the target agent now (same as `handoff --launch`). Use `handoff` to prepare the contract without launching anything
+  resume         Accept a pending handoff as the receiving agent (validates state first)
+  run            Launch an agent with session tracking (pid, exit checkpoint)
+  chat           Chat with a coding agent over ACP (Agent Client Protocol): its reply, plan and tool calls in the terminal, and you approve each tool call. `evyro chat --list` shows which agents can
+  agents         Detected agents and their capabilities
+  targets        Switch targets: every AI you can hand work to (agent CLIs, IDEs, chat apps, API models). `evyro targets` lists them with their setup status
+  models         Model selection support per agent
+  sessions       Agent sessions
+  recover        Recover sessions whose process died (quota kill, crash)
+  worktrees      Git worktrees
+  verify         Run a verification command and record a receipt: `evyro verify -- cargo test`
+  decide         Record a decision. Record a decision: `evyro decide "<title>" "<decision>" [--why ...]`
+  decisions      Decisions for the project
+  search         Search the code: file names, text or regex, symbols, a file's outline
+  serve          Let paired devices (a phone, another computer) follow and approve the work over HTTP: an API, an event stream, MCP over HTTP and a web companion
+  remote         Devices that may use `evyro serve`: pair a new one, list, revoke
+  skills         Skills: reusable instructions agents load when a task needs them
+  review         Review comments on the working-tree changes: leave them on files and lines, send the open ones to an agent, resolve them when addressed
+  memory         Project memory
+  handoffs       Handoff history
+  health         Evidence-linked project health
+  export         Export this project's records (redacted, portable JSON)
+  import         Import a project export into this machine's database
+  backup         Snapshot the global database
+  restore        Replace the global database with a backup (keeps the old one)
+  logs           Event log (timeline)
+  mcp            Run the MCP server on stdio for this project
+  integrate      Integration helpers (MCP registration, hooks)
+  completions    Shell completions
+  version        Version information
+  bug-report     Write a bug report: versions, system, doctor checks and recent crash logs, with secrets redacted. Read it before you share it
+  help           Print this message or the help of the given subcommand(s)
 
 Options:
       --json               Machine-readable JSON output
@@ -74,6 +75,27 @@ Options:
       --project <PROJECT>  Target a registered project by id or alias instead of the current directory
   -h, --help               Print help
   -V, --version            Print version
+```
+
+### evyro capture-usage
+
+Read the CLI's documented status-line JSON from standard input and save the published quota fields for the desktop Usage panel. See [Desktop usage](DESKTOP.md#usage-and-continuation) for setup.
+
+```text
+Save reported limits from a Claude Code or Antigravity status-line hook
+
+Usage: evyro capture-usage [OPTIONS] <HARNESS>
+
+Arguments:
+  <HARNESS>  [possible values: claude-code, antigravity-cli]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
 ```
 
 ### evyro init

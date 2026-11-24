@@ -84,8 +84,19 @@ impl Store {
         }
         let t = match task_ref {
             Some(r) => Some(self.resolve_task(&p.id, r)?),
-            None => self.active_task(&p.id)?,
+            // No task named: continue the active task only if no other AI is
+            // working on it; otherwise start free and let the agent pick one.
+            None => match self.active_task(&p.id)? {
+                Some(t) if self.active_session_for_task(&t.id)?.is_some() => None,
+                t => t,
+            },
         };
+        if let Some(candidate) = t
+            .as_ref()
+            .filter(|task| crate::comparison::is_candidate(task))
+        {
+            self.task_root(candidate)?;
+        }
         let ses = self.start_session(
             &p.id,
             NewSession {

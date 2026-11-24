@@ -7,6 +7,7 @@ const SEARCH_MODES = [
   ["files", "Files", "Go to a file by name…"],
   ["text", "Text", "Search the code…"],
   ["symbols", "Symbols", "Go to a function, type or class…"],
+  ["chats", "Saved chats", "Search saved chat messages…"],
 ];
 state.search = { mode: "files", query: "", regex: false, caseSensitive: false, path: "" };
 
@@ -47,13 +48,14 @@ function splitPath(p) {
   return i < 0 ? ["", p] : [p.slice(0, i + 1), p.slice(i + 1)];
 }
 
-/** Open the search panel in a mode ("files", "text" or "symbols"). */
+/** Open the project search panel. */
 function openSearch(mode) {
   if (!state.project) { toast("Pick a project first", true); return; }
   const root = $("#palette-root");
   const s = state.search;
+  const pid = state.project.id;
   if (mode) s.mode = mode;
-  const close = () => clear(root);
+  const close = () => { clearTimeout(timer); seq++; clear(root); };
   const input = h("input", { type: "text", "aria-label": "Search", spellcheck: "false", autocomplete: "off" });
   input.value = s.query;
   const modes = h("div", { class: "seg", role: "tablist" });
@@ -93,13 +95,20 @@ function openSearch(mode) {
     const my = ++seq;
     const q = input.value.trim();
     s.query = q;
-    const pid = state.project.id;
-    if (s.mode !== "files" && !q) { rows = []; status.textContent = s.mode === "text" ? "Type to search every file Git knows about." : "Type part of a name."; drawRows(); return; }
+    const current = () => my === seq && input.isConnected && state.project?.id === pid;
+    if (!current()) return;
+    rows = [];
+    sel = 0;
+    drawRows();
+    if (s.mode !== "files" && !q) {
+      status.textContent = { text: "Type to search every file Git knows about.", chats: "Type a word or phrase from a saved chat.", symbols: "Type part of a name." }[s.mode];
+      return;
+    }
     status.textContent = "Searching…";
     try {
       if (s.mode === "files") {
         const hits = await invoke("find_files", { projectId: pid, query: q, limit: 60 });
-        if (my !== seq) return;
+        if (!current()) return;
         rows = hits.map((f) => {
           const [dir, base] = splitPath(f.path);
           const off = dir.length;
@@ -111,7 +120,7 @@ function openSearch(mode) {
         status.textContent = hits.length ? `${hits.length} file${hits.length === 1 ? "" : "s"}` : "No file matches";
       } else if (s.mode === "text") {
         const r = await invoke("search_text", { projectId: pid, pattern: q, regex: s.regex, caseSensitive: s.caseSensitive, path: s.path || null, limit: 300 });
-        if (my !== seq) return;
+        if (!current()) return;
         rows = r.hits.map((x) => ({ open: () => openFile(x.path, x.line), node: [
           h("span", { class: "sr-loc small" }, `${x.path}:${x.line}`),
           h("code", { class: "sr-code" }, markedLine(x.text.trim(), s)),
@@ -120,25 +129,32 @@ function openSearch(mode) {
         status.textContent = r.hits.length
           ? `${r.hits.length}${r.truncated ? "+" : ""} match${r.hits.length === 1 ? "" : "es"} in ${files} file${files === 1 ? "" : "s"} (${r.files_searched} searched)${r.truncated ? ". Showing the first ones; narrow the search to see more." : ""}`
           : `No matches in ${r.files_searched} files`;
-      } else {
+      } else if (s.mode === "symbols") {
         const syms = await invoke("find_symbols", { projectId: pid, query: q, limit: 60 });
-        if (my !== seq) return;
+        if (!current()) return;
         rows = syms.map((x) => ({ open: () => openFile(x.path, x.line), node: [
           h("span", { class: "pill sym-kind" }, x.kind),
           h("span", { class: "sr-name" }, x.name),
           h("span", { class: "sr-dir muted small" }, `${x.path}:${x.line}`),
         ] }));
         status.textContent = syms.length ? `${syms.length} symbol${syms.length === 1 ? "" : "s"}` : "No symbol matches";
+      } else {
+        const hits = await invoke("chat_search_saved", { projectId: pid, query: q });
+        if (!current()) return;
+        rows = hits.map((hit) => ({ open: () => openSavedMessage(pid, hit), node: [
+          h("span", { class: "sr-loc small" }, hit.title),
+          h("span", { class: "sr-code" }, markedLine(hit.excerpt, { query: q })),
+        ] }));
+        status.textContent = hits.length ? `${hits.length === 60 ? "First 60 matches" : plural(hits.length, "match", "matches")}` : "No matches in saved chats";
       }
     } catch (e) {
-      if (my !== seq) return;
+      if (!current()) return;
       rows = [];
       status.textContent = errMsg(e);
     }
-    sel = 0;
     drawRows();
   };
-  const schedule = () => { clearTimeout(timer); timer = setTimeout(run, s.mode === "files" ? 60 : 180); };
+  const schedule = () => { clearTimeout(timer); seq++; rows = []; drawRows(); timer = setTimeout(run, s.mode === "files" ? 60 : 180); };
   const refresh = () => { drawModes(); run(); input.focus(); };
   function keys(e) {
     if (e.key === "ArrowDown") { sel = Math.min(sel + 1, rows.length - 1); drawRows(); e.preventDefault(); }
@@ -155,7 +171,7 @@ function openSearch(mode) {
   input.addEventListener("input", schedule);
   input.addEventListener("keydown", keys);
   clear(root).append(h("div", { class: "modal-back palette-back", onclick: (e) => { if (e.target.classList.contains("palette-back")) close(); } },
-    h("div", { class: "palette search", role: "dialog", "aria-label": "Search the code" },
+    h("div", { class: "palette search", role: "dialog", "aria-label": "Search project" },
       h("div", { class: "search-head" }, modes, h("span", { class: "muted small" }, "Tab switches")),
       input, opts, status, list)));
   refresh();

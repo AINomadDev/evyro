@@ -74,16 +74,16 @@ Pick the lowest level that does the job.
 - **Secrets stay hidden.** Diffs pass through the same redaction as handoffs and exports.
 - **Locked-down pages.** Every response sets a strict Content-Security-Policy and `Cache-Control: no-store`. Requests larger than 1 MB are refused.
 
-## Use it from your phone with Tailscale
+## Use it from your phone away from home
 
-Tailscale gives your devices private addresses and encrypts the traffic between them.
+Tailscale lets your phone reach the Mac over mobile data or another Wi-Fi network. Evyro keeps running on the Mac and uses its own device pairing in addition to Tailscale access.
 
-1. Install Tailscale on the computer and the phone, and sign in to the same account on both.
-2. Find the computer's Tailscale address (`tailscale ip -4`, it starts with `100.`).
-3. Start Evyro on that address: `evyro serve --host 100.x.y.z`, or type it into the Address field in the app.
-4. On the phone, open `http://100.x.y.z:7420/` and enter a pairing code.
+1. Connect the Mac and phone to the same Tailscale network. Keep the Mac powered on, awake, and online while you are away.
+2. In the desktop app, open **Settings → Remote access**, leave the address at `127.0.0.1`, and select **Start serving**.
+3. Under **Away from home**, choose **Check private address**. Select **Enable private address** if needed. If Tailscale requires HTTPS setup in your browser, use **Copy setup command** and run it in Terminal. For example, when port 8443 is free, run `tailscale serve --bg --https=8443 http://127.0.0.1:7420`.
+4. Select **Pair over Tailscale**, name the phone, and choose its access. Open the private `https://…ts.net` address shown with the code, including its port, on your phone. Enter the one-time code within 10 minutes and bookmark the address. Test on mobile data before leaving. Use **approve** to answer permission requests or **control** to start and message ACP chats.
 
-You can also keep Evyro on `127.0.0.1` and publish it with `tailscale serve 7420`, which adds HTTPS with a certificate.
+Use Tailscale Serve for a private listener. Evyro flags a matching public Funnel route and looks for a free HTTPS port when other services already use Tailscale. The phone companion offers ACP chat control, approvals, project status, and diffs. Native terminal panes continue running on the Mac.
 
 On a phone you can add the page to your home screen. It opens like an app.
 

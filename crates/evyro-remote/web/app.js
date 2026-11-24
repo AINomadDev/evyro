@@ -12,6 +12,7 @@ let route = { name: "home" };
 const history_ = [];
 let feedSince = null;
 let feedRunning = false;
+let renderVersion = 0;
 const listeners = new Set();
 
 function h(tag, attrs, ...kids) {
@@ -48,7 +49,7 @@ async function api(method, path, body) {
   if (t) headers.Authorization = "Bearer " + t;
   const r = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined, cache: "no-store" });
   const data = r.status === 204 ? null : await r.json().catch(() => null);
-  if (r.status === 401 && path !== "/api/v1/pair") {
+  if (r.status === 401 && path !== "/api/v1/pair" && t === token()) {
     try { localStorage.removeItem(TOKEN_KEY); } catch { /* private mode */ }
     me = null;
     go({ name: "pair" }, true);
@@ -67,16 +68,25 @@ $("#back").addEventListener("click", () => { route = history_.pop() || { name: "
 function setTitle(t, back) { $("#title").textContent = t; $("#back").hidden = !back; }
 
 async function render() {
+  const version = ++renderVersion;
+  const current = () => version === renderVersion;
   listeners.clear();
   clear(main);
   if (!token() || route.name === "pair") return viewPair();
   if (!me) {
-    try { me = (await api("GET", "/api/v1/me")).device; } catch (e) { main.append(h("div", { class: "empty" }, e.message)); return; }
+    try {
+      const { device } = await api("GET", "/api/v1/me");
+      if (!current()) return;
+      me = device;
+    } catch (e) {
+      if (current()) main.append(h("div", { class: "empty" }, e.message));
+      return;
+    }
     startFeed();
   }
   const views = { home: viewHome, project: viewProject, task: viewTask, chat: viewChat, newchat: viewNewChat };
-  try { await (views[route.name] || viewHome)(); }
-  catch (e) { main.append(h("div", { class: "empty" }, e.message)); }
+  try { await (views[route.name] || viewHome)(current); }
+  catch (e) { if (current()) main.append(h("div", { class: "empty" }, e.message)); }
 }
 
 // ---------- live feed ----------
@@ -111,7 +121,7 @@ function notifyIfAsk(it) {
 // ---------- pair ----------
 function viewPair() {
   setTitle("Pair this device", false);
-  const code = h("input", { placeholder: "ABCD-EFGH", autocomplete: "one-time-code", autocapitalize: "characters", inputmode: "text" });
+  const code = h("input", { id: "pairing-code", placeholder: "ABCD-EFGH", autocomplete: "one-time-code", autocapitalize: "characters", inputmode: "text" });
   const go_ = h("button", { class: "btn primary" }, "Pair");
   go_.addEventListener("click", async () => {
     go_.disabled = true;
@@ -127,25 +137,30 @@ function viewPair() {
   });
   main.append(h("div", { class: "card stack" },
     h("p", null, "On your computer, run ", h("code", null, "evyro remote pair --name \"My phone\""), " and type the code here. It works once and expires in a few minutes."),
-    h("label", null, "Pairing code"), code, go_,
+    h("label", { for: "pairing-code" }, "Pairing code"), code, go_,
     h("div", { class: "hint" }, "The device gets its own token, which you can revoke any time with ", h("code", null, "evyro remote revoke"), ".")));
 }
 
 // ---------- home ----------
-async function viewHome() {
+async function viewHome(current) {
   setTitle("Evyro", false);
   const [projects, chats] = await Promise.all([api("GET", "/api/v1/projects"), api("GET", "/api/v1/chats")]);
+  if (!current()) return;
   const waiting = chats.filter((c) => c.waiting > 0);
-  if (waiting.length) main.append(h("div", { class: "banner", onclick: () => go({ name: "chat", id: waiting[0].id }) },
+  if (waiting.length) main.append(h("button", { class: "banner", onclick: () => go({ name: "chat", id: waiting[0].id }) },
     `${waiting.length} chat${waiting.length > 1 ? "s" : ""} waiting for your approval →`));
   main.append(h("h2", null, "Chats"));
   main.append(chats.length ? h("ul", { class: "list" }, chats.map(chatRow)) : h("div", { class: "card empty" }, "No chats running."));
   if (can("control")) main.append(h("div", { class: "row" }, h("button", { class: "btn", onclick: () => go({ name: "newchat" }) }, "+ New chat")));
   main.append(h("h2", null, "Projects"));
-  main.append(projects.length ? h("ul", { class: "list" }, projects.map((p) => h("li", { class: "tap", onclick: () => go({ name: "project", id: p.id, title: p.alias || p.name }) },
-    h("div", { class: "grow" }, h("div", null, h("strong", null, p.alias || p.name)), h("div", { class: "sub" }, p.root_path)), "›"))) : h("div", { class: "card empty" }, "No projects."));
+  main.append(projects.length ? h("ul", { class: "list" }, projects.map((p) => linkRow(() => go({ name: "project", id: p.id, title: p.alias || p.name }),
+    h("span", { class: "grow" }, h("strong", null, p.alias || p.name), h("span", { class: "sub" }, p.root_path)),
+    h("span", { "aria-hidden": "true" }, "›")))) : h("div", { class: "card empty" }, "No projects."));
   main.append(h("div", { class: "hint" }, `Signed in as ${me.name} (${me.scope} access).`));
   onFeed((it) => { if (it.type === "chat-state" && route.name === "home") render(); });
+}
+function linkRow(onclick, ...children) {
+  return h("li", { class: "link-row" }, h("button", { class: "tap", onclick }, ...children));
 }
 function chatState(c) {
   if (c.waiting > 0) return h("span", { class: "pill warn" }, "needs you");
@@ -155,13 +170,13 @@ function chatState(c) {
   return h("span", { class: "pill ok" }, "your turn");
 }
 function chatRow(c) {
-  return h("li", { class: "tap", onclick: () => go({ name: "chat", id: c.id }) },
-    h("div", { class: "grow" }, h("div", null, h("strong", null, c.agent || c.target), " ", c.task ? h("span", { class: "sub" }, c.task) : null),
-      h("div", { class: "sub" }, c.started_by === "desktop" ? "started on the desktop" : "started remotely")), chatState(c));
+  return linkRow(() => go({ name: "chat", id: c.id }),
+    h("span", { class: "grow" }, h("strong", null, c.agent || c.target), c.task ? " " + c.task : null,
+      h("span", { class: "sub" }, c.started_by === "desktop" ? "started on the desktop" : "started remotely")), chatState(c));
 }
 
 // ---------- project ----------
-async function viewProject() {
+async function viewProject(current) {
   setTitle(route.title || "Project", true);
   const pid = route.id;
   const tab = route.tab || "overview";
@@ -173,12 +188,14 @@ async function viewProject() {
   const base = `/api/v1/projects/${encodeURIComponent(pid)}`;
   if (tab === "overview") {
     const o = await api("GET", base + "/overview");
+    if (!current()) return;
     const hl = o.health || {};
     const counts = hl.task_counts || {};
     body.append(
       h("div", { class: "card" }, h("h3", null, "Active task"),
         o.active_task ? h("div", null, h("strong", null, `${o.active_task.key} ${o.active_task.title}`), h("div", { class: "sub" }, `${o.active_task.status}${o.owner ? " · " + o.owner.harness + " working" : ""}`)) : h("div", { class: "sub" }, "Nothing in progress."),
-        o.latest_checkpoint ? h("div", { class: "hint" }, "Last checkpoint ", ago(o.latest_checkpoint.created_at), ": ", o.latest_checkpoint.summary || "") : null),
+        o.latest_checkpoint ? h("div", { class: "hint" }, "Last checkpoint ", ago(o.latest_checkpoint.created_at),
+          checkpointDetails(o.latest_checkpoint)) : null),
       h("div", { class: "stats" }, ["in_progress", "ready", "blocked", "verified", "done"].map((k) => h("div", { class: "stat" }, h("b", null, String(counts[k] || 0)), k.replace("_", " ")))),
       o.pending_handoff ? h("div", { class: "card" }, h("strong", null, "Handoff waiting"), h("div", { class: "sub" }, `to ${o.pending_handoff.to_harness}`)) : null,
       o.git ? h("div", { class: "card" }, h("div", { class: "sub" }, `Branch ${o.git.branch || "?"} · ${o.git.files.length} changed`)) : null,
@@ -187,8 +204,10 @@ async function viewProject() {
     onFeed((it) => { if (it.type === "event" && it.event.project_id === pid) render(); });
   } else if (tab === "tasks") {
     const ts = await api("GET", base + "/tasks");
-    body.append(ts.length ? h("ul", { class: "list" }, ts.map((r) => h("li", { class: "tap", onclick: () => go({ name: "task", pid, key: r.task.key }) },
-      h("div", { class: "grow" }, h("div", null, h("strong", null, r.task.key), " ", r.task.title), h("div", { class: "sub" }, `${r.task.status} · ${r.criteria_met}/${r.criteria_total} criteria`)), "›"))) : h("div", { class: "card empty" }, "No open tasks."));
+    body.append(ts.length ? h("ul", { class: "list" }, ts.map((r) => linkRow(() => go({ name: "task", pid, key: r.task.key }),
+      h("span", { class: "grow" }, h("strong", null, r.task.key), " ", r.task.title,
+        h("span", { class: "sub" }, `${r.task.status} · ${r.criteria_met}/${r.criteria_total} criteria`)),
+      h("span", { "aria-hidden": "true" }, "›")))) : h("div", { class: "card empty" }, "No open tasks."));
   } else if (tab === "changes") {
     const c = await api("GET", base + "/changes");
     body.append(h("div", { class: "sub" }, `${c.files.length} changed file(s)${c.redactions ? ` · ${c.redactions} secret(s) hidden` : ""}. ${can("approve") ? "Tap a line to comment on it." : ""}`));
@@ -212,16 +231,19 @@ function diffNode(text, onLine) {
     if (m) { newLine = Number(m[1]); box.append(h("div", { class: "hunk" }, line)); continue; }
     const cls = line.startsWith("+") ? "add" : line.startsWith("-") ? "del" : "";
     const at = cls === "del" ? null : newLine;
-    const el = h("div", { class: cls + (onLine && at && file ? " tap" : "") }, line || " ");
-    if (onLine && at && file) { const f = file; el.addEventListener("click", () => onLine(f, at, line.slice(1))); }
+    const f = file;
+    const el = onLine && at && f && /^[ +]/.test(line)
+      ? h("button", { class: cls + " tap", "aria-label": `Comment on ${f} line ${at}: ${line.slice(1)}`,
+        onclick: () => onLine(f, at, line.slice(1)) }, line)
+      : h("div", { class: cls }, line || " ");
     box.append(el);
-    if (cls !== "del") newLine++;
+    if (/^[ +]/.test(line)) newLine++;
   }
   return box;
 }
 
 function commentDialog(base, path, line, snippet) {
-  const ta = h("textarea", { placeholder: "What should the agent change here?" });
+  const ta = h("textarea", { "aria-label": "Review comment", placeholder: "What should the agent change here?" });
   const send = h("button", { class: "btn primary" }, "Add comment");
   const card = h("div", { class: "card stack" }, h("strong", null, `${path}:${line}`), h("pre", null, snippet), ta,
     h("div", { class: "row" }, send, h("button", { class: "btn", onclick: () => card.remove() }, "Cancel")));
@@ -235,25 +257,38 @@ function commentDialog(base, path, line, snippet) {
 }
 
 // ---------- task ----------
-async function viewTask() {
+function checkpointDetails(c) {
+  return [
+    c.summary ? h("div", null, c.summary) : null,
+    (c.completed || []).map((item) => h("div", null, "Done: ", item)),
+    c.next_action ? h("div", null, "Next: ", c.next_action) : null,
+  ];
+}
+
+async function viewTask(current) {
   setTitle(route.key, true);
   const d = await api("GET", `/api/v1/projects/${encodeURIComponent(route.pid)}/tasks/${encodeURIComponent(route.key)}`);
+  if (!current()) return;
   main.append(h("div", { class: "card" }, h("strong", null, d.task.title), h("div", { class: "sub" }, `${d.task.status} · ${d.task.kind} · P${d.task.priority}`),
     d.task.description ? h("p", null, d.task.description) : null));
   main.append(h("h2", null, "Acceptance criteria"));
-  main.append(d.criteria.length ? h("ul", { class: "list" }, d.criteria.map((c) => h("li", null, h("span", null, c.met ? "✓" : "○"), h("div", { class: "grow" }, c.text)))) : h("div", { class: "card empty" }, "None."));
+  main.append(d.criteria.length ? h("ul", { class: "list" }, d.criteria.map((c) => h("li", null,
+    h("span", { class: "sub" }, c.met && c.counts ? "Met" : "Open"),
+    h("div", { class: "grow" }, c.text)))) : h("div", { class: "card empty" }, "None."));
   main.append(h("h2", null, "Checkpoints"));
-  main.append(d.checkpoints.length ? h("ul", { class: "list" }, d.checkpoints.map((c) => h("li", null, h("div", { class: "grow" }, c.summary || "(no summary)", h("div", { class: "sub" }, `${c.trigger || ""} · ${ago(c.created_at)}`))))) : h("div", { class: "card empty" }, "None yet."));
+  main.append(d.checkpoints.length ? h("ul", { class: "list" }, d.checkpoints.map((c) => h("li", null,
+    h("div", { class: "grow" }, checkpointDetails(c), h("div", { class: "sub" }, `${c.trigger || ""} · ${ago(c.created_at)}`))))) : h("div", { class: "card empty" }, "None yet."));
 }
 
 // ---------- chats ----------
-async function viewNewChat() {
+async function viewNewChat(current) {
   setTitle("New chat", true);
   const [projects, agents] = await Promise.all([api("GET", "/api/v1/projects"), api("GET", "/api/v1/agents")]);
-  const proj = h("select", null, projects.map((p) => h("option", { value: p.id }, p.alias || p.name)));
+  if (!current()) return;
+  const proj = h("select", { id: "chat-project" }, projects.map((p) => h("option", { value: p.id }, p.alias || p.name)));
   const ready = agents.filter((a) => a.command);
-  const agent = h("select", null, (ready.length ? ready : agents).map((a) => h("option", { value: a.harness }, a.display_name + (a.command ? "" : " (not installed)"))));
-  const task = h("input", { placeholder: "T-1 (optional: the active task or a waiting handoff)" });
+  const agent = h("select", { id: "chat-agent" }, (ready.length ? ready : agents).map((a) => h("option", { value: a.harness }, a.display_name + (a.command ? "" : " (not installed)"))));
+  const task = h("input", { id: "chat-task", placeholder: "T-1 (optional: the active task or a waiting handoff)" });
   const start = h("button", { class: "btn primary" }, "Start chat");
   start.addEventListener("click", async () => {
     start.disabled = true;
@@ -262,25 +297,31 @@ async function viewNewChat() {
       go({ name: "chat", id: info.id }, true);
     } catch (e) { toast(e.message, true); start.disabled = false; }
   });
-  main.append(h("div", { class: "card stack" }, h("label", null, "Project"), proj, h("label", null, "Agent"), agent, h("label", null, "Task"), task, start,
+  main.append(h("div", { class: "card stack" }, h("label", { for: "chat-project" }, "Project"), proj,
+    h("label", { for: "chat-agent" }, "Agent"), agent, h("label", { for: "chat-task" }, "Task"), task, start,
     h("div", { class: "hint" }, "The agent runs on the computer that runs evyro serve, under an Evyro session. It asks before each tool call, and you answer here.")));
 }
 
-async function viewChat() {
+async function viewChat(current) {
   const id = route.id;
   let data = await api("GET", `/api/v1/chats/${encodeURIComponent(id)}`);
+  if (!current()) return;
   setTitle(data.info.agent || data.info.title, true);
-  const head = h("div", { class: "row" });
+  const head = h("div", { class: "stack" });
   const log = h("div");
   const asks = h("div");
   main.append(head, log, asks);
   const titles = {};
   let msg = null;
+  let composer = null;
+  let draftRequested = false;
+  let edited = false;
   const drawHead = () => {
     const i = data.info;
-    clear(head).append(chatState(i), h("span", { class: "sub grow" }, `${i.task || ""} ${i.cwd ? "· " + i.cwd : ""}`),
+    clear(head).append(h("div", { class: "row" }, chatState(i), h("span", { class: "grow" }),
       can("approve") && i.busy ? h("button", { class: "btn", onclick: () => act("cancel") }, "Stop turn") : null,
-      can("control") && i.running ? h("button", { class: "btn danger", onclick: () => { if (confirm("End this chat? The agent stops and Evyro checkpoints.")) act("close", true); } }, "End chat") : null);
+      can("control") && i.running ? h("button", { class: "btn danger", onclick: () => { if (confirm("End this chat? The agent stops and Evyro checkpoints.")) act("close", true); } }, "End chat") : null),
+      i.task || i.cwd ? h("div", { class: "sub" }, [i.task, i.cwd].filter(Boolean).join(" · ")) : null);
   };
   const act = async (what, leave) => {
     try { await api("POST", `/api/v1/chats/${encodeURIComponent(id)}/${what}`); if (leave) go({ name: "home" }, true); }
@@ -317,19 +358,37 @@ async function viewChat() {
   for (const it of data.log) add(it);
   drawHead(); drawAsks();
   if (can("control")) {
-    const ta = h("textarea", { placeholder: "Message the agent" });
+    const ta = h("textarea", { "aria-label": "Message the agent", placeholder: "Message the agent" });
     const send = h("button", { class: "btn primary" }, "Send");
+    composer = { ta, send };
+    ta.value = data.draft || "";
+    ta.addEventListener("input", () => { edited = true; });
     send.addEventListener("click", async () => {
       if (!ta.value.trim()) return;
-      try { await api("POST", `/api/v1/chats/${encodeURIComponent(id)}/messages`, { text: ta.value }); ta.value = ""; }
+      const text = ta.value;
+      try { await api("POST", `/api/v1/chats/${encodeURIComponent(id)}/messages`, { text }); if (ta.value === text) ta.value = ""; }
       catch (e) { toast(e.message, true); }
     });
     main.append(h("div", { class: "composer" }, ta, send));
   }
+  const updateComposer = async () => {
+    if (!composer) return;
+    const { ta, send } = composer;
+    send.disabled = !data.info.running || data.info.busy || data.info.state !== "ready";
+    if (!data.info.draft_available) { if (!edited) ta.value = ""; return; }
+    if (data.draft || edited || draftRequested) return;
+    draftRequested = true;
+    try {
+      const response = await api("GET", `/api/v1/chats/${encodeURIComponent(id)}`);
+      if (!edited && data.info.draft_available && typeof response.draft === "string") ta.value = data.draft = response.draft;
+    } catch { /* Retry on the next state change. */ }
+    finally { draftRequested = false; }
+  };
+  updateComposer();
   let next = data.next_seq;
   onFeed(async (it) => {
     if (it.chat !== id && !(it.type === "chat-state" && it.info && it.info.id === id)) return;
-    if (it.type === "chat-state") { data.info = it.info; drawHead(); }
+    if (it.type === "chat-state") { data.info = it.info; drawHead(); updateComposer(); }
     if (it.type === "chat-item") {
       if (it.item_seq < next) return;
       if (it.item_seq > next) { // missed something: fetch the gap

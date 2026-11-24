@@ -73,6 +73,9 @@ const FIX = {
     ], latest_checkpoint: { created_at: new Date().toISOString(), trigger: "manual", next_action: "write the test" }, recovered: [],
   },
   list_tasks: [{ task, criteria_met: 0, criteria_total: 1, owner: "claude-code", blocked_by: [] }],
+  // The shared-context panel reads the active task's criteria; their shape comes from the real CLI.
+  task_detail: { task, criteria: evj("task", "show", "T-1").acceptance, dependencies: [], blocked_by: [], owner: null,
+    verifications: [], checkpoints: [], comments: [], allowed_next: ["in_review", "blocked"] },
   repo_changes: { files: [{ path: "app.txt", status: " M" }, { path: "new.rs", status: "??" }],
     diff: "diff --git a/app.txt b/app.txt\nindex 1..2 100644\n--- a/app.txt\n+++ b/app.txt\n@@ -1 +1,2 @@\n one\n+two\n", redactions: 0, truncated: false },
   list_handoffs: evj("handoffs"),
@@ -112,7 +115,36 @@ const FIX = {
       core: {
         invoke: async (cmd, args) => {
           window.__mockLog(cmd);
+          if (cmd === "list_sessions" && window.__sessions) return window.__sessions;
           if (cmd in fix) return JSON.parse(JSON.stringify(fix[cmd]));
+          if (cmd === "comparison_list") return window.__comparisons || [];
+          if (cmd === "comparison_create") {
+            const run = { id: "cmp_fixture", base: "abcd1234ef002102abfe", preferred: null,
+              candidates: args.targets.map((target, i) => ({ key: `T-${i + 2}`, target, worktree: `/scratch/comparison/${i}`, branch: `feature/compare-fixture-${i}` })) };
+            (window.__comparisons ||= []).push(run);
+            return run;
+          }
+          if (cmd === "comparison_results") return { comparison: window.__comparisons.find((r) => r.id === args.id), results: [
+            { status: "in_review", running: false, diff: "+first candidate", verification: { passed: true, command: ["cargo", "test"] } },
+            { status: "in_progress", running: false, diff: "+second candidate", verification: { passed: false, command: ["cargo", "test"] }, verification_current: false },
+          ] };
+          if (cmd === "run_verification" && args.kind === "test") { (window.__verified ||= []).push(args.task); return { receipt: { passed: true }, output_tail: "" }; }
+          if (cmd === "comparison_prefer") { window.__comparisons.find((r) => r.id === args.id).preferred = args.candidate; return null; }
+          if (cmd === "comparison_preview_stage") {
+            if (window.__blockStagePreview) throw new Error("Commit or set aside changes in the destination checkout before staging");
+            return window.__stagePlan = {
+              candidate: window.__comparisons.find((r) => r.id === args.id).preferred, candidate_commit: "cd5d5e123456789",
+              destination: "/scratch/my-app", destination_branch: "main", destination_commit: "abcd1234ef002102abfe",
+              files: ["app.txt", "image.bin"],
+            };
+          }
+          if (cmd === "comparison_stage") {
+            if (JSON.stringify(args.plan) !== JSON.stringify(window.__stagePlan) || args.id !== "cmp_fixture" || args.task !== "T-1") {
+              throw new Error("Stage did not receive the reviewed plan");
+            }
+            window.__staged = args.plan.candidate;
+            return null;
+          }
           if (cmd === "add_target") return args.target;
           // Skills: the real list, with on/off kept in memory.
           const sk = (window.__skills = window.__skills || fix.skills_list);
@@ -128,6 +160,11 @@ const FIX = {
           const rm = (window.__rm = window.__rm || { running: false, devices: [] });
           if (cmd === "remote_status") return rm.running ? { running: true, url: "http://" + rm.host + ":" + rm.port + "/", reach: "loopback" } : { running: false };
           if (cmd === "remote_start") { Object.assign(rm, { running: true, host: args.host, port: args.port }); return { running: true }; }
+          if (cmd === "remote_tailscale") {
+            if (rm.public) return { state: "public" };
+            if (args.enable) rm.private = true;
+            return rm.private ? { state: "ready", url: "https://mac.test-tailnet.ts.net:8443/" } : { state: "setup", port: rm.port, https_port: 8443 };
+          }
           if (cmd === "remote_stop") { rm.running = false; return null; }
           if (cmd === "remote_devices") return JSON.parse(JSON.stringify(rm.devices));
           if (cmd === "remote_pair") {
@@ -149,21 +186,64 @@ const FIX = {
             const open = rv.filter((c) => c.status === "open");
             const prompt = open.map((c, i) => `${i + 1}. ${c.path}${c.line ? ":" + c.line : ""}\n   ${c.body}`).join("\n");
             if (args.markSent) open.forEach((c) => (c.status = "sent"));
-            return { prompt, count: open.length };
+            return { prompt, count: open.length, ids: open.map((c) => c.id) };
+          }
+          if (cmd === "review_mark_sent") {
+            rv.filter((c) => c.project_id === args.projectId && c.status === "open" && args.ids.includes(c.id)).forEach((c) => (c.status = "sent"));
+            return null;
           }
           // Terminals: a stand-in that echoes input back, like a PTY would.
           const terms = (window.__terms = window.__terms || []);
+          if (cmd === "context_packet") return { text: "Terminal task context draft", packet: { approx_tokens: 5 } };
+          if (cmd === "agent_quota") {
+            if (window.__quotaOverrides?.[args.target]) return window.__quotaOverrides[args.target];
+            if (args.target === "codex") return { state: "ready", windows: [{ remaining: 73, minutes: 300 }], credits: null, observed_at: new Date().toISOString(), stale: true };
+            if (args.target === "antigravity-cli") return { state: "ready", windows: [{ label: "Gemini", remaining: 26, minutes: 300 }], credits: null, observed_at: new Date().toISOString(), source: "Antigravity CLI" };
+            if (args.target === "claude-code") return { state: "setup", capture_command: "evyro capture-usage claude-code" };
+            return { state: "unavailable" };
+          }
+          if (cmd === "opencode_usage") return { state: "stats", input: 1234, output: 500, cost: 0.15, observed_at: new Date().toISOString(), source: "OpenCode stats" };
+          if (cmd === "handoff_checkpoint") return { summary: "Reviewed the existing limiter.", completed: ["Found the rate limit tests"], remaining: ["Add a 429 test"], next_action: "Write the failing test first" };
+          if (cmd === "prepare_handoff") {
+            window.__handoff = args.input;
+            return { record: { id: "hnd_continue" } };
+          }
+          if (cmd === "handoff_detail" && args.handoffId === "hnd_continue") return {
+            record: { id: "hnd_continue", to_harness: window.__handoff.to, status: "prepared", quality: { met: 1, total: 1, criteria: [] } },
+            contract: { task: { key: window.__handoff.task } }, integrity_ok: true,
+            markdown: "Reviewed the existing limiter.", resume_prompt: "Continue T-1. Write the failing test first."
+          };
           if (cmd === "term_list") return JSON.parse(JSON.stringify(terms));
           if (cmd === "term_open") {
-            const t = { id: "term_" + (terms.length + 1), title: args.kind === "agent" ? `${args.target} on ${args.task}` : "Shell", kind: args.kind,
-              target: args.target, task: args.task, project_id: args.projectId, cwd: "/repo", command: "evyro run", started_at: Math.floor(Date.now() / 1000), running: true, exit_code: null };
-            terms.push(t);
-            setTimeout(() => window.__emit("term-output", { id: t.id, data: "\x1b[2m[evyro] launching Claude Code for target 'claude-code' (session ses_01a2)\x1b[0m\r\n\r\n\x1b[1;35m*\x1b[0m Reading .evyro/CURRENT_TASK.md\r\n  T-1 Add rate limiting. Next: write the test\r\n\x1b[1;35m*\x1b[0m Writing tests/limiter.rs\r\n\x1b[32m✓\x1b[0m evyro verify -- cargo test (12 passed)\r\nagent ready\r\n", end: 1 }), 50);
+            window.__lastTermOpen = args;
+            const earlier = terms.find((t) => t.id === args.resumeId);
+            const t = { id: earlier?.id || "term_" + (terms.length + 1), title: args.title || (args.kind === "agent" ? `${args.target} on ${args.task}` : "Shell"), kind: args.kind,
+              target: args.target, task: args.task, project_id: args.projectId, cwd: "/repo", command: "evyro run", started_at: earlier?.started_at || Math.floor(Date.now() / 1000), running: true, exit_code: null };
+            if (earlier) terms[terms.indexOf(earlier)] = t;
+            else terms.push(t);
+            const output = "\x1b[?2004h\x1b[2m[evyro] launching Claude Code for target 'claude-code' (session ses_01a2)\x1b[0m\r\n\r\n\x1b[1;35m*\x1b[0m Reading .evyro/CURRENT_TASK.md\r\n  T-1 Add rate limiting. Next: write the test\r\n\x1b[1;35m*\x1b[0m Writing tests/limiter.rs\r\n\x1b[32m✓\x1b[0m evyro verify -- cargo test (12 passed)\r\nagent ready\r\n";
+            setTimeout(() => {
+              const snapshots = (window.__snap ||= {});
+              const previous = earlier ? snapshots[t.id] + "\r\n[Resumed Evyro thread]\r\n" : "";
+              snapshots[t.id] = previous + output;
+              window.__emit("term-output", { id: t.id, data: output, end: snapshots[t.id].length });
+            }, 50);
             return t;
           }
-          if (cmd === "term_snapshot") return { data: "", end: 0 };
+          if (cmd === "term_snapshot") {
+            const startup = window.__startupSnapshots?.[args.id];
+            if (startup) return args.attach ? startup : { data: startup.data + startup.live, end: startup.end };
+            const d = (window.__snap || {})[args.id];
+            if (d !== undefined) return { data: d, end: d.length };
+            return terms.some((t) => t.id === args.id && /^(term_9|term_own)$/.test(t.id)) ? { data: "\x1b[?2004h", end: 8 } : { data: "", end: 0 };
+          }
+          if (cmd === "release_session") { window.__released = args.confirmed === true ? args.sessionId : "unconfirmed"; return { session_id: args.sessionId, harness: "claude-code", checkpoint_id: "chk_1", changed_since_last_checkpoint: [] }; }
           if (cmd === "term_resize") return null;
-          if (cmd === "term_write") window.__lastTermWrite = (window.__lastTermWrite || "") + args.data;
+          if (cmd === "term_write") {
+            if (window.__rejectWrite === args.id) throw { message: "Test recipient is unavailable" };
+            window.__lastTermWrite = (window.__lastTermWrite || "") + args.data;
+            (window.__writes ||= []).push(args);
+          }
           if (cmd === "term_write") { setTimeout(() => window.__emit("term-output", { id: args.id, data: args.data, end: 0 }), 10); return null; }
           if (cmd === "term_close") { window.__terms = terms.filter((t) => t.id !== args.id); return null; }
           // Chat threads (ACP): a stand-in agent that plans, asks permission, edits and answers.
@@ -172,16 +252,38 @@ const FIX = {
           const upd = (id, update) => say(id, { t: "update", update });
           const setc = (id, patch) => { Object.assign(chats[id].info, patch); window.__emit("chat-state", JSON.parse(JSON.stringify(chats[id].info))); };
           if (cmd === "acp_agents") return [{ harness: "codex", display_name: "Codex CLI (Codex ACP adapter)", command: "/usr/local/bin/codex-acp", install: "npm install -g @agentclientprotocol/codex-acp", evidence: "" },
-            { harness: "gemini", display_name: "Gemini CLI", command: null, install: "npm install -g @google/gemini-cli", evidence: "" }];
+            { harness: "gemini", display_name: "Gemini CLI", command: null, install: "npm install -g @google/gemini-cli", evidence: "" },
+            { harness: "antigravity-cli", command: "agy" }, { harness: "opencode", command: "opencode" }];
           if (cmd === "chat_list") return Object.values(chats).map((c) => JSON.parse(JSON.stringify(c.info)));
-          if (cmd === "chat_log") return JSON.parse(JSON.stringify({ info: chats[args.id].info, log: chats[args.id].log }));
+          if (cmd === "chat_search_saved") {
+            const query = args.query.toLowerCase();
+            return Object.values(chats).filter(({ info }) => info.archived && info.project_id === args.projectId).flatMap(({ info, log }) =>
+              log.flatMap((item, message_index) => {
+                const excerpt = item.t === "user" ? item.text
+                  : item.update?.sessionUpdate === "agent_message_chunk" ? item.update.content.text : "";
+                return typeof excerpt === "string" && excerpt.toLowerCase().includes(query) ? [{ id: info.id, title: info.title, message_index, excerpt }] : [];
+              }));
+          }
+          if (cmd === "chat_log") return JSON.parse(JSON.stringify({ info: chats[args.id].info, log: chats[args.id].log, draft: chats[args.id].info.draft_available ? "Draft for the rate limit task" : null }));
           if (cmd === "chat_open") {
             const id = "chat_" + (Object.keys(chats).length + 1);
             const info = { id, kind: "chat", title: `${args.target} on ${args.task}`, target: args.target, task: args.task, project_id: args.projectId, started_at: Math.floor(Date.now() / 1000), running: true, busy: true, state: "starting", exit_code: null, command: "ACP chat" };
             chats[id] = { info, log: [] };
-            setTimeout(() => {
-              setc(id, { state: "ready", agent: "Codex", session: "ses_01chat", cwd: "/repo" });
-              say(id, { t: "user", text: { context: "Work on task T-1 \"Add rate limiting\"..." } });
+            setTimeout(() => setc(id, { state: "ready", busy: false, draft_available: true, agent: "Codex", session: "ses_01chat", cwd: "/repo", model_choice: {
+              current: "fast", options: [{ value: "fast", name: "Fast" }, { value: "deep", name: "Deep" }],
+            } }), 60);
+            return JSON.parse(JSON.stringify(info));
+          }
+          if (cmd === "chat_set_model") {
+            window.__modelChange = args;
+            const active = chats[args.id].info;
+            setc(args.id, { model_choice: { ...active.model_choice, current: args.model } });
+            return null;
+          }
+          if (cmd === "chat_send" && chats[args.id].info.draft_available) {
+              const id = args.id;
+              setc(id, { busy: true, draft_available: false });
+              say(id, { t: "user", text: args.text });
               upd(id, { sessionUpdate: "plan", entries: [{ content: "Read the limiter", status: "completed" }, { content: "Add a test for 429", status: "in_progress" }, { content: "Run the tests", status: "pending" }] });
               upd(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "I read the task through Evyro. " } });
               upd(id, { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Next I add a test for the 429 path." } });
@@ -190,8 +292,7 @@ const FIX = {
                 content: [{ type: "diff", path: "/repo/tests/limiter.rs", oldText: "#[test]\nfn allows() {}\n", newText: "#[test]\nfn allows() {}\n#[test]\nfn blocks_after_100() {}\n" }] });
               say(id, { t: "permission", request: 7, params: { sessionId: "s", toolCall: { toolCallId: "c2", title: "Edit tests/limiter.rs", kind: "edit" },
                 options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }, { optionId: "always", name: "Always allow", kind: "allow_always" }, { optionId: "reject", name: "Reject", kind: "reject_once" }] } });
-            }, 60);
-            return JSON.parse(JSON.stringify(info));
+            return null;
           }
           if (cmd === "chat_permission") {
             const id = args.id;
@@ -217,7 +318,11 @@ const FIX = {
             return null;
           }
           if (cmd === "chat_cancel") return null;
-          if (cmd === "chat_close") { delete chats[args.id]; return null; }
+          if (cmd === "chat_close") {
+            if (args.forget === false) Object.assign(chats[args.id].info, { running: false, busy: false, waiting: 0, archived: true, draft_available: false });
+            else delete chats[args.id];
+            return null;
+          }
           throw { code: "not_mocked", message: `no fixture for ${cmd}` };
         },
       },
@@ -229,7 +334,7 @@ const FIX = {
 
   const step = async (name, fn) => {
     try { await fn(); console.log("PASS  " + name); }
-    catch (e) { errors.push(`${name}: ${e.message.split("\n").slice(0, process.env.SMOKE_DEBUG ? 4 : 1).join(" / ")}`); console.log("FAIL  " + name); }
+    catch (e) { errors.push(`${name}: ${e.message.split("\n").slice(0, process.env.SMOKE_DEBUG ? 18 : 1).join(" / ")}`); console.log("FAIL  " + name); }
   };
   const tab = (v) => page.click(`.tab[data-view="${v}"]`);
 
@@ -245,8 +350,11 @@ const FIX = {
     // The added line is line 2 of the new file.
     if ((await page.textContent(".diff .add .ln.can")).trim() !== "2") throw new Error("line number");
   });
-  await step("handoffs list", async () => { await tab("handoffs"); await page.waitForSelector("table tbody tr"); });
-  await step("sessions", async () => { await tab("sessions"); await page.waitForTimeout(200); });
+  await step("history: handoffs and sessions on one screen", async () => {
+    await tab("history");
+    await page.waitForSelector("table tbody tr");
+    await page.waitForSelector("h2:text-is('Sessions')");
+  });
   await step("decisions and memory", async () => { await tab("knowledge"); await page.waitForSelector("text=Store"); });
   await step("AI targets grouped by kind", async () => {
     await tab("agents");
@@ -262,7 +370,7 @@ const FIX = {
     await page.waitForSelector(".modal", { state: "detached" });
   });
   await step("agent thread runs in the window", async () => {
-    await tab("threads");
+    await tab("workspace");
     await page.waitForSelector("text=Work with an AI right here");
     await page.click("text=New agent thread");
     await page.waitForSelector(".modal select");
@@ -275,8 +383,8 @@ const FIX = {
     await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("agent readyhi") || document.querySelector(".xterm-rows")?.textContent.includes("hi"));
     await page.evaluate(() => { window.__terms[0].running = false; window.__terms[0].exit_code = 0; window.__emit("term-exit", { id: "term_1", code: 0 }); });
     await page.waitForSelector(".thread-item >> text=exit 0");
-    await tab("overview");
-    await tab("threads");
+    await tab("workspace");
+    await tab("workspace");
     await page.waitForFunction(() => document.querySelector(".xterm-rows")?.textContent.includes("agent ready"));
   });
   await step("review comments: comment on a line and send to a running agent", async () => {
@@ -291,19 +399,37 @@ const FIX = {
     await page.waitForSelector("text=1 open comment");
     await page.click("text=Send comments to agent");
     await page.waitForSelector(".rv-preview >> text=app.txt:2");
+    await page.evaluate(() => { window.__rejectWrite = "term_9"; });
+    try {
+      await page.click(".modal .btn.primary");
+      await page.waitForSelector(".modal .btn.primary:enabled");
+      if (await page.evaluate(() => window.__rv.some((c) => c.status === "sent"))) throw new Error("a failed delivery marked the review note as sent");
+    } finally { await page.evaluate(() => { window.__rejectWrite = null; }); }
+    await page.evaluate(() => invoke("add_review_comment", { projectId: state.project.id, path: "app.txt", body: "Check behavior after reload" }));
     await page.click(".modal .btn.primary");
     await page.waitForSelector(".modal", { state: "detached" });
     await page.waitForFunction(() => window.__lastTermWrite && window.__lastTermWrite.includes("Read the limit from config"));
     await page.waitForSelector(".rv-comment.sent");
-    await page.click(".rv-comment >> text=Resolve");
-    await page.waitForSelector(".rv-comment", { state: "detached" });
+    if (await page.evaluate(() => window.__rv.find((c) => c.body === "Check behavior after reload").status !== "open"
+      || window.__lastTermWrite.includes("Check behavior after reload"))) throw new Error("a late note was included in the earlier review batch");
+    await page.click(".rv-comment.sent >> text=Resolve");
+    await page.waitForSelector(".rv-comment.sent", { state: "detached" });
   });
   await step("chat thread over ACP: plan, permission, diff, reply", async () => {
-    await tab("threads");
+    await tab("workspace");
     await page.click("text=+ Chat");
+    await page.selectOption(".modal select >> nth=0", "codex");
     await page.waitForSelector(".modal >> text=Ready:");
     await page.selectOption(".modal select >> nth=1", "T-1");
     await page.click(".modal .btn.primary");
+    await page.waitForFunction(() => document.querySelector(".chat-input")?.value === "Draft for the rate limit task");
+    if (await page.locator(".chat-msg.you").count()) throw new Error("opening a chat submitted the draft");
+    const chatId = await page.locator(".chat-input").getAttribute("data-id");
+    await page.getByLabel("Chat model").selectOption("deep");
+    await page.waitForFunction((id) => window.__modelChange?.id === id && window.__modelChange?.model === "deep", chatId);
+    if ((await page.inputValue(".chat-input")) !== "Draft for the rate limit task") throw new Error("changing a model cleared the draft");
+    if (await page.locator(".chat-msg.you").count()) throw new Error("changing a model submitted a prompt");
+    await page.click(".chat-send");
     await page.waitForSelector(".chat-perm.open >> text=Edit tests/limiter.rs");
     await page.waitForSelector(".chat-plan >> text=Add a test for 429");
     await page.waitForSelector(".chat-diff >> text=+ fn blocks_after_100() {}");
@@ -313,16 +439,331 @@ const FIX = {
     await page.waitForSelector(".chat-tool.completed >> text=Edit tests/limiter.rs");
     await page.waitForSelector(".chat-note >> text=Wrote tests/limiter.rs");
     await page.waitForSelector(".thread-item >> text=your turn");
-    await page.fill("#chat-input", "thanks");
+    await page.fill(".chat-input", "thanks");
     await page.keyboard.press("Enter");
     await page.waitForSelector(".chat-msg.agent >> text=You said: thanks");
-    await tab("overview");
-    await tab("threads");
+    await tab("workspace");
+    await tab("workspace");
     await page.click(".thread-item >> text=chat");
     await page.waitForSelector(".chat-msg.agent >> text=You said: thanks");
+    await tab("changes");
+    await page.click("text=Send comments to agent");
+    await page.getByLabel("Send to").selectOption(chatId);
+    await page.click(".modal .btn.primary");
+    await page.waitForSelector(".rv-comment.sent >> text=Check behavior after reload");
+    await page.click(".rv-comment.sent >> text=Resolve");
+    await page.waitForSelector(".rv-comment.sent", { state: "detached" });
+    await tab("workspace");
+    await page.waitForSelector(".chat-msg.agent >> text=Check behavior after reload");
     await page.click("text=End chat");
     await page.click(".modal >> text=Stop it");
     await page.waitForFunction(() => !document.querySelector(".chat"));
+    await page.locator("#search-btn").click();
+    await page.getByRole("tab", { name: "Saved chats" }).click({ timeout: 3000 });
+    await page.getByRole("textbox", { name: "Search", exact: true }).fill("you said: thanks");
+    await page.waitForSelector(".search-row mark >> text=You said: thanks");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector(".chat-search-hit:focus >> text=You said: thanks");
+    if (await page.locator(".chat-input, .chat-send, .chat-perm.open").count()) throw new Error("saved chat still offers live controls");
+    await page.getByRole("button", { name: "Delete transcript", exact: true }).click();
+    await page.locator(".modal").getByRole("button", { name: "Delete transcript", exact: true }).click();
+    await page.waitForSelector(".thread-item:has-text('saved chat')", { state: "detached" });
+    await page.locator("#search-btn").click();
+    await page.waitForSelector(".search-status >> text=No matches in saved chats");
+    await page.keyboard.press("Escape");
+  });
+
+  // ---------- multi-AI workspace ----------
+  const setPaneCount = async (n) => {
+    await page.locator(".ws-layout input").fill(String(n));
+    await page.locator(".ws-layout input").blur();
+    await page.waitForFunction((count) => document.querySelectorAll(".ws-grid > .pane").length === count, n);
+  };
+  await step("workspace: two AIs side by side, each pane shows what it shares", async () => {
+    await tab("workspace");
+    await setPaneCount(1);
+    await page.click(".thread-item:has-text('codex on T-1')");
+    await page.click(".side-new >> text=+ Agent");
+    await page.waitForSelector(".modal select");
+    await page.selectOption(".modal select >> nth=1", "T-1");
+    await page.click(".modal .btn.primary");
+    await page.waitForSelector(".modal", { state: "detached" });
+    await page.waitForFunction(() => document.querySelectorAll(".ws-grid > .pane[data-id]").length === 2);
+    await page.waitForFunction(() => document.querySelector(".ws-input").value === "Terminal task context draft");
+    await page.fill(".ws-input", "");
+    await page.waitForFunction(() => document.querySelectorAll(".ws-grid .pane .xterm").length === 2);
+    await page.waitForSelector(".pane.focus");
+    await page.waitForSelector(".sees >> text=task T-1");
+    await page.waitForSelector(".sees >> text=1 decision");
+    // The sidebar groups threads by state.
+    await page.waitForSelector(".side-group >> text=Working");
+    await page.waitForSelector(".side-group >> text=Ended");
+    await page.waitForSelector("#statusbar >> text=2 AIs running");
+    // A missing value must never show up as the word "null" or "undefined".
+    const stray = await page.evaluate(() => [".ws", "#ctx", "#statusbar", "#side-threads"].map((q) => document.querySelector(q).innerText).join("\n").match(/[^\n]*\b(?:null|undefined)\b[^\n]*/));
+    if (stray) throw new Error(`"${stray[0]}" shown in the window`);
+    // Same for a project with no checkpoint yet.
+    const strip = await page.evaluate(() => {
+      const old = state.ctx, el = document.createElement("div");
+      state.ctx = { ...old, overview: { ...old.overview, latest_checkpoint: null } };
+      fillSees(el, { task: null });
+      state.ctx = old;
+      return el.textContent;
+    });
+    if (/null|undefined/.test(strip)) throw new Error("strip shows: " + strip);
+  });
+  await step("starting the same AI again points to the thread already running", async () => {
+    await page.click(".side-new >> text=+ Agent");
+    await page.waitForSelector(".modal select");
+    await page.selectOption(".modal select >> nth=1", "T-1");
+    await page.waitForSelector(".dup-note >> text=already running");
+    await page.click(".dup-note >> text=Show it");
+    await page.waitForSelector(".modal", { state: "detached" });
+  });
+  await step("threads from an earlier run are listed and resume; a stuck task can be freed", async () => {
+    await page.evaluate((pid) => {
+      window.__terms.push({ id: "term_old_1", title: "codex on T-1", kind: "agent", target: "codex", task: "T-1", project_id: pid, cwd: "/repo",
+        command: "evyro run", started_at: 2, running: false, exit_code: 5, restored: true, stopped_by_app: false });
+      window.__snap = { term_old_1: "error: conflict: T-1 is owned by session ses_01dead (claude-code); hand off with `evyro handoff --to codex` or end that session first\r\n" };
+    }, project.id);
+    await page.evaluate(() => loadThreads().then(() => render()));
+    await page.waitForSelector(".thread-item:has-text('codex on T-1') >> text=earlier run");
+    await page.click(".thread-item:has-text('earlier run')");
+    await page.waitForSelector(".pane:has(.thread-title:text-is('codex on T-1')) >> text=Resume");
+    await page.waitForSelector(".pane-fix >> text=Free T-1 and retry");
+    const before = await page.evaluate(() => window.__terms.length);
+    await page.click(".pane-fix >> text=Free T-1 and retry");
+    await page.getByRole("button", { name: "Free it", exact: true }).click();
+    await page.waitForFunction((n) => window.__released === "ses_01dead" && window.__terms.length === n && window.__terms.some((t) => t.id === "term_old_1" && t.running), before);
+    const started = await page.evaluate(() => window.__terms.find((t) => t.id === "term_old_1"));
+    if (started.target !== "codex" || started.task !== "T-1") throw new Error("retried as " + JSON.stringify(started));
+    await page.waitForFunction(() => window.__snap.term_old_1.includes("Resumed Evyro thread"));
+    // Clean up so later steps see the threads they expect.
+    await page.evaluate(async () => { window.__terms = window.__terms.filter((t) => t.id !== "term_old_1"); await loadThreads(); render(); });
+  });
+  await step("usage panel shows account quota and a named session's separate credit balance", async () => {
+    await page.waitForSelector("#ctx >> text=Usage, by AI");
+    await page.waitForSelector(".ctx-quota[data-ai=codex] >> text=73% left");
+    await page.waitForSelector(".ctx-quota[data-ai=codex] >> text=Last saved reading");
+    await page.waitForSelector(".ctx-quota[data-ai=antigravity-cli] >> text=26% left");
+    await page.waitForSelector(".ctx-quota[data-ai=opencode] >> text=1,234 input");
+    await page.evaluate((pid) => {
+      window.__terms.push({ id: "term_budget", title: "Review budget", kind: "agent", target: "copilot", project_id: pid,
+        started_at: 1, running: false, credit_budget: 30, credits_used: 2.125 });
+      render();
+    }, project.id);
+    await page.waitForSelector("#ctx .ctx-usage-threads >> text=Review budget");
+    await page.waitForSelector("#ctx .ctx-usage-threads >> text=27.875 of 30 credits left");
+    await page.evaluate(() => { window.__terms = window.__terms.filter((t) => t.id !== "term_budget"); render(); });
+  });
+  await step("an AI that claimed a task itself shows it; the header names each AI once", async () => {
+    // Started without a task, then ran `evyro task start` itself: list_tasks names claude-code as owner of T-1.
+    await page.evaluate((pid) => window.__terms.push({ id: "term_own", title: "claude-own", kind: "agent", target: "claude-code", task: null,
+      project_id: pid, cwd: "/repo", command: "evyro run", started_at: 1, running: true, exit_code: null }), project.id);
+    await page.evaluate(() => { window.__sessions = ["claude-code", "claude-code", "codex", "claude-code"].map((h, i) => ({ id: "ses_" + i, harness: h, status: "running" })); });
+    await page.evaluate(() => Promise.all([loadThreads(), updateLiveBadge()]));
+    await page.waitForSelector(".thread-item:has-text('claude-own') >> text=task T-1", { timeout: 8000 });
+    await page.waitForFunction(() => document.querySelector("#live-badge").textContent === "With claude-code, codex", null, { timeout: 8000 });
+    await page.evaluate(async () => { window.__terms = window.__terms.filter((t) => t.id !== "term_own"); window.__sessions = null; await loadThreads(); await updateLiveBadge(); });
+    await page.waitForSelector(".thread-item:has-text('claude-own')", { state: "detached" });
+  });
+  await step("shared context panel: task, criteria, handoff, decisions, activity", async () => {
+    await page.waitForSelector("#ctx:not(.hidden) .ctx-task >> text=Add rate limiting");
+    await page.waitForSelector("#ctx .ctx-crit >> text=429 after 100 a minute");
+    await page.waitForSelector("#ctx >> text=Review");
+    await page.waitForSelector("#ctx .ctx-list >> text=Token bucket in memory");
+    await page.waitForSelector("#ctx .ctx-feed li");
+  });
+  await step("context panel sends a decision to the focused AI", async () => {
+    await page.evaluate(() => { window.__lastTermWrite = ""; });
+    await page.click("#ctx .ctx-list .ctx-send");
+    await page.waitForSelector(".toast >> text=Sent the decision");
+    if (!(await page.evaluate(() => window.__lastTermWrite.includes("Token bucket in memory")))) throw new Error("decision text was not sent");
+  });
+  await step("composer sends one message to several AIs at once", async () => {
+    await page.evaluate(() => { window.__lastTermWrite = ""; });
+    await page.getByRole("button", { name: "All AIs", exact: true }).click();
+    if ((await page.$$(".ws-to .chip.toggle[aria-pressed=true]")).length !== 2) throw new Error("expected both running AIs selected");
+    await page.fill(".ws-input", "Use the token bucket decision");
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => ((window.__lastTermWrite || "").match(/Use the token bucket decision/g) || []).length === 2);
+    await page.waitForSelector(".ws-send-status >> text=Sent to 2 AIs");
+    // Pick one recipient only.
+    await page.click(".ws-to .chip.toggle >> nth=0");
+    await page.waitForFunction(() => document.querySelectorAll(".ws-to .chip.toggle[aria-pressed=true]").length === 1);
+  });
+  await step("named threads, focus mode and retrying only the failed recipient", async () => {
+    // Earlier resume coverage can leave a free slot. Put both running AIs in
+    // the grid so the new thread has to expand the row.
+    await page.evaluate(() => {
+      for (const t of projThreads().filter((thread) => thread.running && thread.kind === "agent")) placeThread(t.id);
+      render();
+    });
+    await page.waitForFunction(() => document.querySelectorAll(".ws-grid > .pane[data-id]").length === 2);
+    await page.getByLabel("Columns", { exact: true }).selectOption({ label: "Side by side" });
+    await page.click(".side-new >> text=+ Agent");
+    await page.getByLabel("Thread name", { exact: false }).fill("Compare implementations");
+    await page.click(".modal .btn.primary");
+    await page.waitForSelector(".pane .thread-title:text-is('Compare implementations')");
+    const panes = await page.locator(".ws-grid > .pane[data-id]").evaluateAll((nodes) => nodes.map((el) => ({ x: el.offsetLeft, y: el.offsetTop })));
+    if (panes.length !== 3 || !panes.every((p, i) => p.y === panes[0].y && (i === 0 || p.x > panes[i - 1].x))) {
+      throw new Error(`third thread did not extend the side-by-side row: ${JSON.stringify(panes)}`);
+    }
+    await page.waitForFunction(() => {
+      const grid = document.querySelector(".ws-grid");
+      const pane = grid.querySelector(".pane.focus");
+      return pane?.textContent.includes("Compare implementations") && grid.scrollLeft > 0
+        && pane.getBoundingClientRect().right <= grid.getBoundingClientRect().right + 1;
+    });
+    await page.getByRole("button", { name: "Focus pane", exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll(".ws-grid .pane:not([hidden])").length === 1);
+    const initialFocus = await page.locator(".ws-grid .pane:not([hidden])").getAttribute("data-id");
+    await page.getByLabel("Focus thread").selectOption({ index: 0 });
+    await page.waitForFunction((prior) => document.querySelector(".ws-grid .pane:not([hidden])")?.dataset.id !== prior, initialFocus);
+    await page.getByLabel("Focus thread").selectOption(initialFocus);
+    await page.getByRole("button", { name: "All AIs", exact: true }).click();
+    const ids = await page.evaluate(() => {
+      const ids = state.threads.filter((t) => t.running && t.kind === "agent").map((t) => t.id);
+      window.__rejectWrite = ids[0];
+      window.__writes = [];
+      return ids;
+    });
+    await page.fill(".ws-input", "Keep the draft\non failure");
+    await page.click(".ws-compose .btn.primary");
+    await page.waitForSelector(".ws-send-status >> text=Test recipient is unavailable");
+    if ((await page.inputValue(".ws-input")) !== "Keep the draft\non failure") throw new Error("failed delivery lost the draft");
+    if ((await page.$$(".ws-to .chip.toggle[aria-pressed=true]")).length !== 1) throw new Error("retry would duplicate a delivery");
+    await page.evaluate(() => { window.__rejectWrite = null; });
+    await page.click(".ws-compose .btn.primary");
+    await page.waitForFunction(() => document.querySelector(".ws-input").value === "");
+    const delivered = await page.evaluate(() => window.__writes.filter((w) => w.data.includes("Keep the draft")));
+    if (delivered.length !== ids.length || !delivered.every((w) => w.data === "\x1b[200~Keep the draft\ron failure\x1b[201~")) throw new Error("multiline delivery was split or duplicated");
+    await page.getByRole("button", { name: "Exit focus", exact: true }).click();
+    await page.click(".pane:has(.thread-title:text-is('Compare implementations')) >> text=Stop");
+    await page.click(".modal >> text=Stop it");
+  });
+  await step("composer preserves the message at Copilot's trust prompt", async () => {
+    await page.evaluate((pid) => {
+      window.__terms.push({ id: "term_trust", title: "Copilot trust test", kind: "agent", target: "copilot", task: null,
+        project_id: pid, command: "evyro run", started_at: 1, running: true });
+      window.__snap.term_trust = "\x1b[?2004hConfirm folder trust\r\nDo you trust the files in this folder?";
+      window.__writes = [];
+      render();
+    }, project.id);
+    await page.waitForSelector(".ws-to >> text=Copilot trust test");
+    while ((await page.$$(".ws-to .chip.toggle[aria-pressed=true]:not(:has-text('Copilot trust test'))")).length) {
+      await page.locator(".ws-to .chip.toggle[aria-pressed=true]:not(:has-text('Copilot trust test'))").first().click();
+    }
+    const recipient = page.locator(".ws-to .chip.toggle:has-text('Copilot trust test')");
+    if ((await recipient.getAttribute("aria-pressed")) === "false") await recipient.click();
+    await page.fill(".ws-input", "Wait for folder trust");
+    await page.click(".ws-compose .btn.primary");
+    await page.waitForSelector(".ws-send-status >> text=Review Copilot's folder trust prompt");
+    if ((await page.inputValue(".ws-input")) !== "Wait for folder trust" || (await page.evaluate(() => window.__writes.length))) throw new Error("trust prompt received composer input");
+    await page.fill(".ws-input", "");
+    await page.waitForSelector(".ws-send-status", { state: "hidden" });
+    await page.evaluate(() => { window.__terms = window.__terms.filter((t) => t.id !== "term_trust"); render(); });
+  });
+  await step("layouts: adjustable pane count and columns", async () => {
+    await setPaneCount(1);
+    const remove = page.getByRole("button", { name: "Remove pane" });
+    const add = page.getByRole("button", { name: "Add pane" });
+    if (!(await remove.isDisabled())) throw new Error("cannot remove the last pane");
+    await setPaneCount(5);
+    await page.waitForSelector(".pane-empty >> text=Empty pane");
+    await add.focus();
+    await page.keyboard.press("Space");
+    await page.waitForFunction(() => document.querySelectorAll(".ws-grid > .pane").length === 6);
+    await page.waitForFunction(() => document.activeElement.getAttribute("aria-label") === "Add pane");
+    await remove.click();
+    await page.waitForFunction(() => document.querySelectorAll(".ws-grid > .pane").length === 5);
+    await page.getByLabel("Columns", { exact: true }).selectOption("3");
+    await page.waitForFunction(() => document.querySelector(".ws-grid")?.style.getPropertyValue("--pane-columns") === "3");
+    await page.getByLabel("Columns", { exact: true }).selectOption("0");
+    await setPaneCount(2);
+    const viewport = page.viewportSize();
+    await page.setViewportSize({ ...viewport, width: 980 });
+    const compact = await page.evaluate(() => {
+      const density = appearance().density;
+      saveAppearance({ density: "compact" });
+      const group = document.querySelector(".ws-layout");
+      const controls = [...group.querySelectorAll("button, input, select")];
+      const boxes = controls.map((el) => el.getBoundingClientRect());
+      const aligned = boxes.every((box) => box.top === boxes[0].top && box.height === boxes[0].height);
+      const centered = controls.filter((el) => el.tagName === "BUTTON").every((el) => getComputedStyle(el).paddingInlineStart === "0px");
+      saveAppearance({ density });
+      return aligned && centered;
+    });
+    await page.setViewportSize(viewport);
+    if (!compact) throw new Error("compact toolbar controls must share a baseline and keep the stepper icons centered");
+  });
+  await step("restored shell is read-only until restarted in the same pane", async () => {
+    await page.evaluate((pid) => {
+      window.__terms.push({ id: "term_saved_shell", title: "Saved shell", kind: "shell", target: null, task: null,
+        project_id: pid, cwd: "/repo", command: "/bin/zsh -l", started_at: 1, running: false, restored: true, stopped_by_app: true });
+      (window.__snap ||= {}).term_saved_shell = "Saved shell output\r\n$ ";
+      window.__writes = [];
+      render();
+    }, project.id);
+    await page.locator(".thread-item").filter({ hasText: "Saved shell" }).click();
+    const pane = page.locator('.ws-grid > .pane[data-id="term_saved_shell"]');
+    await pane.locator(".xterm").waitFor();
+    const restart = pane.getByRole("button", { name: "Restart shell" });
+    if (!(await restart.count())) throw new Error("stopped shell has no restart action");
+    await pane.locator(".xterm").click();
+    await page.keyboard.type("ignored");
+    if (await page.evaluate(() => window.__writes.some((w) => w.id === "term_saved_shell"))) throw new Error("stopped shell received input");
+    const before = await page.evaluate(() => window.__terms.length);
+    await restart.click();
+    await page.waitForFunction((count) => window.__terms.length === count && window.__terms.some((t) => t.id === "term_saved_shell" && t.running), before);
+    await pane.locator(".xterm").click();
+    await page.keyboard.type("echo ready");
+    await page.waitForFunction(() => window.__writes.filter((w) => w.id === "term_saved_shell").map((w) => w.data).join("").includes("echo ready"));
+    await page.waitForFunction(() => window.__snap.term_saved_shell.includes("Saved shell output") && window.__snap.term_saved_shell.includes("Resumed Evyro thread"));
+    await pane.getByRole("button", { name: "Stop", exact: true }).click();
+    await page.getByRole("button", { name: "Stop it" }).click();
+  });
+  await step("terminal drawer runs a shell under the panes", async () => {
+    await page.click(".ws-bar >> text=Terminal");
+    await page.click(".ws-drawer >> text=Start a shell here");
+    await page.waitForSelector(".ws-drawer .xterm");
+    // The shell lives in the drawer, not in a pane.
+    if (await page.$(".ws-grid .pane .thread-title:text-is('Shell')")) throw new Error("shell also shown in a pane");
+    await page.click(".ws-drawer-head");
+    await page.keyboard.press("Control+`");
+    await page.waitForSelector(".ws-drawer", { state: "detached" });
+  });
+  await step("inspector Changes tab lists changed files", async () => {
+    await page.click(".ctx-tab[data-pane=changes]");
+    await page.waitForSelector("#ctx .ctx-file >> text=app.txt");
+    await page.click(".ctx-tab[data-pane=context]");
+    await page.waitForSelector("#ctx .ctx-task");
+  });
+  await step("shared context hides and comes back", async () => {
+    await page.locator("#ctx-btn").focus();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+." : "Control+.");
+    await page.waitForSelector("#ctx.hidden", { state: "attached" });
+    await page.click("#ctx-btn");
+    await page.waitForSelector("#ctx:not(.hidden)");
+  });
+  await step("task board shows the AIs working on each card", async () => {
+    await tab("tasks");
+    await page.waitForSelector(".task-card.live .card-ai");
+    await page.click(".task-card.live .card-ai >> text=Open");
+    await page.waitForSelector('.tab.active[data-view="workspace"]');
+  });
+  await step("a task card keeps keyboard focus through a live refresh", async () => {
+    await tab("tasks");
+    const card = page.locator(".task-card.live").first();
+    await card.focus();
+    await page.waitForTimeout(5300);
+    if (!(await card.evaluate((el) => document.activeElement === el))) throw new Error("the Tasks board poll dropped keyboard focus");
+    await page.evaluate(() => window.__emit("evyro-events", [{ project_id: state.project.id, kind: "task.updated" }]));
+    await page.waitForTimeout(450);
+    if (!(await card.evaluate((el) => document.activeElement === el))) throw new Error("a live task event dropped keyboard focus");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector("#drawer:not(.hidden) #drawer-body >> text=429 after 100 a minute");
+    await page.keyboard.press("Escape");
   });
   await step("skills: read one, turn it off, sync to an agent", async () => {
     await tab("skills");
@@ -344,6 +785,32 @@ const FIX = {
     await page.click(".modal .actions .btn");
   });
   await step("settings", async () => { await tab("settings"); await page.waitForSelector("text=Doctor"); });
+  await step("appearance: theme, accent, fonts and layout apply at once", async () => {
+    await tab("settings");
+    await page.waitForSelector(".appearance");
+    await page.click('.ap-theme[data-theme-preview="midnight"]');
+    await page.waitForSelector('html[data-theme="midnight"][data-scheme="dark"]', { state: "attached" });
+    await page.click('.ap-accent[aria-label="Signal cyan"]');
+    const acc = await page.evaluate(() => document.documentElement.style.getPropertyValue("--accent"));
+    if (acc !== "#22d3ee") throw new Error("accent " + acc);
+    await page.selectOption('select[aria-label="Code and terminal font"]', "fira");
+    if (!(await page.evaluate(() => document.documentElement.style.getPropertyValue("--mono").includes("Fira Code")))) throw new Error("mono font");
+    await page.click(".appearance .seg-btn >> text=Compact");
+    await page.waitForSelector('html[data-density="compact"]', { state: "attached" });
+    await page.click(".appearance .seg-btn >> text=Left");
+    await page.waitForSelector('html[data-inspector="left"]', { state: "attached" });
+    const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("evyro.appearance")));
+    if (saved.theme !== "midnight" || saved.accent !== "cyan" || saved.monoFont !== "fira") throw new Error("not saved");
+    // Terminals follow the font.
+    const tf = await page.evaluate(() => [...XTERMS.values()][0].term.options.fontFamily);
+    if (!tf.includes("Fira Code")) throw new Error("terminal font " + tf);
+    // Bad settings are ignored, not applied.
+    await page.evaluate(() => saveAppearance({ theme: "neon", customUiFont: "x;}body{color:red", uiSize: 99 }));
+    const after = await page.evaluate(() => ({ theme: appearance().theme, font: appearance().customUiFont, size: appearance().uiSize }));
+    if (after.theme !== "midnight" || after.font !== "" || after.size !== 18) throw new Error("bad input applied: " + JSON.stringify(after));
+    await page.click(".appearance >> text=Reset");
+    await page.waitForFunction(() => document.documentElement.dataset.theme !== "midnight" && document.documentElement.dataset.inspector === "right");
+  });
   await step("updates: a newer version is offered and installs on request", async () => {
     await page.waitForSelector(".card >> text=Evyro 0.2.0 is available");
     await page.waitForSelector("#side-foot .update-btn");
@@ -356,10 +823,21 @@ const FIX = {
     await page.waitForSelector("h2:text-is('Remote access')");
     await page.click("text=Start serving");
     await page.waitForSelector(".card >> text=http://127.0.0.1:7420/");
-    await page.click("text=+ Pair a device");
+    await page.getByRole("button", { name: "Check private address" }).click();
+    await page.getByRole("button", { name: "Enable private address" }).click();
+    await page.waitForSelector("text=https://mac.test-tailnet.ts.net:8443/");
+    await page.getByRole("button", { name: "Pair over Tailscale" }).click({ timeout: 3000 });
     await page.fill(".modal input[type=text]", "My phone");
+    await page.evaluate(() => { window.__rm.public = true; });
+    await page.click(".modal .actions .btn.primary");
+    await page.waitForSelector(".toast >> text=The private address changed");
+    if (await page.evaluate(() => window.__rm.devices.length)) throw new Error("a pairing code was created for a public route");
+    await page.evaluate(() => { window.__rm.public = false; });
     await page.click(".modal .actions .btn.primary");
     await page.waitForSelector(".modal .pair-code >> text=K7QM-4XPZ");
+    await page.waitForSelector(".modal >> text=https://mac.test-tailnet.ts.net:8443/");
+    await page.getByRole("button", { name: "Copy pairing code" }).waitFor();
+    await page.getByRole("dialog", { name: "Pairing code" }).getByRole("button", { name: "Copy address", exact: true }).waitFor();
     await page.click(".modal .actions .btn");
     await page.waitForSelector(".list li:has-text('My phone') .pill:text-is('waiting')");
     await page.click(".list li:has-text('My phone') >> text=Revoke");
@@ -372,11 +850,13 @@ const FIX = {
   let axePath = null;
   try { axePath = require.resolve("axe-core/axe.min.js", { paths: [process.cwd(), ...(process.env.AXE_DIR ? [process.env.AXE_DIR] : [])] }); } catch {}
   if (axePath) {
-    await step("accessibility: no serious WCAG problems on any screen, light and dark", async () => {
+    await step("accessibility: no serious WCAG problems on any screen, in every theme", async () => {
       const found = [];
-      for (const scheme of ["light", "dark"]) {
-      await page.emulateMedia({ colorScheme: scheme });
-      for (const v of ["overview", "tasks", "changes", "threads", "handoffs", "sessions", "knowledge", "skills", "agents", "settings"]) {
+      // System light and dark, then the two extra themes from Appearance settings.
+      for (const scheme of ["light", "dark", "midnight", "paper"]) {
+      if (["light", "dark"].includes(scheme)) await page.emulateMedia({ colorScheme: scheme });
+      else await page.evaluate((t) => saveAppearance({ theme: t }), scheme);
+      for (const v of ["workspace", "tasks", "changes", "history", "knowledge", "skills", "agents", "settings"]) {
         await tab(v);
         await page.waitForTimeout(250);
         if (!(await page.evaluate(() => !!window.axe))) await page.addScriptTag({ path: axePath });
@@ -387,6 +867,7 @@ const FIX = {
         for (const x of res) found.push({ screen: `${v}, ${scheme}`, ...x });
       }
       }
+      await page.evaluate(() => saveAppearance({ theme: "system" }));
       await page.emulateMedia({ colorScheme: "light" });
       for (const x of found) console.log(`  a11y ${x.impact}: [${x.screen}] ${x.id}: ${x.help} (${x.nodes.join(", ")})`);
       const bad = found.filter((x) => x.impact === "serious" || x.impact === "critical");
@@ -399,7 +880,7 @@ const FIX = {
   // reached with Tab, and whatever Tab reaches shows where the focus is.
   await step("keyboard only: every control reachable with Tab and visibly focused", async () => {
     const found = [];
-    for (const v of ["overview", "tasks", "changes", "threads", "handoffs", "sessions", "knowledge", "skills", "agents", "settings"]) {
+    for (const v of ["workspace", "tasks", "changes", "history", "knowledge", "skills", "agents", "settings"]) {
       await tab(v);
       await page.waitForTimeout(250);
       // Things that look clickable (pointer cursor) but are not in the Tab order.
@@ -449,11 +930,11 @@ const FIX = {
       await page.keyboard.press("Escape");
     }
     // The terminal keeps Tab for the program in it; F6 leaves it.
-    await tab("threads");
+    await tab("workspace");
     await page.click(".term-host");
     await page.keyboard.press("F6");
     const out = await page.evaluate(() => !document.activeElement.closest(".xterm") && document.activeElement.matches(".thread-head button"));
-    if (!out) found.push("[threads] F6 does not leave the terminal");
+    if (!out) found.push("[workspace] F6 does not leave the terminal");
     // A row opened from the keyboard alone.
     await tab("agents");
     await page.focus("tr.clickable");
@@ -498,7 +979,7 @@ const FIX = {
     await page.waitForSelector('.tab.active[data-view="changes"]');
   });
   await step("live event refreshes the screen", async () => {
-    await tab("overview");
+    await tab("workspace");
     await page.waitForSelector("text=Add rate limiting");
     const before = calls.filter((c) => c === "overview").length;
     await page.evaluate((pid) => window.__emit("evyro-events", [{ project_id: pid, kind: "checkpoint.created", payload: {} }]), project.id);
@@ -506,14 +987,33 @@ const FIX = {
     await page.waitForTimeout(800);
     if (calls.filter((c) => c === "overview").length <= before) throw new Error("no refresh");
   });
+  await step("continue from a checkpoint with a compact unsent draft", async () => {
+    const writes = await page.evaluate(() => {
+      workspaceDraft(state.project.id).text = "";
+      const t = projThreads().find((thread) => thread.kind === "agent" && thread.task === "T-1");
+      placeThread(t.id);
+      render();
+      return (window.__writes || []).length;
+    });
+    await page.getByRole("button", { name: "Continue with…", exact: true }).first().click();
+    await page.waitForSelector('.modal[aria-label="Continue T-1 with another AI"]');
+    if ((await page.getByLabel("Next action").inputValue()) !== "Write the failing test first") throw new Error("checkpoint was not loaded");
+    await page.getByRole("button", { name: "Prepare handoff" }).click();
+    await page.getByRole("button", { name: "Start with this AI" }).click();
+    await page.waitForFunction(() => document.querySelector(".ws-input")?.value === "Continue T-1. Write the failing test first.");
+    const after = await page.evaluate(() => (window.__writes || []).length);
+    if (writes !== after) throw new Error("continuation sent terminal input before confirmation");
+  });
   // EVYRO_SHOTS=docs/assets writes the README screenshots (light and dark).
   if (process.env.EVYRO_SHOTS) {
     await step("screenshots", async () => {
       const dir = path.resolve(process.env.EVYRO_SHOTS);
       fs.mkdirSync(dir, { recursive: true });
+      // Clear what earlier steps typed, so the terminals show only agent output.
+      await page.evaluate(() => { for (const [id, x] of XTERMS) { const t = state.threads.find((y) => y.id === id); x.term.reset(); x.term.write(`\x1b[2m[evyro] launching ${t ? t.target || "shell" : "agent"} (task T-1)\x1b[0m\r\n\x1b[1;35m*\x1b[0m Reading .evyro/CURRENT_TASK.md\r\n  T-1 Add rate limiting. Next: write the test\r\n\x1b[1;35m*\x1b[0m get_decisions: Token bucket in memory\r\n\x1b[32m✓\x1b[0m evyro verify -- cargo test (12 passed)\r\n`); } });
       for (const scheme of ["light", "dark"]) {
         await page.emulateMedia({ colorScheme: scheme });
-        for (const v of ["overview", "tasks", "changes", "threads", "agents"]) {
+        for (const v of ["workspace", "tasks", "changes", "agents", "settings"]) {
           await tab(v);
           await page.waitForTimeout(400);
           await page.evaluate(() => document.querySelectorAll(".toast").forEach((t) => t.remove()));
@@ -523,6 +1023,230 @@ const FIX = {
       await page.emulateMedia({ colorScheme: "light" });
     });
   }
+  await step("clicking a pane header focuses its terminal so Enter reaches it", async () => {
+    await page.evaluate(() => {
+      window.__terms.push({ id: "term_enter_probe", title: "Enter probe", kind: "shell", target: null, task: null, project_id: state.project.id, cwd: "/repo", command: "/bin/zsh -l", started_at: 1, running: true });
+      window.__writes = [];
+      setTab("workspace"); placeThread("term_enter_probe"); render();
+    });
+    const pane = page.locator('.ws-grid > .pane[data-id="term_enter_probe"]');
+    await pane.locator(".xterm").waitFor();
+    await page.evaluate(() => document.activeElement?.blur());
+    await pane.locator(".thread-head .pane-title").click();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => window.__writes.some((w) => w.id === "term_enter_probe" && w.data === "\r"), null, { timeout: 3000 })
+      .catch(() => { throw new Error("Enter after clicking the pane header did not reach the terminal"); });
+  });
+  await step("replaying saved output does not send terminal replies to the program", async () => {
+    await page.evaluate(() => { window.__writes = []; window.__snap.term_reply_probe = "\x1b[6n\x1b[c"; window.__terms.push({ id: "term_reply_probe", title: "Probe", kind: "shell", target: null, task: null, project_id: state.project.id, cwd: "/repo", command: "/bin/zsh -l", started_at: 1, running: true }); ensureXterm("term_reply_probe"); });
+    await page.evaluate(() => XTERMS.get("term_reply_probe").loaded);
+    await page.waitForTimeout(300);
+    const sent = await page.evaluate(() => window.__writes.filter((w) => w.id === "term_reply_probe"));
+    if (sent.length) throw new Error("replay answered terminal queries: " + JSON.stringify(sent));
+  });
+  await step("a live startup query in the snapshot gets one reply", async () => {
+    const replies = await page.evaluate(async () => {
+      const id = "term_startup_probe";
+      const data = "\x1b[4;7H\x1b[6n";
+      const live = "\x1b[2;5H\x1b[6n";
+      const end = data.length + live.length;
+      window.__startupSnapshots = { [id]: { data, live, end } };
+      window.__writes = [];
+      state.threads.push({ id, title: "Startup probe", kind: "shell", project_id: state.project.id, running: true });
+      const x = ensureXterm(id);
+      threadOutput({ id, data: live, end }); // Same bytes also arrived through the event stream.
+      await x.loaded;
+      await new Promise((resolve) => x.term.write("", resolve));
+      return window.__writes.filter((w) => w.id === id).map((w) => w.data);
+    });
+    if (replies.length !== 1 || replies[0] !== "\x1b[2;5R") throw new Error(`expected one live cursor reply, got ${JSON.stringify(replies)}`);
+  });
+  await step("Tasks board wraps with shared context open", async () => {
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.evaluate(() => { setCtxOpen(true); setTab("tasks"); });
+    await page.waitForSelector(".board .column:last-child");
+    const fits = await page.locator(".board").evaluate((board) => board.scrollWidth <= board.clientWidth
+      && board.lastElementChild.offsetTop > board.firstElementChild.offsetTop
+      && board.firstElementChild.offsetHeight < 70);
+    if (!fits) throw new Error("Tasks board overflows with the context panel open");
+    await page.setViewportSize({ width: 1300, height: 860 });
+  });
+  await step("shared context leaves workspace controls clickable at the minimum window width", async () => {
+    await page.setViewportSize({ width: 900, height: 600 });
+    await page.evaluate(() => { setCtxOpen(true); setTab("workspace"); });
+    await page.waitForSelector(".ws-compose");
+    const blocked = [];
+    const prior = await page.evaluate(() => {
+      const { sidebarWidth, inspectorWidth, inspectorSide } = appearance();
+      saveAppearance({ sidebarWidth: 360, inspectorWidth: 520 });
+      return { sidebarWidth, inspectorWidth, inspectorSide };
+    });
+    for (const inspectorSide of ["right", "left"]) {
+      await page.evaluate((side) => saveAppearance({ inspectorSide: side }), inspectorSide);
+      if (process.env.EVYRO_SHOTS) await page.screenshot({ path: path.join(process.env.EVYRO_SHOTS, `workspace-900-${inspectorSide}.png`) });
+      await page.fill(".ws-input", "First line\nSecond line\nThird line\nFourth line");
+      if (inspectorSide === "left") await page.evaluate(() => toast("Delivery status is visible while you compose. ".repeat(8)));
+      const covered = await page.evaluate(() => ["#ctx-btn", "#search-btn", ".ws-layout input", ".ws-compose-foot .primary", ".ws-meta .link-btn"].filter((selector) => {
+        const el = document.querySelector(selector);
+        const { x, y, width, height } = el.getBoundingClientRect();
+        return !el.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+      }));
+      if (covered.length) blocked.push(`${inspectorSide}: ${covered.join(", ")}`);
+      const aligned = await page.locator(".ws-compose-foot > .row").evaluate((row) => row.firstElementChild.offsetTop === row.lastElementChild.offsetTop);
+      if (!aligned) blocked.push(`${inspectorSide}: composer actions wrap`);
+      if (!covered.includes(".ws-meta .link-btn")) await page.getByRole("button", { name: "Discard", exact: true }).click();
+    }
+    await page.evaluate(save => saveAppearance(save), prior);
+    await page.setViewportSize({ width: 1300, height: 860 });
+    if (blocked.length) throw new Error(`workspace controls are unreachable at 900px (${blocked.join("; ")})`);
+  });
+  await step("saved output keeps its recorded width in a narrower pane", async () => {
+    await page.evaluate(() => {
+      window.__terms.push({ id: "term_size_probe", title: "Saved size probe", kind: "shell", project_id: state.project.id,
+        started_at: 1, running: false, cols: 180, rows: 30 });
+      window.__snap.term_size_probe = "x".repeat(150);
+      setTab("workspace"); placeThread("term_size_probe"); render();
+    });
+    await page.waitForSelector('.pane[data-id="term_size_probe"] .xterm');
+    const result = await page.evaluate(async () => {
+      const x = XTERMS.get("term_size_probe");
+      await x.loaded;
+      fitThread("term_size_probe");
+      return { cols: x.term.cols, rows: x.term.rows,
+        line: x.term.buffer.active.getLine(0).translateToString(true), scrollable: x.el.scrollWidth > x.el.clientWidth };
+    });
+    if (result.cols !== 180 || result.rows !== 30 || result.line.length !== 150 || !result.scrollable) {
+      throw new Error("saved output did not keep its size in a scrollable pane");
+    }
+  });
+  await step("usage banner offers a handoff and names the AI with the most usage left", async () => {
+    const r = await page.evaluate(() => {
+      const t = { id: "q1", project_id: state.project.id, running: true, kind: "agent", target: "claude-code", title: "claude-code", task: "T-1" };
+      accountQuota.set("claude-code", { state: "ready", windows: [{ remaining: 0, minutes: 300, resets_at: Date.now() / 1000 + 3600 }], credits: null });
+      accountQuota.set("codex", { state: "ready", windows: [{ remaining: 66, minutes: 10080, resets_at: Date.now() / 1000 + 3600 }], credits: null });
+      const out = quotaBanner(t)?.textContent || "";
+      accountQuota.set("claude-code", { state: "ready", windows: [{ remaining: 60, minutes: 300, resets_at: Date.now() / 1000 + 3600 }], credits: null });
+      const fine = quotaBanner(t);
+      accountQuota.delete("claude-code"); accountQuota.delete("codex");
+      return { out, fine };
+    });
+    if (!/no usage left/.test(r.out) || !/codex has about 66%/.test(r.out)) throw new Error("banner text: " + r.out);
+    if (r.fine) throw new Error("banner shown with plenty of usage left");
+  });
+  await step("usage banner hands the task to the AI with the most usage left in one click", async () => {
+    await page.evaluate(() => {
+      const t = { id: "term_quick", title: "Quick handoff", kind: "agent", target: "claude-code", task: "T-1",
+        project_id: state.project.id, started_at: 1, running: true };
+      window.__terms.push(t);
+      state.threads.push(t);
+      accountQuota.set("claude-code", { state: "ready", windows: [{ remaining: 0, resets_at: Date.now() / 1000 + 3600 }], credits: null });
+      accountQuota.set("codex", { state: "ready", windows: [{ remaining: 66 }], credits: null });
+      window.__handoff = null;
+      document.body.append(Object.assign(document.createElement("div"), { id: "quick-host" }));
+      document.querySelector("#quick-host").append(quotaBanner(t));
+    });
+    await page.locator("#quick-host").getByRole("button", { name: "Hand off to codex", exact: true }).click();
+    await page.getByRole("dialog").getByText(/Anything done since that checkpoint/).waitFor();
+    await page.getByRole("button", { name: "Hand off", exact: true }).click();
+    await page.waitForFunction(() => window.__handoff && window.__handoff.to === "codex" && window.__handoff.task === "T-1" && window.__lastTermOpen && window.__lastTermOpen.target === "codex" && window.__lastTermOpen.handoffId === "hnd_continue");
+    const h = await page.evaluate(() => window.__handoff);
+    if (h.next_action !== "Write the failing test first" || h.completed.length !== 1) throw new Error("handoff did not carry the checkpoint: " + JSON.stringify(h));
+    await page.evaluate(() => {
+      document.querySelector("#quick-host").remove();
+      accountQuota.delete("claude-code"); accountQuota.delete("codex");
+      window.__terms = window.__terms.filter((t) => t.id !== "term_quick" && t.target !== "codex");
+      state.threads = state.threads.filter((t) => t.id !== "term_quick" && t.target !== "codex");
+    });
+    await page.evaluate(() => loadThreads().then(() => render()));
+  });
+  await step("low usage prepares an unsent checkpoint message without replacing an existing draft", async () => {
+    await page.evaluate(() => {
+      const t = { id: "term_quota_probe", title: "Quota probe", kind: "agent", target: "claude-code", task: "T-1",
+        project_id: state.project.id, started_at: 1, running: true };
+      window.__terms.push(t);
+      state.threads.push(t);
+      setCtxOpen(false);
+      setTab("workspace"); placeThread(t.id); render();
+    });
+    const pane = page.locator('.pane[data-id="term_quota_probe"]');
+    await pane.locator(".xterm").waitFor();
+    await page.fill(".ws-input", "My existing draft");
+    await page.evaluate(() => {
+      window.__writes = [];
+      window.__quotaOverrides = { "claude-code": { state: "ready", windows: [{ remaining: 8 }] } };
+      refreshQuota("claude-code", state.project.id, true);
+    });
+    await pane.getByText(/low on usage/).waitFor();
+    if (await page.inputValue(".ws-input") !== "My existing draft") throw new Error("the checkpoint prompt replaced an existing draft");
+    await page.fill(".ws-input", "");
+    await pane.getByRole("button", { name: "Draft checkpoint prompt" }).click();
+    await page.waitForFunction(() => /checkpoint for T-1/i.test(document.querySelector(".ws-input").value));
+    await page.fill(".ws-input", "");
+    await pane.locator(".pane-title").click();
+    await page.evaluate(() => {
+      window.__quotaOverrides["claude-code"].windows[0].remaining = 60;
+      refreshQuota("claude-code", state.project.id, true);
+    });
+    await pane.getByText(/low on usage/).waitFor({ state: "detached" });
+    await page.evaluate(() => {
+      window.__quotaOverrides["claude-code"].windows[0].remaining = 8;
+      refreshQuota("claude-code", state.project.id, true);
+    });
+    await page.waitForFunction(() => /checkpoint for T-1/i.test(document.querySelector(".ws-input").value)
+      && workspaceDraft(state.project.id).recipients.join() === "term_quota_probe");
+    if (await page.evaluate(() => window.__writes.some((w) => w.id === "term_quota_probe"))) throw new Error("the checkpoint prompt was typed into the terminal");
+  });
+  await step("task comparisons show both diffs and receipts and retain the preferred result", async () => {
+    await page.evaluate(() => { setTab("tasks"); openTask("T-1"); });
+    const drawer = page.locator("#drawer");
+    await drawer.getByRole("button", { name: "Compare agents" }).click();
+    const compare = page.getByRole("dialog", { name: "Compare agents on T-1" });
+    await compare.getByLabel("First agent").selectOption("codex");
+    await compare.getByLabel("Second agent").selectOption("claude-code");
+    await compare.getByRole("button", { name: "Prepare comparison" }).click();
+    await compare.getByText("+first candidate").waitFor();
+    await compare.getByText("+second candidate").waitFor();
+    await compare.getByText("Last check passed").waitFor();
+    await compare.getByText("Last check failed").waitFor();
+    await compare.getByText("Earlier snapshot").waitFor();
+    const second = compare.locator("article").nth(1);
+    await compare.getByText("+1 −0").first().waitFor();
+    await compare.getByRole("button", { name: "Run tests in both" }).click();
+    await page.waitForFunction(() => (window.__verified || []).join() === "T-2,T-3");
+    await compare.getByRole("button", { name: "Run tests in both" }).waitFor();
+    await second.getByRole("button", { name: "Prefer this result" }).click();
+    await second.getByText("Preferred", { exact: true }).waitFor();
+    if (process.env.EVYRO_SHOTS) {
+      await page.evaluate(() => document.querySelectorAll(".toast").forEach((t) => t.remove()));
+      await page.screenshot({ path: path.join(process.env.EVYRO_SHOTS, "comparison.png") });
+    }
+    await compare.getByRole("button", { name: "Close", exact: true }).click();
+    await drawer.getByRole("button", { name: "Compare agents" }).click();
+    await second.getByText("Preferred", { exact: true }).waitFor();
+    const stagePreview = compare.getByRole("region", { name: "Staging preview" });
+    const stageButton = second.getByRole("button", { name: "Preview staging" });
+    await page.evaluate(() => { window.__blockStagePreview = true; });
+    await stageButton.click();
+    await stagePreview.getByRole("alert").getByText(/destination checkout/).waitFor();
+    await page.evaluate(() => { window.__blockStagePreview = false; });
+    await stageButton.click();
+    await stagePreview.getByRole("heading", { name: "Stage changes from T-3?" }).waitFor();
+    await stagePreview.getByText("/scratch/my-app").waitFor();
+    await stagePreview.getByText("image.bin").waitFor();
+    await stagePreview.getByRole("button", { name: "Cancel staging" }).click();
+    if (await page.evaluate(() => window.__staged)) throw new Error("Staging happened without confirmation");
+    await stageButton.click();
+    if (process.env.EVYRO_SHOTS) {
+      await stagePreview.getByText("image.bin").waitFor();
+      await page.screenshot({ path: path.join(process.env.EVYRO_SHOTS, "comparison-stage.png") });
+    }
+    await stagePreview.getByRole("button", { name: "Stage changes", exact: true }).click();
+    await stagePreview.getByRole("status").getByText("/scratch/my-app").waitFor();
+    await page.waitForFunction(() => window.__staged === "T-3");
+    await second.getByRole("button", { name: "Start agent" }).click();
+    await page.waitForFunction(() => window.__lastTermOpen?.task === "T-3" && window.__lastTermOpen?.target === "claude-code");
+    await compare.waitFor({ state: "detached" });
+  });
   await step("first-run setup when there are no projects", async () => {
     await page.evaluate(() => { state.projects = []; state.project = null; setTab("overview"); });
     await page.waitForSelector("ol.setup");

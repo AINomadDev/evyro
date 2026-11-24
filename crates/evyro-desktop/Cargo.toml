@@ -27,6 +27,10 @@ tauri-plugin-updater = "2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+portable-pty = "0.9"
+tempfile.workspace = true
+
 [features]
 # Serve the bundled `ui/` folder. The Tauri CLI sets this for release builds;
 # it is on by default so plain `cargo run -p evyro-desktop` works too.

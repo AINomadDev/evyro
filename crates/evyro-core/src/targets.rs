@@ -142,6 +142,30 @@ pub fn providers() -> Vec<Provider> {
             "qwen2.5-coder-14b",
         ),
         p(
+            "mlx",
+            "MLX on Apple silicon (local, mlx_lm.server)",
+            None,
+            Some("http://localhost:8080/v1"),
+            true,
+            "mlx-community/Qwen2.5-Coder-14B-Instruct-4bit",
+        ),
+        p(
+            "llamacpp",
+            "llama.cpp server (local; Unsloth GGUF models)",
+            None,
+            Some("http://localhost:8080/v1"),
+            true,
+            "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+        ),
+        p(
+            "vllm",
+            "vLLM (local or your own GPU server)",
+            None,
+            Some("http://localhost:8000/v1"),
+            true,
+            "Qwen/Qwen2.5-Coder-32B-Instruct",
+        ),
+        p(
             "openai-compatible",
             "Any OpenAI-compatible endpoint",
             Some("OPENAI_API_KEY"),
@@ -195,6 +219,9 @@ pub fn harness_providers(harness: &str) -> &'static [&'static str] {
             "vertex",
             "ollama",
             "lmstudio",
+            "mlx",
+            "llamacpp",
+            "vllm",
             "openai-compatible",
         ],
         "goose" => &[
@@ -219,7 +246,19 @@ pub fn harness_providers(harness: &str) -> &'static [&'static str] {
 pub fn supports_app_login(harness: &str) -> bool {
     matches!(
         harness,
-        "claude-code" | "codex" | "gemini" | "cursor" | "copilot" | "goose"
+        "claude-code"
+            | "codex"
+            | "gemini"
+            | "antigravity-cli"
+            | "cursor"
+            | "copilot"
+            | "goose"
+            | "amp"
+            | "qwen"
+            | "kiro"
+            | "droid"
+            | "cline"
+            | "crush"
     )
 }
 
@@ -707,6 +746,15 @@ fn login_evidence(harness: &str) -> Check {
         "copilot" => &[".copilot/config.json"],
         "cursor" => &[".cursor/cli-config.json"],
         "goose" => &[".config/goose/config.yaml"],
+        "qwen" => &[".qwen/oauth_creds.json", ".qwen/settings.json"],
+        "amp" => &[".local/share/amp/secrets.json", ".config/amp/settings.json"],
+        "kiro" => &[".kiro/settings/cli.json", ".aws/sso/cache"],
+        "droid" => &[".factory/auth.json", ".factory/settings.json"],
+        "cline" => &[".cline/data/settings/providers.json", ".cline/data"],
+        "crush" => &[
+            ".local/share/crush/providers.json",
+            ".config/crush/crush.json",
+        ],
         _ => &[],
     };
     if let Some(f) = files.iter().find(|f| h.join(f).exists()) {
@@ -813,7 +861,13 @@ pub fn check_target(t: &Target) -> TargetStatus {
                         AuthMode::ApiKey => checks.push(key_check(t)),
                         AuthMode::Local => {
                             let p = t.provider.as_deref().unwrap_or("ollama");
-                            let bin = if p == "lmstudio" { "lms" } else { "ollama" };
+                            let bin = match p {
+                                "lmstudio" => "lms",
+                                "mlx" => "mlx_lm.server",
+                                "llamacpp" => "llama-server",
+                                "vllm" => "vllm",
+                                _ => "ollama",
+                            };
                             checks.push(match adapters::which(bin) {
                                 Some(b) => ck(
                                     "local server",
@@ -1105,7 +1159,7 @@ fn put_key(
     opencode: bool,
 ) {
     let var = match pid {
-        "openai-compatible" | "lmstudio" => "OPENAI_API_KEY",
+        p if openai_style(p) => "OPENAI_API_KEY",
         p => provider(p).ok().and_then(|p| p.key_env).unwrap_or(""),
     };
     if let (Some(k), false) = (key, var.is_empty()) {
@@ -1118,7 +1172,7 @@ fn put_key(
                 plan.env_set.push(("OLLAMA_API_BASE".into(), b));
             }
         }
-        "openai-compatible" | "lmstudio" => {
+        p if openai_style(p) => {
             if let Some(b) = base {
                 plan.env_set.push((
                     (if opencode {
@@ -1131,9 +1185,16 @@ fn put_key(
                 ));
                 plan.env_set.push(("OPENAI_BASE_URL".into(), b));
             }
-            if pid == "lmstudio" && !plan.env_set.iter().any(|(k, _)| k == "OPENAI_API_KEY") {
-                plan.env_set
-                    .push(("OPENAI_API_KEY".into(), "lm-studio".into()));
+            // Local servers take any key, but OpenAI clients refuse to start without one.
+            if pid != "openai-compatible"
+                && !plan.env_set.iter().any(|(k, _)| k == "OPENAI_API_KEY")
+            {
+                let k = if pid == "lmstudio" {
+                    "lm-studio"
+                } else {
+                    "local"
+                };
+                plan.env_set.push(("OPENAI_API_KEY".into(), k.into()));
             }
         }
         _ => {}
@@ -1141,9 +1202,18 @@ fn put_key(
     plan.env_set.dedup_by(|a, b| a.0 == b.0);
 }
 
+/// Providers spoken to through the OpenAI API shape: any compatible endpoint
+/// and the local servers (LM Studio, MLX, llama.cpp, vLLM).
+fn openai_style(p: &str) -> bool {
+    matches!(
+        p,
+        "openai-compatible" | "lmstudio" | "mlx" | "llamacpp" | "vllm"
+    )
+}
+
 fn opencode_provider(p: &str) -> &str {
     match p {
-        "openai-compatible" | "lmstudio" => "openai",
+        p if openai_style(p) => "openai",
         "bedrock" => "amazon-bedrock",
         "vertex" => "google-vertex",
         other => other,
@@ -1154,7 +1224,7 @@ fn aider_prefix(p: &str) -> &str {
     match p {
         "google" => "gemini",
         "ollama" => "ollama_chat",
-        "openai-compatible" | "lmstudio" => "openai",
+        p if openai_style(p) => "openai",
         "vertex" => "vertex_ai",
         other => other,
     }
@@ -1343,5 +1413,27 @@ mod tests {
         let p = launch_plan(&a).unwrap();
         assert_eq!(p.model.as_deref(), Some("ollama_chat/qwen2.5-coder:14b"));
         assert!(p.env_set.iter().any(|(k, _)| k == "OLLAMA_API_BASE"));
+    }
+
+    #[test]
+    fn mlx_llamacpp_and_vllm_are_local_openai_servers() {
+        for (pid, port) in [("mlx", "8080"), ("llamacpp", "8080"), ("vllm", "8000")] {
+            let mut a = t(TargetKind::Api);
+            a.harness = Some("opencode".into());
+            a.provider = Some(pid.into());
+            a.model = Some("my-model".into());
+            a.auth = AuthMode::Local;
+            let p = launch_plan(&a).unwrap();
+            assert_eq!(p.model.as_deref(), Some("openai/my-model"), "{pid}");
+            let get = |k: &str| {
+                p.env_set
+                    .iter()
+                    .find(|(x, _)| x == k)
+                    .map(|(_, v)| v.clone())
+            };
+            assert!(get("OPENAI_BASE_URL").unwrap().contains(port), "{pid}");
+            // OpenAI clients need some key even for a local server.
+            assert_eq!(get("OPENAI_API_KEY").as_deref(), Some("local"), "{pid}");
+        }
     }
 }
