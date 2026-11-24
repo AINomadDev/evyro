@@ -1,0 +1,18 @@
+# Monthly dependency updates, one grouped pull request per ecosystem.
+# Security advisories still open their own pull requests straight away.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      cargo:
+        patterns: ["*"]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]
