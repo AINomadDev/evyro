@@ -452,6 +452,23 @@ impl Store {
                     "task.status_changed",
                     payload,
                 )?;
+                // Work handed to review, or finished, is no longer being worked on: end the
+                // session that held it so its lease does not outlive the work.
+                if matches!(
+                    to,
+                    TaskStatus::InReview
+                        | TaskStatus::Verified
+                        | TaskStatus::Done
+                        | TaskStatus::Cancelled
+                ) {
+                    if let Some(s) = self.active_session_for_task(&t.id)? {
+                        self.set_session_status(
+                            &s.id,
+                            crate::sessions::SessionStatus::Completed,
+                            Some(&format!("task_{}", to.as_str())),
+                        )?;
+                    }
+                }
             }
         } else {
             self.emit(

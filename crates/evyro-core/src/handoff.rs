@@ -1357,6 +1357,45 @@ mod switch_tests {
     }
 
     #[test]
+    fn moving_a_task_to_review_ends_the_session_and_frees_it() {
+        let (_dir, store, pid) = store_with_project();
+        let t = task(&store, &pid, "Work", &[]);
+        let human = crate::tasks::Actor::Human {
+            override_reason: None,
+        };
+        let set = |to| {
+            store
+                .update_task(
+                    &t.id,
+                    crate::tasks::TaskUpdate {
+                        status: Some(to),
+                        ..Default::default()
+                    },
+                    &human,
+                )
+                .unwrap()
+        };
+        set(crate::tasks::TaskStatus::InProgress);
+        let s = start(&store, &pid, &t, "claude-code").unwrap();
+        assert!(
+            start(&store, &pid, &t, "codex").is_err(),
+            "held while it is being worked on"
+        );
+        // Blocked is still being worked on later, so the AI keeps the task.
+        set(crate::tasks::TaskStatus::Blocked);
+        assert!(!store.get_session(&s.id).unwrap().status.is_ended());
+        set(crate::tasks::TaskStatus::InProgress);
+        set(crate::tasks::TaskStatus::InReview);
+        let ended = store.get_session(&s.id).unwrap();
+        assert!(ended.status.is_ended(), "{:?}", ended.status);
+        assert_eq!(ended.exit_reason.as_deref(), Some("task_in_review"));
+        assert!(store.lease(&t.id).unwrap().is_none());
+        // A reviewer sends it back and another AI picks it up.
+        set(crate::tasks::TaskStatus::InProgress);
+        start(&store, &pid, &t, "codex").unwrap();
+    }
+
+    #[test]
     fn one_ai_at_a_time_on_a_set_of_files() {
         let (_dir, store, pid) = store_with_project();
         let a = task(&store, &pid, "Limiter", &["src/limiter"]);
