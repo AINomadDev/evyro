@@ -466,6 +466,64 @@ async fn next_work(project_id: String) -> CmdResult {
     with_store(move |s| Ok(json!(s.next_work(&project_id, None, None)?))).await
 }
 
+fn history_status(terms: &threads::Terms, chats: &chat::Chats, removed: Value) -> CmdResult {
+    let paths =
+        evyro_core::paths::GlobalPaths::resolve().map_err(|e| json!({"message": e.to_string()}))?;
+    let keep = evyro_core::retention::Retention::load(&paths);
+    Ok(json!({
+        "keep": {"threads": keep.threads, "chats": keep.chats},
+        "max": evyro_core::retention::MAX_KEEP,
+        "saved": {"threads": terms.saved_count(), "chats": chats.host.saved_count()},
+        "removed": removed,
+    }))
+}
+
+/// How many ended threads and chats are saved, and how many are kept.
+#[tauri::command]
+async fn history_status_cmd(
+    terms: tauri::State<'_, threads::Terms>,
+    chats: tauri::State<'_, chat::Chats>,
+) -> CmdResult {
+    history_status(&terms, &chats, json!({"threads": 0, "chats": 0}))
+}
+
+/// Change how many ended threads and chats are kept; older ones are deleted now.
+#[tauri::command]
+async fn history_set(
+    terms: tauri::State<'_, threads::Terms>,
+    chats: tauri::State<'_, chat::Chats>,
+    threads_keep: usize,
+    chats_keep: usize,
+) -> CmdResult {
+    let keep = evyro_core::retention::Retention {
+        threads: threads_keep,
+        chats: chats_keep,
+    };
+    let paths =
+        evyro_core::paths::GlobalPaths::resolve().map_err(|e| json!({"message": e.to_string()}))?;
+    keep.save(&paths)
+        .map_err(|e| json!({"code": "invalid_input", "message": e.to_string()}))?;
+    let removed = json!({"threads": terms.set_keep(keep.threads), "chats": chats.host.set_retention(keep.chats)});
+    history_status(&terms, &chats, removed)
+}
+
+/// Delete saved ended threads and chats ("threads", "chats" or "all"). Running ones stay.
+#[tauri::command]
+async fn history_clear(
+    terms: tauri::State<'_, threads::Terms>,
+    chats: tauri::State<'_, chat::Chats>,
+    what: String,
+) -> CmdResult {
+    if !["threads", "chats", "all"].contains(&what.as_str()) {
+        return Err(json!({"code": "invalid_input", "message": "choose threads, chats or all"}));
+    }
+    let removed = json!({
+        "threads": if what != "chats" { terms.clear_saved() } else { 0 },
+        "chats": if what != "threads" { chats.host.clear_saved() } else { 0 },
+    });
+    history_status(&terms, &chats, removed)
+}
+
 #[tauri::command]
 async fn list_handoffs(project_id: String) -> CmdResult {
     with_store(move |s| Ok(json!(s.list_handoffs(&project_id, 100)?))).await
@@ -989,9 +1047,11 @@ fn main() {
     // (with their output) after the app restarts.
     let terms: threads::Terms =
         std::sync::Arc::new(match evyro_core::paths::GlobalPaths::resolve() {
-            Ok(p) => evyro_term::Terminals::with_store(p.data_dir.join("threads")).with_redactor(
-                std::sync::Arc::new(|text| evyro_core::redact::redact(text).0),
-            ),
+            Ok(p) => evyro_term::Terminals::with_store(p.data_dir.join("threads"))
+                .with_keep(evyro_core::retention::Retention::load(&p).threads)
+                .with_redactor(std::sync::Arc::new(|text| {
+                    evyro_core::redact::redact(text).0
+                })),
             Err(_) => evyro_term::Terminals::new(),
         });
     let chats: chat::Chats = chat::new_chats();
@@ -1036,6 +1096,9 @@ fn main() {
             release_session,
             switch_owner,
             next_work,
+            history_status_cmd,
+            history_set,
+            history_clear,
             list_handoffs,
             handoff_detail,
             handoff_checkpoint,

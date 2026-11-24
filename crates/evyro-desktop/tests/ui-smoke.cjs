@@ -213,6 +213,22 @@ const FIX = {
             contract: { task: { key: window.__handoff.task } }, integrity_ok: true,
             markdown: "Reviewed the existing limiter.", resume_prompt: "Continue T-1. Write the failing test first."
           };
+          if (cmd === "history_status_cmd" || cmd === "history_set" || cmd === "history_clear") {
+            const hs = (window.__history ||= { keep: { threads: 60, chats: 60 }, saved: { threads: 3, chats: 2 }, max: 500 });
+            const removed = { threads: 0, chats: 0 };
+            if (cmd === "history_set") {
+              (window.__historyCalls ||= []).push({ cmd, ...args });
+              hs.keep = { threads: args.threadsKeep, chats: args.chatsKeep };
+              removed.threads = Math.max(0, hs.saved.threads - args.threadsKeep); hs.saved.threads -= removed.threads;
+              removed.chats = Math.max(0, hs.saved.chats - args.chatsKeep); hs.saved.chats -= removed.chats;
+            }
+            if (cmd === "history_clear") {
+              (window.__historyCalls ||= []).push({ cmd, ...args });
+              if (args.what !== "chats") { removed.threads = hs.saved.threads; hs.saved.threads = 0; }
+              if (args.what !== "threads") { removed.chats = hs.saved.chats; hs.saved.chats = 0; }
+            }
+            return JSON.parse(JSON.stringify({ ...hs, removed }));
+          }
           if (cmd === "next_work") return { task: { key: "T-9", title: "Next ready task", priority: 0 }, agent: "codex" };
           if (cmd === "term_stop") { (window.__stopped ||= []).push(args.id); const t = terms.find((x) => x.id === args.id); if (t) t.running = false; return null; }
           if (cmd === "switch_owner") { window.__switch = args; return { handoff: { record: { id: "hnd_switch" } }, from: { harness: "claude-code" }, stopped: true }; }
@@ -1169,6 +1185,34 @@ const FIX = {
       state.threads = state.threads.filter((t) => t.id !== "term_quick" && t.target !== "codex");
     });
     await page.evaluate(() => loadThreads().then(() => render()));
+  });
+  await step("Settings can limit and clear saved history, asking before deleting", async () => {
+    await page.evaluate(() => { window.__history = null; window.__historyCalls = []; setTab("settings"); });
+    const card = page.locator(".card", { has: page.getByRole("heading", { name: "Saved history" }) });
+    await card.getByText("3 saved now").waitFor();
+    if (process.env.EVYRO_SHOTS) await card.screenshot({ path: path.join(process.env.EVYRO_SHOTS, "history-card.png") });
+    await card.getByLabel("Saved threads to keep").fill("501");
+    await card.getByRole("button", { name: "Save limits" }).click();
+    await page.getByText("Enter whole numbers from 0 to 500.").waitFor();
+    if ((await page.evaluate(() => window.__historyCalls)).length) throw new Error("an out-of-range limit was sent");
+    await card.getByLabel("Saved threads to keep").fill("1");
+    await card.getByRole("button", { name: "Save limits" }).click();
+    await card.getByText("1 saved now").waitFor();
+    const set = await page.evaluate(() => window.__historyCalls[0]);
+    if (set.threadsKeep !== 1 || set.chatsKeep !== 60) throw new Error("limits sent: " + JSON.stringify(set));
+    // Clearing asks first; cancelling deletes nothing.
+    await card.getByRole("button", { name: "Clear saved chats" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByText(/permanently deletes the saved chat output/).waitFor();
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+    if ((await page.evaluate(() => window.__historyCalls)).some((c) => c.cmd === "history_clear")) throw new Error("deleted without confirming");
+    await card.getByRole("button", { name: "Clear saved chats" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+    await card.getByText("0 saved now").first().waitFor();
+    const clearCall = await page.evaluate(() => window.__historyCalls.find((c) => c.cmd === "history_clear"));
+    if (clearCall.what !== "chats") throw new Error("cleared " + clearCall.what);
+    if (await card.getByRole("button", { name: "Clear saved chats" }).isEnabled()) throw new Error("nothing left to clear, yet the button is enabled");
+    await page.evaluate(() => { setTab("workspace"); });
   });
   await step("Work on next task starts the chosen AI on the chosen task with nothing to pick", async () => {
     await page.evaluate(() => { window.__lastTermOpen = null; setTab("tasks"); });

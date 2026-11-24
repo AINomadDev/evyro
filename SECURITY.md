@@ -7,7 +7,7 @@
 - Verification receipts are only created by Evyro running a command itself. Over MCP only configured commands can run.
 - Processes are launched with explicit argv, never through a shell.
 - Secrets are redacted from contracts, context packets, exports, MCP responses and verification logs; sensitive files (`.env`, keys) are referenced by path and hash only.
-- Saved thread output and chat transcripts are written with secrets redacted (best effort: a secret split across screen updates can be missed) and readable only by you (0700/0600 on Unix). The live view is unchanged.
+- Saved thread output and chat transcripts are written with secrets redacted (best effort: a secret split across screen updates can be missed) and readable only by you (0700/0600 on Unix). The live view is unchanged. You choose how many ended threads and chats to keep (Settings, Saved history) and can delete them all at any time.
 - Destructive actions need confirmation: `restore --yes`, `memory delete --yes`, `worktrees remove --force` for dirty worktrees.
 - Contracts are sealed with HMAC-SHA256 using a per-install key (`contract.key`, mode 0600 on Unix).
 

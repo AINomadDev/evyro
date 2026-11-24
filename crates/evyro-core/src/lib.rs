@@ -31,6 +31,7 @@ pub mod projects;
 pub mod quota;
 pub mod redact;
 pub mod remote;
+pub mod retention;
 pub mod review;
 pub mod search;
 pub mod sessions;

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -111,6 +111,8 @@ pub struct Terminals {
     /// Makes ids unique across runs of the app, so saved threads never collide.
     run: String,
     redactor: Option<Redactor>,
+    /// How many ended saved threads to keep; older ones are deleted.
+    keep: AtomicUsize,
 }
 
 /// Turns output text into the text that may be saved, for example by hiding secrets.
@@ -124,6 +126,71 @@ pub type OnExit = Arc<dyn Fn(&str, Option<u32>) + Send + Sync>;
 impl Terminals {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Keep this many ended threads; older ones are deleted (running threads are never touched).
+    pub fn with_keep(self, keep: usize) -> Self {
+        self.keep.store(keep, Ordering::SeqCst);
+        self
+    }
+
+    /// Change how many ended threads are kept and delete the surplus now. Returns how many went.
+    pub fn set_keep(&self, keep: usize) -> usize {
+        let _guard = self.lifecycle.lock().unwrap();
+        self.keep.store(keep, Ordering::SeqCst);
+        self.remove_ended(keep)
+    }
+
+    /// Delete every ended thread and its saved output. Running threads stay. Returns how many.
+    pub fn clear_saved(&self) -> usize {
+        let _guard = self.lifecycle.lock().unwrap();
+        self.remove_ended(0)
+    }
+
+    /// How many ended threads are saved.
+    pub fn saved_count(&self) -> usize {
+        self.list().iter().filter(|t| !t.running).count()
+    }
+
+    /// Keep the newest `keep` ended threads (this run's and earlier runs') and delete the rest
+    /// from memory and disk. The caller holds the lifecycle lock.
+    fn remove_ended(&self, keep: usize) -> usize {
+        let mut ended: Vec<(u64, String)> = self
+            .terms
+            .lock()
+            .unwrap()
+            .values()
+            .filter_map(|t| {
+                let i = t.info.lock().unwrap();
+                (!i.running).then(|| (i.started_at, i.id.clone()))
+            })
+            .collect();
+        if let Some(dir) = &self.store {
+            let live: std::collections::HashSet<String> =
+                self.terms.lock().unwrap().keys().cloned().collect();
+            ended.extend(
+                load_saved(dir)
+                    .into_iter()
+                    .filter(|i| !live.contains(&i.id))
+                    .map(|i| (i.started_at, i.id)),
+            );
+        }
+        ended.sort_by_key(|(started, _)| std::cmp::Reverse(*started));
+        let doomed: Vec<String> = ended.into_iter().skip(keep).map(|(_, id)| id).collect();
+        for id in &doomed {
+            if let Some(t) = self.terms.lock().unwrap().remove(id) {
+                let _info = t.info.lock().unwrap();
+                t.forgotten.store(true, Ordering::SeqCst);
+            }
+            if let Some(dir) = &self.store {
+                for ext in ["json", "log", "usage.json"] {
+                    if let Ok(p) = saved_path(dir, id, ext) {
+                        let _ = std::fs::remove_file(p);
+                    }
+                }
+            }
+        }
+        doomed.len()
     }
 
     /// Redact saved output with `redactor`. The live view and the in-memory
@@ -148,6 +215,7 @@ impl Terminals {
             .unwrap_or(0);
         Self {
             store: Some(dir),
+            keep: AtomicUsize::new(SAVED_THREADS),
             run: format!("{secs:x}_"),
             ..Default::default()
         }
@@ -314,7 +382,7 @@ impl Terminals {
         let store = self.store.clone();
         if let Some(dir) = &store {
             save_term(dir, &term);
-            prune(dir, SAVED_THREADS);
+            self.remove_ended(self.keep.load(Ordering::SeqCst));
         }
 
         // Reader: stream output, keep scrollback. Ends at EOF (program exit).
@@ -641,22 +709,6 @@ fn load_saved(dir: &std::path::Path) -> Vec<TermInfo> {
         .collect()
 }
 
-/// Keep only the newest `keep` saved threads.
-fn prune(dir: &std::path::Path, keep: usize) {
-    let mut all = load_saved(dir);
-    if all.len() <= keep {
-        return;
-    }
-    all.sort_by_key(|i| std::cmp::Reverse(i.started_at));
-    for i in &all[keep..] {
-        for ext in ["json", "log", "usage.json"] {
-            if let Ok(p) = saved_path(dir, &i.id, ext) {
-                let _ = std::fs::remove_file(p);
-            }
-        }
-    }
-}
-
 fn size(cols: u16, rows: u16) -> PtySize {
     PtySize {
         rows: rows.max(2),
@@ -904,6 +956,50 @@ mod tests {
         let history = verify_attachment(&info.id, out, rx);
         assert!(history.contains(query));
         assert!(history.contains("[Resumed Evyro thread]"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn retention_deletes_old_ended_threads_and_never_touches_a_running_one() {
+        let dir = std::env::temp_dir().join(format!("evyro-term-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let terms = Terminals::with_store(dir.clone());
+        let mut ended = Vec::new();
+        for _ in 0..3 {
+            let (o, e, _, rx) = collect();
+            let info = terms
+                .open(spec("/bin/sh", &["-c", "echo done"]), o, e)
+                .unwrap();
+            assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(0));
+            ended.push(info.id);
+        }
+        let (o, e, _, _rx) = collect();
+        let live = terms.open(spec("/bin/cat", &[]), o, e).unwrap();
+        terms.save_all();
+        let files = |id: &str| {
+            (
+                dir.join(format!("{id}.json")).exists(),
+                dir.join(format!("{id}.log")).exists(),
+            )
+        };
+        assert_eq!(terms.saved_count(), 3);
+        // Keep two: exactly one ended thread goes, from memory and from disk.
+        assert_eq!(terms.set_keep(2), 1);
+        assert_eq!(terms.saved_count(), 2);
+        assert_eq!(
+            ended.iter().filter(|id| files(id) == (true, true)).count(),
+            2
+        );
+        // Clearing removes every ended thread but leaves the running one and its files.
+        assert_eq!(terms.clear_saved(), 2);
+        assert_eq!(terms.saved_count(), 0);
+        assert!(ended.iter().all(|id| files(id) == (false, false)));
+        assert_eq!(files(&live.id), (true, true));
+        assert!(terms.list().iter().any(|t| t.id == live.id && t.running));
+        // Nothing ended is left to clear.
+        assert_eq!(terms.clear_saved(), 0);
+        terms.close_all();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]

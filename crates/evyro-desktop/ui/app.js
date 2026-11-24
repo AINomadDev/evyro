@@ -957,6 +957,60 @@ async function addTargetDialog() {
 }
 
 // ---------- settings ----------
+/** Limits on how many ended threads and chats stay saved, and a way to delete them now. */
+function historyCard() {
+  const card = h("div", { class: "card" }, h("h2", null, "Saved history"), h("div", { class: "muted" }, "Loading…"));
+  const forgetGone = async () => {
+    await loadThreads();
+    for (const [id, x] of [...XTERMS]) {
+      if (!state.threads.some((t) => t.id === id)) { x.term.dispose(); XTERMS.delete(id); }
+    }
+    if (state.project) {
+      const slots = panes();
+      slots.forEach((id, i) => { if (id && !state.threads.some((t) => t.id === id)) slots[i] = null; });
+    }
+    if (state.thread && !state.threads.some((t) => t.id === state.thread)) state.thread = null;
+  };
+  const draw = async () => {
+    let st;
+    try { st = await invoke("history_status_cmd"); }
+    catch (e) { clear(card).append(h("h2", null, "Saved history"), h("div", { class: "banner bad" }, errMsg(e))); return; }
+    const number = (id, value) => h("input", { type: "number", id, min: "0", max: String(st.max), step: "1", value: String(value) });
+    const threads = number("keep-threads", st.keep.threads);
+    const chats = number("keep-chats", st.keep.chats);
+    const save = async () => {
+      const t = Number(threads.value), c = Number(chats.value);
+      const ok = (n) => Number.isInteger(n) && n >= 0 && n <= st.max;
+      if (!ok(t) || !ok(c)) { toast(`Enter whole numbers from 0 to ${st.max}.`, true); return; }
+      const r = await act(() => invoke("history_set", { threadsKeep: t, chatsKeep: c }));
+      const gone = r.removed.threads + r.removed.chats;
+      toast(gone ? `Saved. Deleted ${plural(gone, "older item", "older items")}.` : "Saved.");
+      await forgetGone();
+      draw();
+    };
+    const clearBtn = (what, label, count) => h("button", { class: "btn small danger", disabled: !count, onclick: async () => {
+      const noun = what === "threads" ? "thread" : "chat";
+      if (!(await confirmDialog(`Delete ${plural(count, "saved " + noun, "saved " + noun + "s")}?`,
+        `Evyro permanently deletes the saved ${noun} output from this computer. ${what === "threads" ? "Threads that are still running are not affected." : "Chats that are still running keep going."}`, "Delete"))) return;
+      const r = await act(() => invoke("history_clear", { what }));
+      toast(`Deleted ${plural(r.removed[what], "saved " + noun, "saved " + noun + "s")}.`);
+      await forgetGone();
+      draw();
+    } }, label);
+    clear(card).append(
+      h("h2", null, "Saved history"),
+      h("div", { class: "muted small", style: "margin-bottom:10px" }, "Ended threads and chats are saved on this computer so you can reopen them. When you go over a limit the oldest are deleted. Use 0 to keep none."),
+      field("Saved threads to keep", threads, `${st.saved.threads} saved now`),
+      field("Saved chats to keep", chats, `${st.saved.chats} saved now`),
+      h("div", { class: "row" }, h("button", { class: "btn primary", onclick: save }, "Save limits")),
+      h("div", { class: "row", style: "margin-top:12px" },
+        clearBtn("threads", "Clear saved threads", st.saved.threads),
+        clearBtn("chats", "Clear saved chats", st.saved.chats)));
+  };
+  draw();
+  return card;
+}
+
 async function viewSettings(v) {
   const grid = h("div", { class: "grid" });
   v.append(grid);
@@ -997,7 +1051,7 @@ async function viewSettings(v) {
   const info = h("div", { class: "card" }, h("h2", null, "Evyro"), h("div", { class: "muted" }, "Loading…"));
   const doc = h("div", { class: "card wide" }, h("h2", null, "Doctor"), h("div", { class: "muted" }, "Running checks…"));
   grid.prepend(appearanceCard());
-  grid.append(info, updatesCard(), doc, remoteCard());
+  grid.append(info, updatesCard(), historyCard(), doc, remoteCard());
   invoke("app_info").then((a) => {
     clear(info).append(h("h2", null, "Evyro"), h("dl", { class: "kv" },
       h("dt", null, "Version"), h("dd", null, a.version), h("dt", null, "Data folder"), h("dd", { class: "mono" }, a.data_dir),
