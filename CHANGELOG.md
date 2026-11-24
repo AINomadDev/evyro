@@ -16,6 +16,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 - Stopping a session during a switch also stops the processes the AI started, so nothing it launched keeps running.
 - `evyro work` and **Work on next task** start the most important ready task on a free AI with nothing to name. Evyro makes a worktree only when another AI is in the main checkout and the tasks can't be shown to touch different files; unfinished work (and a parent's idle worktree) is reused, overlapping files are refused, and `evyro worktrees prune` tidies finished ones.
 - `--needs-person <why>` on `evyro task add` and `update` marks work only a person can do (a phone, a certificate, a sign-in); `evyro work` and the desktop never hand it to an AI, and `evyro tasks` flags it.
+- **Saved history** in Settings sets how many ended threads and chats stay saved (0 to 500 each; older ones are deleted) and has **Clear saved threads** and **Clear saved chats**, which ask first. Running threads and chats are never touched.
 - Saved terminal output and chat transcripts are redacted and private to your user. Community files: code of conduct, support guide, issue and pull request templates.
 - `docs/DEVELOPING_EVYRO_WITH_EVYRO.md` explains how several AIs build Evyro together.
 

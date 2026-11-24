@@ -45,7 +45,7 @@ Or run `xattr -dr com.apple.quarantine /Applications/Evyro.app` once in Terminal
 | Knowledge | Recorded decisions and project memory with search | Record a decision, save a memory |
 | Skills | Every skill (built in, yours, this project's) with its source, version and whether it is on; type a task to see which fit | Read a skill, **Turn on** or **Turn off** here or in every project, **+ New skill**, **Import…**, **Add to agent files…** (never replaces a file someone wrote) |
 | AI targets | Every AI you can switch to, grouped as coding agents, API keys, AI IDEs and chat apps, with status and next step; installed agent versions below | **+ Add target** (agent, API key by variable name or Keychain item, IDE, chat app), **Switch to**, open a target to see its checks or remove it |
-| Settings | Appearance, verification commands, project details, Evyro data folder, doctor checks | Change the look (see below). Edit test/lint/build commands (saved to `.evyro/project.toml`), archive a project, back up the database. **Remote access**: start or stop serving to paired devices (they see this window's chats), **+ Pair a device** shows a one-time code, **Revoke** cuts a device off |
+| Settings | Appearance, verification commands, project details, saved history, Evyro data folder, doctor checks | Change the look (see below). **Saved history** sets how many ended threads and chats stay saved and deletes them on request (see below). Edit test/lint/build commands (saved to `.evyro/project.toml`), archive a project, back up the database. **Remote access**: start or stop serving to paired devices (they see this window's chats), **+ Pair a device** shows a one-time code, **Revoke** cuts a device off |
 
 Choose **Columns → Side by side** to keep panes in one horizontal row. New threads extend the row and scroll into view when needed. Choose a numbered column count for a grid with a fixed width in columns.
 
@@ -93,6 +93,15 @@ When an AI's usage is low or out, the banner offers **Switch to <AI>…**. Pick 
 ## Away-from-home access
 
 Keep the Mac awake with Evyro serving on `127.0.0.1`. Connect the Mac and phone to the same Tailscale network. They can use different Wi-Fi networks, or the phone can use mobile data. In **Settings → Remote access → Away from home**, choose **Check private address**, then **Enable private address** if needed. Select **Pair over Tailscale** and use the displayed address and one-time code on the phone. Use the **control** pairing scope to start or message ACP chats remotely. See [Remote access](../REMOTE_ACCESS.md) for setup and troubleshooting.
+
+## Saved history
+
+Ended threads and chat transcripts are saved on this computer so you can reopen them. Settings › **Saved history** controls how many stay:
+
+- **Saved threads to keep** and **Saved chats to keep** take a whole number from 0 to 500 (default 60 each). When you go over a limit the oldest ended ones are deleted at once; 0 keeps none.
+- **Clear saved threads** and **Clear saved chats** delete every ended one after you confirm. Threads and chats that are still running are never touched.
+
+Saved output has secrets redacted and is readable only by you. Deleting is permanent: the files are removed from disk.
 
 ## Appearance
 

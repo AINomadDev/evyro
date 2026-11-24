@@ -173,7 +173,7 @@ fn private(path: &Path, mode: u32) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn load(dir: &Path) -> io::Result<HashMap<String, SavedChat>> {
+pub(crate) fn load(dir: &Path, keep: usize) -> io::Result<HashMap<String, SavedChat>> {
     fs::create_dir_all(dir)?;
     let mut paths: Vec<_> = fs::read_dir(dir)?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -202,7 +202,7 @@ pub(crate) fn load(dir: &Path) -> io::Result<HashMap<String, SavedChat>> {
             continue;
         };
         if record.info["id"] == id {
-            if saved.len() == MAX_SAVED {
+            if saved.len() >= keep {
                 if let Err(e) = fs::remove_file(&path) {
                     eprintln!("evyro: could not trim old chat history: {e}");
                 }
@@ -281,7 +281,7 @@ mod tests {
             .unwrap();
         let file = fs::read_to_string(dir.path().join(format!("{id}.json"))).unwrap();
         assert!(!file.contains(&secret), "secret reached the saved file");
-        let saved = load(dir.path()).unwrap();
+        let saved = load(dir.path(), MAX_SAVED).unwrap();
         assert!(saved[&id].log[0]["text"]
             .as_str()
             .unwrap()
@@ -306,7 +306,7 @@ mod tests {
             assert_eq!(mode(dir.path()), 0o700);
             assert_eq!(mode(&dir.path().join(format!("{id}.json"))), 0o600);
         }
-        let saved = load(dir.path()).unwrap();
+        let saved = load(dir.path(), MAX_SAVED).unwrap();
         assert_eq!(saved[&id].log, vec![json!({"t": "user", "text": "hello"})]);
         assert_eq!(saved[&id].info["history_truncated"], true);
     }

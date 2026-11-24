@@ -14,6 +14,7 @@ use evyro_core::Store;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// Transcript entries kept per chat.
@@ -53,6 +54,8 @@ pub struct Host {
     notify: Notify,
     evyro_mcp: Option<PathBuf>,
     archive: Option<PathBuf>,
+    /// How many ended saved transcripts to keep; older ones are deleted.
+    keep: Arc<AtomicUsize>,
 }
 
 /// Where to start a chat.
@@ -126,12 +129,65 @@ impl Host {
             notify,
             evyro_mcp,
             archive: None,
+            keep: Arc::new(AtomicUsize::new(MAX_SAVED)),
         }
+    }
+
+    /// Keep this many ended chat transcripts; older ones are deleted.
+    pub fn with_retention(self, keep: usize) -> Self {
+        self.keep.store(keep, Ordering::SeqCst);
+        self
+    }
+
+    /// Change how many ended transcripts are kept and delete the surplus now. Returns how many went.
+    pub fn set_retention(&self, keep: usize) -> usize {
+        self.keep.store(keep, Ordering::SeqCst);
+        let (Some(dir), Ok(mut c)) = (&self.archive, self.inner.lock()) else {
+            return 0;
+        };
+        Self::trim_ended(dir, &mut c, keep)
+    }
+
+    /// Delete every ended chat transcript. Chats still running keep their crash-safe copy.
+    pub fn clear_saved(&self) -> usize {
+        let (Some(dir), Ok(mut c)) = (&self.archive, self.inner.lock()) else {
+            return 0;
+        };
+        Self::trim_ended(dir, &mut c, 0)
+    }
+
+    /// How many ended chat transcripts are saved.
+    pub fn saved_count(&self) -> usize {
+        self.inner.lock().map_or(0, |c| {
+            c.saved.keys().filter(|id| !c.map.contains_key(*id)).count()
+        })
+    }
+
+    /// Keep the newest `keep` ended transcripts and delete the rest from memory and disk.
+    fn trim_ended(dir: &std::path::Path, c: &mut Inner, keep: usize) -> usize {
+        let mut ended: Vec<String> = c
+            .saved
+            .keys()
+            .filter(|id| !c.map.contains_key(*id))
+            .cloned()
+            .collect();
+        ended.sort_unstable_by(|a, b| b.cmp(a));
+        let mut removed = 0;
+        for id in ended.into_iter().skip(keep) {
+            match archive::remove(dir, &id) {
+                Ok(()) => {
+                    c.saved.remove(&id);
+                    removed += 1;
+                }
+                Err(e) => eprintln!("evyro: could not delete transcript {id}: {e}"),
+            }
+        }
+        removed
     }
 
     /// Enable local desktop history. Live chat APIs continue to see only this run.
     pub fn with_archive(mut self, dir: PathBuf) -> Self {
-        match archive::load(&dir) {
+        match archive::load(&dir, self.keep.load(Ordering::SeqCst)) {
             Ok(saved) => self.inner.lock().unwrap().saved = saved,
             Err(e) => eprintln!("evyro: could not read chat history: {e}"),
         }
@@ -538,6 +594,9 @@ impl Host {
                 (Some(dir), Some(e)) => Self::save_entry(dir, &mut c.saved, id, e),
                 _ => Ok(()),
             };
+            if let Some(dir) = &self.archive {
+                Self::trim_ended(dir, &mut c, self.keep.load(Ordering::SeqCst));
+            }
             (entry, save)
         };
         if let Some(chat) = entry.and_then(|e| e.chat) {
@@ -566,7 +625,7 @@ impl Host {
             .collect();
         newest.sort_unstable();
         newest.dedup();
-        for id in newest.iter().rev().take(MAX_SAVED) {
+        for id in newest.iter().rev() {
             if let Some(e) = c.map.get_mut(id).filter(|e| e.dirty) {
                 match Self::save_entry(dir, &mut c.saved, id, e) {
                     Ok(()) => e.dirty = false,
@@ -574,6 +633,7 @@ impl Host {
                 }
             }
         }
+        Self::trim_ended(dir, c, self.keep.load(Ordering::SeqCst));
     }
 
     fn save_entry(
@@ -585,11 +645,6 @@ impl Host {
         let record =
             SavedChat::capture(e.info.clone(), e.log.clone(), e.base > 0).write(dir, id)?;
         saved.insert(id.to_owned(), record);
-        if saved.len() > MAX_SAVED {
-            let oldest = saved.keys().min().unwrap().clone();
-            archive::remove(dir, &oldest)?;
-            saved.remove(&oldest);
-        }
         Ok(())
     }
 
@@ -623,6 +678,58 @@ impl Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retention_deletes_old_ended_transcripts_and_clear_leaves_live_chats() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = Host::new(Arc::new(|_| {}), None).with_archive(dir.path().to_owned());
+        let add = |running: bool| {
+            let id = evyro_core::util::new_id("chat");
+            host.inner.lock().unwrap().map.insert(
+                id.clone(),
+                Entry {
+                    info: json!({"id": id, "kind": "chat", "running": running, "project_id": "p"}),
+                    chat: None,
+                    log: Vec::new(),
+                    base: 0,
+                    pending: Vec::new(),
+                    dirty: true,
+                },
+            );
+            host.push(&id, json!({"t": "user", "text": "hello"}));
+            id
+        };
+        let files = || std::fs::read_dir(dir.path()).unwrap().count();
+        let ended: Vec<String> = (0..3).map(|_| add(false)).collect();
+        for id in &ended {
+            host.close(id).unwrap();
+        }
+        let live = add(true);
+        host.save_all();
+        assert_eq!(host.saved_count(), 3);
+        assert_eq!(
+            files(),
+            4,
+            "three ended transcripts and the live chat's crash copy"
+        );
+        // Keep two: the oldest ended transcript goes, from memory and from disk.
+        assert_eq!(host.set_retention(2), 1);
+        assert_eq!(host.saved_count(), 2);
+        assert!(host.saved_log(&ended[0]).is_none() && host.saved_log(&ended[2]).is_some());
+        assert_eq!(files(), 3);
+        // A lower limit applies to later closes too.
+        host.close(&live).unwrap();
+        assert_eq!(
+            host.saved_count(),
+            2,
+            "closing a chat never exceeds the limit"
+        );
+        // Clear removes every ended transcript.
+        assert_eq!(host.clear_saved(), 2);
+        assert_eq!(host.saved_count(), 0);
+        assert_eq!(files(), 0);
+        assert_eq!(host.clear_saved(), 0);
+    }
 
     #[test]
     fn desktop_history_survives_shutdown_and_stays_out_of_the_live_api() {
