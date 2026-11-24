@@ -1,5 +1,7 @@
 # Contributing
 
+By taking part you agree to follow the [code of conduct](CODE_OF_CONDUCT.md). Questions? See [SUPPORT.md](SUPPORT.md).
+
 ## Set up
 
 You need Rust 1.80 or newer and git. The desktop app also needs the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your system, and the UI smoke test needs Node 18 or newer.
