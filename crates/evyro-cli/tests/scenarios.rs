@@ -866,10 +866,20 @@ fn a_second_ai_gets_its_own_worktree_automatically() {
         .expect("T-2 has a worktree")
         .to_owned();
     assert_eq!(t2["task"]["branch"], "evyro/t-2");
-    let ran_in = std::fs::read_to_string(Path::new(&wt).join(".where")).unwrap();
+    // The stand-in agent writes its marker in the directory it was started in. (Its `pwd` text is
+    // not compared: under Git's sh on Windows it is an MSYS-style path.)
     assert!(
-        Path::new(ran_in.trim()).canonicalize().unwrap() == Path::new(&wt).canonicalize().unwrap(),
-        "the agent ran in {ran_in}, not the worktree {wt}"
+        Path::new(&wt).join(".where").is_file(),
+        "the agent did not run in the worktree {wt}"
+    );
+    assert_eq!(
+        std::fs::read_dir(&repo)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name() == ".where")
+            .count(),
+        1,
+        "only the first AI's marker is in the main checkout"
     );
     // Starting it again continues in the same worktree; no second one appears.
     env.ok(
