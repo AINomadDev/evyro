@@ -224,6 +224,20 @@ pub struct Dependency {
     pub kind: String,
 }
 
+/// A task constraint that keeps `evyro work` and the desktop from handing the task to an AI.
+pub const NEEDS_PERSON: &str = "needs a person:";
+
+impl Task {
+    /// Why this task needs a person (a phone, a certificate, an account sign-in), if it does.
+    /// Such a task is never picked automatically; naming it explicitly still works.
+    pub fn needs_person(&self) -> Option<&str> {
+        self.constraints
+            .iter()
+            .find_map(|c| c.strip_prefix(NEEDS_PERSON))
+            .map(str::trim)
+    }
+}
+
 impl Store {
     pub fn create_task(&self, project_id: &str, t: NewTask) -> Result<Task> {
         let tx = self.conn.unchecked_transaction()?;

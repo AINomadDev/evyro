@@ -129,20 +129,21 @@ Arguments:
   <TITLE>  
 
 Options:
-      --desc <DESC>               [default: ""]
-      --json                      Machine-readable JSON output
-      --kind <KIND>               
-  -q, --quiet                     Suppress non-essential output
-      --debug                     Print debug details on errors
-      --priority <PRIORITY>       
-      --accept <ACCEPTANCE>       
-  -C, --dir <DIR>                 Run as if started in this directory
-      --constraint <CONSTRAINTS>  
-      --project <PROJECT>         Target a registered project by id or alias instead of the current directory
-      --file <FILES>              
-      --parent <PARENT>           
-      --ready                     
-  -h, --help                      Print help
+      --desc <DESC>                  [default: ""]
+      --json                         Machine-readable JSON output
+      --kind <KIND>                  epic, feature, task, subtask, bug, tech_debt, spike, docs, maintenance, integration, security or release
+  -q, --quiet                        Suppress non-essential output
+      --debug                        Print debug details on errors
+      --priority <PRIORITY>          0 (critical) to 4 (trivial); default 2
+      --accept <ACCEPTANCE>          An acceptance criterion; repeat for several
+  -C, --dir <DIR>                    Run as if started in this directory
+      --constraint <CONSTRAINTS>     A constraint the AI must respect; repeat for several
+      --project <PROJECT>            Target a registered project by id or alias instead of the current directory
+      --file <FILES>                 A file or folder the task changes. Tasks with overlapping files never run side by side
+      --needs-person <NEEDS_PERSON>  Mark the task as needing a person (a phone, a certificate, a sign-in) and say why. `evyro work` and the desktop never hand such a task to an AI
+      --parent <PARENT>              The epic or task this one belongs to
+      --ready                        Start in the ready state instead of the backlog
+  -h, --help                         Print help
 ```
 
 ### evyro task start
@@ -224,6 +225,8 @@ Options:
           Target a registered project by id or alias instead of the current directory
       --file <FILES>
           
+      --needs-person <NEEDS_PERSON>
+          Mark the task as needing a person (a phone, a certificate, a sign-in) and say why
       --comment <COMMENT>
           
       --agent <AGENT>

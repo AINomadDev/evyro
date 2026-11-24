@@ -956,6 +956,21 @@ fn work_starts_the_next_ready_task_on_a_free_ai() {
     env.agent("claude", "2.1.0", "pwd > .where\nexit 0");
     env.ok(&repo, &["task", "add", "Later", "--priority", "3"]);
     env.ok(&repo, &["task", "add", "Urgent", "--priority", "0"]);
+    // A task that needs a person is never picked, however important it is.
+    env.ok(
+        &repo,
+        &[
+            "task",
+            "add",
+            "Pair a phone",
+            "--priority",
+            "0",
+            "--needs-person",
+            "a real phone",
+        ],
+    );
+    let tasks = String::from_utf8_lossy(&env.run(&repo, &["tasks"]).stdout).to_string();
+    assert!(tasks.contains("(needs a person)"), "{tasks}");
     let plan = env.json(&repo, &["work", "--agent", "claude", "--dry-run"]);
     assert_eq!(plan["task"], "T-2", "the most important task goes first");
     env.ok(&repo, &["work", "--agent", "claude", "--headless"]);

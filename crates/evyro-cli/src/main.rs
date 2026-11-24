@@ -285,18 +285,29 @@ enum TaskCmd {
         title: String,
         #[arg(long, default_value = "")]
         desc: String,
+        /// epic, feature, task, subtask, bug, tech_debt, spike, docs, maintenance, integration, security or release.
         #[arg(long)]
         kind: Option<String>,
+        /// 0 (critical) to 4 (trivial); default 2.
         #[arg(long)]
         priority: Option<i64>,
+        /// An acceptance criterion; repeat for several.
         #[arg(long = "accept")]
         acceptance: Vec<String>,
+        /// A constraint the AI must respect; repeat for several.
         #[arg(long = "constraint")]
         constraints: Vec<String>,
+        /// A file or folder the task changes. Tasks with overlapping files never run side by side.
         #[arg(long = "file")]
         files: Vec<String>,
+        /// Mark the task as needing a person (a phone, a certificate, a sign-in) and say why.
+        /// `evyro work` and the desktop never hand such a task to an AI.
+        #[arg(long)]
+        needs_person: Option<String>,
+        /// The epic or task this one belongs to.
         #[arg(long)]
         parent: Option<String>,
+        /// Start in the ready state instead of the backlog.
         #[arg(long)]
         ready: bool,
     },
@@ -343,6 +354,9 @@ enum TaskCmd {
         acceptance: Vec<String>,
         #[arg(long = "file")]
         files: Vec<String>,
+        /// Mark the task as needing a person (a phone, a certificate, a sign-in) and say why.
+        #[arg(long)]
+        needs_person: Option<String>,
         #[arg(long)]
         comment: Option<String>,
         /// Acting agent (for provenance). Omit when a human runs the command.
@@ -1125,7 +1139,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 ts.iter()
                     .map(|t| {
                         format!(
-                            "{:<6} {:<12} P{} {:<8} {}{}",
+                            "{:<6} {:<12} P{} {:<8} {}{}{}",
                             t.key,
                             t.status,
                             t.priority,
@@ -1134,7 +1148,12 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                             t.assigned_agent
                                 .as_ref()
                                 .map(|a| format!("  [{a}]"))
-                                .unwrap_or_default()
+                                .unwrap_or_default(),
+                            if t.needs_person().is_some() {
+                                "  (needs a person)"
+                            } else {
+                                ""
+                            }
                         )
                     })
                     .collect::<Vec<_>>()
@@ -2409,11 +2428,17 @@ fn task_cmd(
             kind,
             priority,
             acceptance,
-            constraints,
+            mut constraints,
             files,
+            needs_person,
             parent,
             ready,
         } => {
+            constraints.extend(
+                needs_person
+                    .iter()
+                    .map(|w| format!("{} {w}", evyro_core::tasks::NEEDS_PERSON)),
+            );
             let t = store.create_task(
                 &p.id,
                 NewTask {
@@ -2596,6 +2621,7 @@ fn task_cmd(
             priority,
             acceptance,
             files,
+            needs_person,
             comment,
             agent,
             human_override,
@@ -2622,6 +2648,10 @@ fn task_cmd(
                     priority,
                     add_acceptance: acceptance,
                     add_files: files,
+                    add_constraints: needs_person
+                        .iter()
+                        .map(|w| format!("{} {w}", evyro_core::tasks::NEEDS_PERSON))
+                        .collect(),
                     ..Default::default()
                 },
                 &actor,
