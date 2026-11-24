@@ -234,7 +234,8 @@ async function viewWorkspace(v) {
       h("h2", null, "Work with an AI right here"),
       h("p", { class: "muted" }, "Start Claude Code, Codex, Gemini or any coding agent in a thread, and run several side by side. They all share this project's task, decisions, memory, review notes and handoffs, shown on the right."),
       h("div", { class: "row" },
-        h("button", { class: "btn primary", onclick: newThreadDialog }, "New agent thread"),
+        h("button", { class: "btn primary", onclick: () => workOnNext() }, "Work on next task"),
+        h("button", { class: "btn", onclick: newThreadDialog }, "New agent thread"),
         h("button", { class: "btn", onclick: newChatDialog }, "New chat"),
         h("button", { class: "btn", onclick: () => startThread({ kind: "shell" }) }, "New shell"))));
     const ov = h("div", { class: "ws-overview" });

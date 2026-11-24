@@ -44,6 +44,6 @@ UI files are loaded in order from `ui/index.html` and call each other by global 
 ## Working with several AIs
 
 - One AI per task, and one AI per set of files. Declare a task's files (`--file`) so Evyro refuses an overlapping task while another AI holds one.
-- Split big work into subtasks. Give each parallel task its own worktree (`evyro worktrees add`).
+- Split big work into subtasks. `evyro work` starts the next ready task on a free AI. Evyro makes a worktree only when another AI is in the main checkout and the tasks' files can't be shown to differ (declare `--file`); finished work is tidied with `evyro worktrees prune`.
 - When an AI runs out of usage, switch rather than wait: `evyro switch --to <agent> --task T-n --yes`. Evyro stops the old AI, carries the latest checkpoint and starts the new one. See `docs/DEVELOPING_EVYRO_WITH_EVYRO.md`.
 - Checkpoint often: `evyro checkpoint --done "..." --next "..."`.

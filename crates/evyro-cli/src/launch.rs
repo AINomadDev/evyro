@@ -92,6 +92,28 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
     // Validate the argv shape (model support) before claiming.
     spec.launch_argv(&bin.to_string_lossy(), mode, "probe", plan.model.as_deref())?;
 
+    // Decide where the AI works. It stays in the main checkout unless another AI is there and the
+    // two cannot be shown to touch different files; unfinished work keeps its worktree.
+    let task_for_checkout = match (opts.task, opts.handoff) {
+        (Some(r), _) => Some(store.resolve_task(&p.id, r)?),
+        (None, Some(h)) => match store.get_handoff(h)?.task_id {
+            Some(id) => Some(store.get_task(&id)?),
+            None => None,
+        },
+        (None, None) => store.active_task(&p.id)?.filter(|t| {
+            store
+                .active_session_for_task(&t.id)
+                .ok()
+                .flatten()
+                .is_none()
+        }),
+    };
+    if let Some(task) = task_for_checkout {
+        let checkout = store.prepare_checkout(p, &task)?;
+        if let (Some(note), false, false) = (&checkout.note, o.quiet, o.json) {
+            eprintln!("[{}] {note}", brand::CLI_NAME);
+        }
+    }
     let (session, default_prompt) = match store.claim_for_target(
         p,
         &target.name,

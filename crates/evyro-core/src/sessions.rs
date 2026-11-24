@@ -127,6 +127,13 @@ pub struct Session {
     pub handoff_id: Option<String>,
 }
 
+/// A task and the AI chosen to start it.
+#[derive(Debug, Clone, Serialize)]
+pub struct NextWork {
+    pub task: crate::tasks::Task,
+    pub agent: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NewSession {
     pub task_id: Option<String>,
@@ -439,6 +446,71 @@ impl Store {
             }
         }
         Ok(())
+    }
+
+    /// What to start next with nothing named: an installed AI that is not working on anything
+    /// (or the one given) and the most important ready task it can start (or the one given).
+    pub fn next_work(
+        &self,
+        project_id: &str,
+        agent: Option<&str>,
+        task: Option<&str>,
+    ) -> Result<NextWork> {
+        let agent = match agent {
+            Some(a) => a.to_owned(),
+            None => {
+                let busy: std::collections::HashSet<String> = self
+                    .list_sessions(project_id, true)?
+                    .into_iter()
+                    .map(|s| s.harness)
+                    .collect();
+                let usable: Vec<_> = crate::adapters::detect_all()
+                    .into_iter()
+                    .filter(|d| {
+                        d.installed
+                            && matches!(d.compatibility.as_str(), "ok" | "unknown_version")
+                            && (d.capabilities.headless_launch || d.capabilities.interactive_launch)
+                    })
+                    .collect();
+                usable
+                    .iter()
+                    .find(|d| !busy.contains(&d.id))
+                    .or_else(|| usable.first())
+                    .map(|d| d.id.clone())
+                    .ok_or_else(|| {
+                        Error::NotFound("no installed AI found; run `evyro doctor`".into())
+                    })?
+            }
+        };
+        let task = match task {
+            Some(r) => self.resolve_task(project_id, r)?,
+            None => self
+                .next_claimable_task(project_id, &agent)?
+                .ok_or_else(|| {
+                    Error::NotFound(format!(
+                        "no ready task {agent} can start: add one, or finish a blocker"
+                    ))
+                })?,
+        };
+        Ok(NextWork { task, agent })
+    }
+
+    /// The most important ready task `harness` could start right now: not blocked, not held,
+    /// and not overlapping the files of a task another live session holds.
+    pub fn next_claimable_task(
+        &self,
+        project_id: &str,
+        harness: &str,
+    ) -> Result<Option<crate::tasks::Task>> {
+        for t in self.ready_tasks(project_id)? {
+            if crate::comparison::is_candidate(&t) {
+                continue;
+            }
+            if self.check_claim(project_id, &t.id, harness, None).is_ok() {
+                return Ok(Some(t));
+            }
+        }
+        Ok(None)
     }
 
     /// The running session named by `$EVYRO_SESSION_ID` (set by `evyro run`

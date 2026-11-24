@@ -34,6 +34,7 @@ Commands:
   context        Print the budgeted context packet for agents
   checkpoint     Record a checkpoint (git state captured automatically)
   handoff        Prepare a signed continuation contract for another agent
+  work           Start the next ready task on a free AI. Nothing to name or set up: Evyro picks the most important task that can start, an installed AI that is not busy, and gives the task its own worktree when another AI is already working in the main checkout
   switch         Switch a task to another AI because the current one ran out of usage. You confirm the usage is used up; Evyro carries the latest checkpoint over, stops the current AI and starts the new one, so only one AI works on the task at a time. Use `handoff` to write your own notes or to prepare the contract without launching
   resume         Accept a pending handoff as the receiving agent (validates state first)
   run            Launch an agent with session tracking (pid, exit checkpoint)
@@ -1062,6 +1063,7 @@ Usage: evyro worktrees [OPTIONS] <COMMAND>
 Commands:
   list    
   add     Create a worktree + branch for a task
+  prune   Tidy finished work: remove the worktrees of finished tasks that are clean and merged, and keep any with uncommitted or unmerged work
   remove  Remove a worktree (refuses with uncommitted changes unless --force)
   help    Print this message or the help of the given subcommand(s)
 

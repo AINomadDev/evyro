@@ -213,6 +213,7 @@ const FIX = {
             contract: { task: { key: window.__handoff.task } }, integrity_ok: true,
             markdown: "Reviewed the existing limiter.", resume_prompt: "Continue T-1. Write the failing test first."
           };
+          if (cmd === "next_work") return { task: { key: "T-9", title: "Next ready task", priority: 0 }, agent: "codex" };
           if (cmd === "term_stop") { (window.__stopped ||= []).push(args.id); const t = terms.find((x) => x.id === args.id); if (t) t.running = false; return null; }
           if (cmd === "switch_owner") { window.__switch = args; return { handoff: { record: { id: "hnd_switch" } }, from: { harness: "claude-code" }, stopped: true }; }
           if (cmd === "term_list") return JSON.parse(JSON.stringify(terms));
@@ -1166,6 +1167,16 @@ const FIX = {
       accountQuota.delete("claude-code"); accountQuota.delete("codex");
       window.__terms = window.__terms.filter((t) => t.id !== "term_quick" && t.target !== "codex");
       state.threads = state.threads.filter((t) => t.id !== "term_quick" && t.target !== "codex");
+    });
+    await page.evaluate(() => loadThreads().then(() => render()));
+  });
+  await step("Work on next task starts the chosen AI on the chosen task with nothing to pick", async () => {
+    await page.evaluate(() => { window.__lastTermOpen = null; setTab("tasks"); });
+    await page.getByRole("button", { name: "Work on next task", exact: true }).click();
+    await page.waitForFunction(() => window.__lastTermOpen && window.__lastTermOpen.target === "codex" && window.__lastTermOpen.task === "T-9");
+    await page.evaluate(() => {
+      window.__terms = window.__terms.filter((t) => t.task !== "T-9");
+      state.threads = state.threads.filter((t) => t.task !== "T-9");
     });
     await page.evaluate(() => loadThreads().then(() => render()));
   });

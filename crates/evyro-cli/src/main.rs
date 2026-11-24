@@ -100,6 +100,10 @@ enum Cmd {
     Checkpoint(CheckpointArgs),
     /// Prepare a signed continuation contract for another agent.
     Handoff(HandoffArgs),
+    /// Start the next ready task on a free AI. Nothing to name or set up: Evyro picks the most
+    /// important task that can start, an installed AI that is not busy, and gives the task its own
+    /// worktree when another AI is already working in the main checkout.
+    Work(WorkArgs),
     /// Switch a task to another AI because the current one ran out of usage.
     /// You confirm the usage is used up; Evyro carries the latest checkpoint over, stops the
     /// current AI and starts the new one, so only one AI works on the task at a time.
@@ -410,6 +414,22 @@ struct HandoffArgs {
 }
 
 #[derive(Args)]
+struct WorkArgs {
+    /// The AI to use (default: an installed AI that is not working on anything).
+    #[arg(long)]
+    agent: Option<String>,
+    /// The task to start (default: the most important ready task).
+    #[arg(long)]
+    task: Option<String>,
+    /// Launch in headless (non-interactive) mode.
+    #[arg(long)]
+    headless: bool,
+    /// Show what would start without starting it.
+    #[arg(long)]
+    dry_run: bool,
+}
+
+#[derive(Args)]
 struct SwitchArgs {
     /// The AI to continue with (a harness, or a model on the same harness with --model).
     #[arg(long)]
@@ -702,6 +722,13 @@ enum WorktreeCmd {
         branch: Option<String>,
         #[arg(long)]
         path: Option<PathBuf>,
+    },
+    /// Tidy finished work: remove the worktrees of finished tasks that are clean and merged,
+    /// and keep any with uncommitted or unmerged work.
+    Prune {
+        /// Show what would be removed without removing it.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Remove a worktree (refuses with uncommitted changes unless --force).
     Remove {
@@ -1183,6 +1210,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
             });
         }
         Cmd::Handoff(a) => return handoff_cmd(&store, &cli.project, &dir, a, false, o),
+        Cmd::Work(a) => return work_cmd(&store, &cli.project, &dir, a, o),
         Cmd::Switch(a) => return switch_cmd(&store, &cli.project, &dir, a, o),
         Cmd::Resume {
             agent,
@@ -1483,32 +1511,26 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 }
                 WorktreeCmd::Add { task, branch, path } => {
                     let t = store.resolve_task(&p.id, &task)?;
-                    let branch =
-                        branch.unwrap_or_else(|| format!("evyro/{}", t.key.to_lowercase()));
-                    let path = path.unwrap_or_else(|| {
-                        p.root().parent().unwrap_or(&p.root()).join(format!(
-                            "{}-{}",
-                            p.name,
-                            t.key.to_lowercase()
-                        ))
-                    });
-                    git::add_worktree(&p.root(), &path, &branch)?;
-                    let wt = evyro_core::util::canonical(&path)?
-                        .to_string_lossy()
-                        .to_string();
-                    let t = store.update_task(
-                        &t.id,
-                        TaskUpdate {
-                            branch: Some(branch.clone()),
-                            worktree: Some(wt.clone()),
-                            ..Default::default()
-                        },
-                        &Actor::Human {
-                            override_reason: None,
-                        },
-                    )?;
+                    let t = store.add_task_worktree(&p, &t, branch, path)?;
+                    let (wt, branch) = (
+                        t.worktree.clone().unwrap_or_default(),
+                        t.branch.clone().unwrap_or_default(),
+                    );
                     o.print(&t, || {
                         format!("Worktree {} on branch {} for {}", wt, branch, t.key)
+                    });
+                }
+                WorktreeCmd::Prune { dry_run } => {
+                    let items = store.prune_worktrees(&p, dry_run)?;
+                    o.print(&items, || {
+                        if items.is_empty() {
+                            return "No task worktrees to tidy.".to_owned();
+                        }
+                        items
+                            .iter()
+                            .map(|i| format!("{} {} ({})", i.task, i.path, i.reason))
+                            .collect::<Vec<_>>()
+                            .join("\n")
                     });
                 }
                 WorktreeCmd::Remove { path, force } => {
@@ -2643,6 +2665,47 @@ fn auto_recover(store: &Store, project_id: &str, o: &Out) {
             }
         }
     }
+}
+
+/// `evyro work`: pick the next ready task and a free AI, and start it.
+fn work_cmd(
+    store: &Store,
+    cli_project: &Option<String>,
+    dir: &Path,
+    a: WorkArgs,
+    o: &Out,
+) -> anyhow::Result<i32> {
+    let p = project(store, cli_project, dir)?;
+    let next = store.next_work(&p.id, a.agent.as_deref(), a.task.as_deref())?;
+    let (task, agent) = (next.task, next.agent);
+    let summary = format!(
+        "{} (P{}) {} with {agent}",
+        task.key, task.priority, task.title
+    );
+    if a.dry_run {
+        o.print(&json!({"task": task.key, "agent": agent}), || {
+            format!("Would start {summary}")
+        });
+        return Ok(0);
+    }
+    if !o.quiet && !o.json {
+        eprintln!("Starting {summary}");
+    }
+    launch::run_agent(
+        store,
+        &p,
+        launch::RunOpts {
+            target: &agent,
+            task: Some(&task.key),
+            handoff: None,
+            headless: a.headless,
+            prompt: None,
+            model: None,
+            accept_drift: false,
+            no_open: false,
+        },
+        o,
+    )
 }
 
 /// `evyro switch`: one confirmed step from the AI that is out of usage to the next one.

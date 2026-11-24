@@ -838,6 +838,127 @@ fn export_import_and_backup_restore() {
         .any(|c| c["name"] == "database integrity" && c["status"] == "ok"));
 }
 
+/// A second AI on another task gets its own worktree automatically; the first stays in the main checkout.
+#[test]
+fn a_second_ai_gets_its_own_worktree_automatically() {
+    let mut env = Env::new();
+    let repo = env.repo("autowt");
+    env.init(&repo);
+    env.agent("claude", "2.1.0", "pwd > .where\nexit 0");
+    env.agent("codex", "0.130.0", "pwd > .where\nexit 0");
+    env.ok(&repo, &["task", "add", "First", "--accept", "a"]);
+    env.ok(&repo, &["task", "add", "Second", "--accept", "b"]);
+    // The first AI starts with nobody else around: it works in the main checkout.
+    env.ok(
+        &repo,
+        &["run", "--agent", "claude", "--task", "T-1", "--headless"],
+    );
+    assert!(env.json(&repo, &["task", "show", "T-1"])["task"]["worktree"].is_null());
+    // While it holds T-1, a second AI on T-2 is isolated without anyone creating a worktree.
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "claude"]);
+    env.ok(
+        &repo,
+        &["run", "--agent", "codex", "--task", "T-2", "--headless"],
+    );
+    let t2 = env.json(&repo, &["task", "show", "T-2"]);
+    let wt = t2["task"]["worktree"]
+        .as_str()
+        .expect("T-2 has a worktree")
+        .to_owned();
+    assert_eq!(t2["task"]["branch"], "evyro/t-2");
+    let ran_in = std::fs::read_to_string(Path::new(&wt).join(".where")).unwrap();
+    assert!(
+        Path::new(ran_in.trim()).canonicalize().unwrap() == Path::new(&wt).canonicalize().unwrap(),
+        "the agent ran in {ran_in}, not the worktree {wt}"
+    );
+    // Starting it again continues in the same worktree; no second one appears.
+    env.ok(
+        &repo,
+        &["run", "--agent", "codex", "--task", "T-2", "--headless"],
+    );
+    assert_eq!(
+        env.json(&repo, &["task", "show", "T-2"])["task"]["worktree"].as_str(),
+        Some(wt.as_str())
+    );
+    let listed = env.json(&repo, &["worktrees", "list"]);
+    assert_eq!(listed.as_array().unwrap().len(), 2, "{listed}");
+    // Once T-2 is cancelled and its worktree is clean, prune tidies it; unfinished work is kept.
+    let kept = env.json(&repo, &["worktrees", "prune"]);
+    assert_eq!(kept[0]["removed"], false);
+    sh(Path::new(&wt), &["git", "clean", "-fdqx"]);
+    env.ok(&repo, &["task", "update", "T-2", "--status", "cancelled"]);
+    let pruned = env.json(&repo, &["worktrees", "prune"]);
+    assert_eq!(pruned[0]["removed"], true, "{pruned}");
+    assert!(!Path::new(&wt).exists());
+}
+
+/// Tasks that do not conflict share the checkout (no worktree); tasks that do are refused.
+#[test]
+fn tasks_that_do_not_conflict_share_the_checkout_and_overlapping_ones_are_refused() {
+    let mut env = Env::new();
+    let repo = env.repo("noconflict");
+    env.init(&repo);
+    env.agent("claude", "2.1.0", "exit 0");
+    env.agent("codex", "0.130.0", "exit 0");
+    env.ok(&repo, &["task", "add", "Source", "--file", "src"]);
+    env.ok(&repo, &["task", "add", "Docs", "--file", "docs"]);
+    env.ok(&repo, &["task", "add", "One file", "--file", "src/lib.txt"]);
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "claude"]);
+    // Independent files: the second AI works in the same checkout, no worktree is made.
+    env.ok(
+        &repo,
+        &["run", "--agent", "codex", "--task", "T-2", "--headless"],
+    );
+    assert!(env.json(&repo, &["task", "show", "T-2"])["task"]["worktree"].is_null());
+    assert_eq!(
+        env.json(&repo, &["worktrees", "list"])
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    // Overlapping files: refused with the reason, and still no worktree.
+    let o = env.run(
+        &repo,
+        &["run", "--agent", "codex", "--task", "T-3", "--headless"],
+    );
+    assert!(!o.status.success());
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("Only one AI works on a set of files")
+            || String::from_utf8_lossy(&o.stdout).contains("Only one AI works on a set of files")
+    );
+    assert!(env.json(&repo, &["task", "show", "T-3"])["task"]["worktree"].is_null());
+    assert_eq!(
+        env.json(&repo, &["worktrees", "list"])
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// `evyro work` picks the most important ready task and a free AI by itself.
+#[test]
+fn work_starts_the_next_ready_task_on_a_free_ai() {
+    let mut env = Env::new();
+    let repo = env.repo("work");
+    env.init(&repo);
+    env.agent("claude", "2.1.0", "pwd > .where\nexit 0");
+    env.ok(&repo, &["task", "add", "Later", "--priority", "3"]);
+    env.ok(&repo, &["task", "add", "Urgent", "--priority", "0"]);
+    let plan = env.json(&repo, &["work", "--agent", "claude", "--dry-run"]);
+    assert_eq!(plan["task"], "T-2", "the most important task goes first");
+    env.ok(&repo, &["work", "--agent", "claude", "--headless"]);
+    let t = env.json(&repo, &["task", "show", "T-2"]);
+    assert_eq!(t["task"]["status"], "in_progress");
+    assert_eq!(t["task"]["assigned_agent"], "claude-code");
+    // Nothing else is touched.
+    assert_eq!(
+        env.json(&repo, &["task", "show", "T-1"])["task"]["status"],
+        "backlog"
+    );
+}
+
 /// `evyro switch` hands a held task to the next AI only after the usage is confirmed spent.
 #[test]
 fn switch_moves_a_held_task_after_confirmation() {

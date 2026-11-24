@@ -460,6 +460,12 @@ async fn switch_owner(
     .await
 }
 
+/// The next ready task and a free AI to start it, chosen by Evyro.
+#[tauri::command]
+async fn next_work(project_id: String) -> CmdResult {
+    with_store(move |s| Ok(json!(s.next_work(&project_id, None, None)?))).await
+}
+
 #[tauri::command]
 async fn list_handoffs(project_id: String) -> CmdResult {
     with_store(move |s| Ok(json!(s.list_handoffs(&project_id, 100)?))).await
@@ -1029,6 +1035,7 @@ fn main() {
             recover_sessions,
             release_session,
             switch_owner,
+            next_work,
             list_handoffs,
             handoff_detail,
             handoff_checkpoint,
