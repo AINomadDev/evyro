@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security problem
+    url: https://github.com/AINomadDev/evyro/security/advisories/new
+    about: Report vulnerabilities privately, not in a public issue.
+  - name: Questions and help
+    url: https://github.com/AINomadDev/evyro/blob/main/SUPPORT.md
+    about: Read the guides and the troubleshooting steps first.

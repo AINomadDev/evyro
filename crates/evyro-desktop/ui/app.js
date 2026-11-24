@@ -389,10 +389,25 @@ const COLUMNS = [
   ["in_review", "In review"], ["verified", "Verified"], ["done", "Done"],
 ];
 
+/** Start the most important ready task on a free AI. Nothing to pick or set up. */
+async function workOnNext(button = null) {
+  const projectId = state.project.id;
+  if (button) button.disabled = true;
+  try {
+    const next = await act(() => invoke("next_work", { projectId }));
+    if (state.project?.id !== projectId) return;
+    await startThread({ kind: "agent", target: next.agent, task: next.task.key });
+    toast(`Started ${next.task.key} with ${next.agent}.`);
+  } catch { /* act reported the reason */ }
+  finally { if (button?.isConnected) button.disabled = false; }
+}
+
 async function viewTasks(v) {
   const pid = state.project.id;
   const head = h("div", { class: "row", style: "margin-bottom:14px" },
     h("button", { class: "btn primary", onclick: newTaskDialog }, "+ New task"),
+    h("button", { class: "btn", onclick: (e) => workOnNext(e.currentTarget),
+      title: "Evyro picks the most important ready task and an AI that is free, and uses a separate worktree only when another AI's work could collide" }, "Work on next task"),
     h("span", { class: "spacer" }),
     h("span", { class: "muted small" }, "Cards show the AIs working on them live. Click a task for criteria, checkpoints and receipts."));
   v.append(head);
@@ -1047,6 +1062,7 @@ async function paletteActions() {
     acts.push({ label: "Search in code", hint: `${MOD} ⇧ F`, run: () => openSearch("text") });
     acts.push({ label: "Go to symbol", hint: `${MOD} ⇧ O`, run: () => openSearch("symbols") });
     acts.push({ label: "Search saved chats", run: () => openSearch("chats") });
+    acts.push({ label: "Work on the next ready task", run: () => workOnNext() });
     acts.push({ label: "New chat with an AI (ACP)", run: () => { setTab("threads"); newChatDialog(); } });
     acts.push({ label: "Copy context for an agent", run: () => copyContext(null) });
     acts.push({ label: "Layout: one pane", run: () => { setTab("workspace"); setLayout(1); } });

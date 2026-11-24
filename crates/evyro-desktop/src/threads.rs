@@ -62,6 +62,7 @@ pub fn agent_line(
     target: &str,
     task: Option<&str>,
     handoff: Option<&str>,
+    model: Option<&str>,
     windows: bool,
 ) -> String {
     let q = |s: &str| quote(s, windows);
@@ -71,6 +72,9 @@ pub fn agent_line(
     }
     if let Some(h) = handoff.filter(|h| !h.is_empty()) {
         line.push_str(&format!(" --handoff {}", q(h)));
+    }
+    if let Some(m) = model.filter(|m| !m.is_empty()) {
+        line.push_str(&format!(" --model {}", q(m)));
     }
     line
 }
@@ -85,6 +89,7 @@ pub async fn term_open(
     target: Option<String>,
     task: Option<String>,
     handoff_id: Option<String>,
+    model: Option<String>,
     title: Option<String>,
     resume_id: Option<String>,
     credit_budget: Option<u32>,
@@ -128,6 +133,7 @@ pub async fn term_open(
             t,
             task.as_deref(),
             handoff_id.as_deref(),
+            model.as_deref(),
             cfg!(windows),
         );
         line.push_str(&format!(" --prompt {}", quote("", cfg!(windows))));
@@ -184,6 +190,13 @@ pub async fn term_open(
     }
     .map_err(bad)?;
     Ok(json!(info))
+}
+
+/// Stop a running thread's program but keep the thread and its saved output.
+#[tauri::command]
+pub fn term_stop(terms: State<'_, Terms>, id: String) -> CmdResult {
+    terms.stop(&id).map_err(bad)?;
+    Ok(Value::Null)
 }
 
 #[tauri::command]
@@ -249,16 +262,34 @@ mod tests {
     #[test]
     fn agent_line_quotes_for_each_shell() {
         assert_eq!(
-            agent_line("/opt/my apps/evyro", "codex", Some("T-1"), None, false),
+            agent_line(
+                "/opt/my apps/evyro",
+                "codex",
+                Some("T-1"),
+                None,
+                None,
+                false
+            ),
             "'/opt/my apps/evyro' run --to 'codex' --task 'T-1'"
         );
         assert_eq!(
-            agent_line("evyro", "it's", None, Some("hof_1"), false),
+            agent_line("evyro", "it's", None, Some("hof_1"), None, false),
             "'evyro' run --to 'it'\\''s' --handoff 'hof_1'"
         );
         assert_eq!(
-            agent_line("C:\\Evyro\\evyro.exe", "codex", Some(""), None, true),
+            agent_line("C:\\Evyro\\evyro.exe", "codex", Some(""), None, None, true),
             "\"C:\\Evyro\\evyro.exe\" run --to \"codex\""
+        );
+        assert_eq!(
+            agent_line(
+                "evyro",
+                "claude-code",
+                Some("T-2"),
+                Some("hnd_1"),
+                Some("sonnet"),
+                false
+            ),
+            "'evyro' run --to 'claude-code' --task 'T-2' --handoff 'hnd_1' --model 'sonnet'"
         );
     }
 }

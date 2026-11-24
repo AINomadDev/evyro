@@ -443,6 +443,64 @@ pub(crate) fn add_worktree_at(root: &Path, path: &Path, branch: &str, base: &str
     Ok(())
 }
 
+/// Paths with uncommitted changes (tracked or new), leaving out Evyro's own generated files.
+pub(crate) fn dirty_paths(root: &Path) -> Result<Vec<String>> {
+    let raw = git(
+        root,
+        &["status", "--porcelain=v1", "-z", "--untracked-files=all"],
+    )?;
+    Ok(raw
+        .split_terminator('\0')
+        .filter_map(|e| e.get(3..))
+        .filter(|p| !p.starts_with(".evyro/"))
+        .map(str::to_owned)
+        .collect())
+}
+
+/// How many commits `branch` has that `base` does not.
+pub(crate) fn commits_ahead(root: &Path, base: &str, branch: &str) -> usize {
+    git(root, &["rev-list", "--count", &format!("{base}..{branch}")])
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0)
+}
+
+/// Forget worktree records whose folder is gone.
+pub(crate) fn prune_worktree_records(root: &Path) {
+    let _ = git(root, &["worktree", "prune"]);
+}
+
+/// Delete a branch only if it is fully merged.
+pub(crate) fn delete_merged_branch(root: &Path, branch: &str) -> bool {
+    git(root, &["branch", "-d", branch]).is_ok()
+}
+
+/// Check out an existing branch in a new worktree. Refuses if the path exists.
+pub(crate) fn add_worktree_on_branch(root: &Path, path: &Path, branch: &str) -> Result<()> {
+    if path.exists() {
+        return Err(Error::Conflict(format!(
+            "{} already exists",
+            path.to_string_lossy()
+        )));
+    }
+    validate_ref_name(branch)?;
+    git(root, &["worktree", "add", &path.to_string_lossy(), branch])?;
+    Ok(())
+}
+
+pub(crate) fn branch_exists(root: &Path, branch: &str) -> bool {
+    git(
+        root,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+    .is_ok()
+}
+
 /// Roll back a branch created for a comparison only while it still points at its original base.
 pub(crate) fn drop_unchanged_branch(root: &Path, branch: &str, base: &str) -> Result<()> {
     let full = format!("refs/heads/{branch}");

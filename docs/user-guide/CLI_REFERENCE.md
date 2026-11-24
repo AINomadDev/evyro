@@ -34,7 +34,8 @@ Commands:
   context        Print the budgeted context packet for agents
   checkpoint     Record a checkpoint (git state captured automatically)
   handoff        Prepare a signed continuation contract for another agent
-  switch         Handoff and launch the target agent now (same as `handoff --launch`). Use `handoff` to prepare the contract without launching anything
+  work           Start the next ready task on a free AI. Nothing to name or set up: Evyro picks the most important task that can start, an installed AI that is not busy, and gives the task its own worktree when another AI is already working in the main checkout
+  switch         Switch a task to another AI because the current one ran out of usage. You confirm the usage is used up; Evyro carries the latest checkpoint over, stops the current AI and starts the new one, so only one AI works on the task at a time. Use `handoff` to write your own notes or to prepare the contract without launching
   resume         Accept a pending handoff as the receiving agent (validates state first)
   run            Launch an agent with session tracking (pid, exit checkpoint)
   chat           Chat with a coding agent over ACP (Agent Client Protocol): its reply, plan and tool calls in the terminal, and you approve each tool call. `evyro chat --list` shows which agents can
@@ -263,28 +264,24 @@ Options:
 ### evyro switch
 
 ```text
-Handoff and launch the target agent now (same as `handoff --launch`). Use `handoff` to prepare the contract without launching anything
+Switch a task to another AI because the current one ran out of usage. You confirm the usage is used up; Evyro carries the latest checkpoint over, stops the current AI and starts the new one, so only one AI works on the task at a time. Use `handoff` to write your own notes or to prepare the contract without launching
 
 Usage: evyro switch [OPTIONS] --to <TO>
 
 Options:
-      --json                   Machine-readable JSON output
-      --to <TO>                
-  -q, --quiet                  Suppress non-essential output
-      --task <TASK>            
-      --debug                  Print debug details on errors
-      --summary <SUMMARY>      [default: ""]
-  -C, --dir <DIR>              Run as if started in this directory
-      --done <DONE>            
-      --project <PROJECT>      Target a registered project by id or alias instead of the current directory
-      --remaining <REMAINING>  
-      --next <NEXT>            [default: ""]
-      --model <MODEL>          
-      --launch                 Launch the target agent after preparing the handoff
-      --headless               Launch in headless (non-interactive) mode
-      --from <FROM>            Who is preparing the handoff (default: the owning session's agent, else human)
-      --no-open                IDE/chat targets: prepare the hand-over without opening apps or the clipboard
-  -h, --help                   Print help
+      --json               Machine-readable JSON output
+      --to <TO>            The AI to continue with (a harness, or a model on the same harness with --model)
+  -q, --quiet              Suppress non-essential output
+      --task <TASK>        The task to switch (default: the active task)
+      --debug              Print debug details on errors
+      --model <MODEL>      The model to run on the new AI (default: its own)
+  -C, --dir <DIR>          Run as if started in this directory
+  -y, --yes                Confirm that the current AI's usage has run out or is about to
+      --headless           Launch in headless (non-interactive) mode
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+      --no-launch          Prepare the switch and stop the old AI, but do not start the new one
+      --no-open            IDE/chat targets: prepare the hand-over without opening apps or the clipboard
+  -h, --help               Print help
 ```
 
 ### evyro resume
@@ -1066,6 +1063,7 @@ Usage: evyro worktrees [OPTIONS] <COMMAND>
 Commands:
   list    
   add     Create a worktree + branch for a task
+  prune   Tidy finished work: remove the worktrees of finished tasks that are clean and merged, and keep any with uncommitted or unmerged work
   remove  Remove a worktree (refuses with uncommitted changes unless --force)
   help    Print this message or the help of the given subcommand(s)
 

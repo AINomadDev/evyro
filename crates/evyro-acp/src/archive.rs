@@ -131,7 +131,12 @@ impl SavedChat {
         }
         let capacity = MAX_BYTES - overhead;
         let mut remaining = capacity;
-        for item in log.into_iter().rev() {
+        // Saved transcripts never keep secrets the agent or the person pasted.
+        let mut found = Vec::new();
+        for item in log.into_iter().rev().map(|mut item| {
+            evyro_core::redact::redact_json(&mut item, &mut found);
+            item
+        }) {
             // Reserve a byte for the comma between entries.
             let bytes = serde_json::to_vec(&item)?.len() as u64 + 1;
             if bytes > capacity {
@@ -263,6 +268,24 @@ mod tests {
             chat.matches(&regex::Regex::new("Inspect this").unwrap(), 60)[0].message_index,
             0
         );
+    }
+
+    #[test]
+    fn saved_transcripts_do_not_keep_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = evyro_core::util::new_id("chat");
+        let secret = format!("ghp_{}", "B".repeat(36));
+        let log = vec![json!({"t": "user", "text": format!("my token is {secret}")})];
+        SavedChat::capture(json!({"id": id}), log, false)
+            .write(dir.path(), &id)
+            .unwrap();
+        let file = fs::read_to_string(dir.path().join(format!("{id}.json"))).unwrap();
+        assert!(!file.contains(&secret), "secret reached the saved file");
+        let saved = load(dir.path()).unwrap();
+        assert!(saved[&id].log[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("[REDACTED:github_token]"));
     }
 
     #[test]

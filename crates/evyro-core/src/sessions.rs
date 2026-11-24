@@ -127,6 +127,13 @@ pub struct Session {
     pub handoff_id: Option<String>,
 }
 
+/// A task and the AI chosen to start it.
+#[derive(Debug, Clone, Serialize)]
+pub struct NextWork {
+    pub task: crate::tasks::Task,
+    pub agent: String,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct NewSession {
     pub task_id: Option<String>,
@@ -230,6 +237,76 @@ fn parse_etime(s: &str) -> Option<i64> {
 /// A recorded process is still the one Evyro started: it exists and, when
 /// its start time was recorded, started at that time. A pid reused by an
 /// unrelated process after the agent exited does not count.
+/// Whether two declared task paths are the same or one contains the other.
+fn paths_overlap(a: &str, b: &str) -> bool {
+    let norm = |p: &str| p.trim_start_matches("./").trim_end_matches('/').to_owned();
+    let (a, b) = (norm(a), norm(b));
+    a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
+}
+
+/// Ask the process of a session, and everything it started, to stop. Refuses a pid that
+/// now belongs to a different process. Returns whether a stop signal was sent.
+pub fn stop_session_process(pid: i64, recorded_start: Option<i64>) -> bool {
+    if !session_process_alive(pid, recorded_start) {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // An agent's shell commands (tests, servers, sleeps) are its children and would
+        // otherwise outlive it, so stop the whole tree, deepest first.
+        let mut tree = process_descendants(pid);
+        tree.reverse();
+        tree.push(pid);
+        let mut sent = false;
+        for p in tree {
+            sent |= std::process::Command::new("kill")
+                .args(["-TERM", &p.to_string()])
+                .status()
+                .is_ok_and(|s| s.success());
+        }
+        sent
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+}
+
+/// Every process started by `pid`, parents before children.
+#[cfg(unix)]
+fn process_descendants(pid: i64) -> Vec<i64> {
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid="])
+        .output()
+    else {
+        return Vec::new();
+    };
+    let table: Vec<(i64, i64)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            Some((f.next()?.parse().ok()?, f.next()?.parse().ok()?))
+        })
+        .collect();
+    let mut found = vec![pid];
+    let mut i = 0;
+    while i < found.len() {
+        let parent = found[i];
+        found.extend(
+            table
+                .iter()
+                .filter(|(_, pp)| *pp == parent)
+                .map(|(p, _)| *p),
+        );
+        i += 1;
+    }
+    found.remove(0);
+    found
+}
+
 pub fn session_process_alive(pid: i64, recorded_start: Option<i64>) -> bool {
     if !pid_alive(pid) {
         return false;
@@ -328,12 +405,112 @@ impl Store {
             let holder = self.get_session(&l.session_id)?;
             if !holder.status.is_ended() && Some(holder.id.as_str()) != by_session {
                 return Err(Error::Conflict(format!(
-                    "{} is owned by session {} ({}); hand off with `evyro handoff --to {}` or end that session first",
-                    t.key, holder.id, holder.harness, harness
+                    "{} is owned by session {} ({}); if its AI is out of usage, switch the task with `evyro switch --task {} --to {} --yes`, otherwise hand off or end that session first",
+                    t.key, holder.id, holder.harness, t.key, harness
+                )));
+            }
+        }
+        self.check_file_overlap(&t, by_session)
+    }
+
+    /// One AI at a time on a set of files: refuse a task whose declared files overlap a task
+    /// that another live session holds in the same checkout.
+    fn check_file_overlap(&self, t: &crate::tasks::Task, by_session: Option<&str>) -> Result<()> {
+        if t.files.is_empty() {
+            return Ok(());
+        }
+        let mut st = self
+            .conn
+            .prepare("SELECT task_id, session_id FROM leases WHERE task_id != ?1")?;
+        let held: Vec<(String, String)> = st
+            .query_map([&t.id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        for (other_id, session_id) in held {
+            let holder = self.get_session(&session_id)?;
+            if holder.status.is_ended() || Some(holder.id.as_str()) == by_session {
+                continue;
+            }
+            let other = self.get_task(&other_id)?;
+            if other.worktree != t.worktree {
+                continue;
+            }
+            if let Some(file) = t
+                .files
+                .iter()
+                .find(|a| other.files.iter().any(|b| paths_overlap(a, b)))
+            {
+                return Err(Error::Conflict(format!(
+                    "{} and {} both change {file}, and {} is held by session {} ({}). Only one AI works on a set of files at a time: finish or switch that task first",
+                    t.key, other.key, other.key, holder.id, holder.harness
                 )));
             }
         }
         Ok(())
+    }
+
+    /// What to start next with nothing named: an installed AI that is not working on anything
+    /// (or the one given) and the most important ready task it can start (or the one given).
+    pub fn next_work(
+        &self,
+        project_id: &str,
+        agent: Option<&str>,
+        task: Option<&str>,
+    ) -> Result<NextWork> {
+        let agent = match agent {
+            Some(a) => a.to_owned(),
+            None => {
+                let busy: std::collections::HashSet<String> = self
+                    .list_sessions(project_id, true)?
+                    .into_iter()
+                    .map(|s| s.harness)
+                    .collect();
+                let usable: Vec<_> = crate::adapters::detect_all()
+                    .into_iter()
+                    .filter(|d| {
+                        d.installed
+                            && matches!(d.compatibility.as_str(), "ok" | "unknown_version")
+                            && (d.capabilities.headless_launch || d.capabilities.interactive_launch)
+                    })
+                    .collect();
+                usable
+                    .iter()
+                    .find(|d| !busy.contains(&d.id))
+                    .or_else(|| usable.first())
+                    .map(|d| d.id.clone())
+                    .ok_or_else(|| {
+                        Error::NotFound("no installed AI found; run `evyro doctor`".into())
+                    })?
+            }
+        };
+        let task = match task {
+            Some(r) => self.resolve_task(project_id, r)?,
+            None => self
+                .next_claimable_task(project_id, &agent)?
+                .ok_or_else(|| {
+                    Error::NotFound(format!(
+                        "no ready task {agent} can start: add one, or finish a blocker"
+                    ))
+                })?,
+        };
+        Ok(NextWork { task, agent })
+    }
+
+    /// The most important ready task `harness` could start right now: not blocked, not held,
+    /// and not overlapping the files of a task another live session holds.
+    pub fn next_claimable_task(
+        &self,
+        project_id: &str,
+        harness: &str,
+    ) -> Result<Option<crate::tasks::Task>> {
+        for t in self.ready_tasks(project_id)? {
+            if crate::comparison::is_candidate(&t) {
+                continue;
+            }
+            if self.check_claim(project_id, &t.id, harness, None).is_ok() {
+                return Ok(Some(t));
+            }
+        }
+        Ok(None)
     }
 
     /// The running session named by `$EVYRO_SESSION_ID` (set by `evyro run`
@@ -517,6 +694,32 @@ mod liveness_tests {
         );
         assert_eq!(parse_etime(""), None);
         assert_eq!(parse_etime("x:y"), None);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn stopping_a_session_process_also_stops_what_it_started() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        let mut parent = Command::new("sh")
+            .args(["-c", "sleep 300 & echo $!; wait"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(parent.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let child: i64 = line.trim().parse().unwrap();
+        assert!(pid_alive(child));
+        assert!(stop_session_process(parent.id() as i64, None));
+        parent.wait().unwrap();
+        for _ in 0..50 {
+            if !pid_alive(child) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(!pid_alive(child), "the child outlived its stopped parent");
     }
     #[test]
     fn this_process_is_alive_and_a_reused_pid_is_not() {

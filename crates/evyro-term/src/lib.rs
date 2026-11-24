@@ -81,6 +81,8 @@ struct Term {
     scrollback: Mutex<Scrollback>,
     /// Closed by the person: never saved again.
     forgotten: std::sync::atomic::AtomicBool,
+    /// Applied to output before it is written to disk (never to the live view).
+    redactor: Option<Redactor>,
 }
 
 #[derive(Default)]
@@ -108,7 +110,11 @@ pub struct Terminals {
     store: Option<PathBuf>,
     /// Makes ids unique across runs of the app, so saved threads never collide.
     run: String,
+    redactor: Option<Redactor>,
 }
+
+/// Turns output text into the text that may be saved, for example by hiding secrets.
+pub type Redactor = Arc<dyn Fn(&str) -> String + Send + Sync>;
 
 /// `(id, text, end)`: `end` is the byte offset of the end of this chunk in the
 /// terminal's whole output, so a view can drop chunks a snapshot already holds.
@@ -118,6 +124,13 @@ pub type OnExit = Arc<dyn Fn(&str, Option<u32>) + Send + Sync>;
 impl Terminals {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Redact saved output with `redactor`. The live view and the in-memory
+    /// scrollback are left as they are.
+    pub fn with_redactor(mut self, redactor: Redactor) -> Self {
+        self.redactor = Some(redactor);
+        self
     }
 
     /// Terminals that save each thread under `dir` and list saved ones from
@@ -295,6 +308,7 @@ impl Terminals {
             killer: Mutex::new(killer),
             scrollback: Mutex::new(scrollback),
             forgotten: Default::default(),
+            redactor: self.redactor.clone(),
         });
         self.terms.lock().unwrap().insert(id.clone(), term.clone());
         let store = self.store.clone();
@@ -432,6 +446,15 @@ impl Terminals {
         })
     }
 
+    /// Stop the program but keep the thread: its output stays saved and listed as ended.
+    pub fn stop(&self, id: &str) -> Result<()> {
+        let t = self.get(id)?;
+        if t.info.lock().unwrap().running {
+            let _ = t.killer.lock().unwrap().kill();
+        }
+        Ok(())
+    }
+
     /// Stop the program if it is still running and forget the terminal.
     /// A saved thread from an earlier run is deleted from disk.
     pub fn close(&self, id: &str) -> Result<()> {
@@ -565,7 +588,10 @@ fn save_term_locked(dir: &std::path::Path, t: &Term, info: &TermInfo) {
     ) else {
         return;
     };
-    let bytes: Vec<u8> = t.scrollback.lock().unwrap().buf.iter().copied().collect();
+    let mut bytes: Vec<u8> = t.scrollback.lock().unwrap().buf.iter().copied().collect();
+    if let Some(redact) = &t.redactor {
+        bytes = redact(&String::from_utf8_lossy(&bytes)).into_bytes();
+    }
     let write = |p: &PathBuf, data: &[u8]| {
         let tmp = p.with_extension("tmp");
         if write_private(&tmp, data).is_ok() {
@@ -878,6 +904,52 @@ mod tests {
         let history = verify_attachment(&info.id, out, rx);
         assert!(history.contains(query));
         assert!(history.contains("[Resumed Evyro thread]"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_ends_the_program_but_keeps_the_thread_and_its_output() {
+        let terms = Terminals::new();
+        let (o, e, _, rx) = collect();
+        let info = terms.open(spec("/bin/cat", &[]), o, e).unwrap();
+        terms.stop(&info.id).unwrap();
+        rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let kept = terms.list().into_iter().find(|t| t.id == info.id).unwrap();
+        assert!(!kept.running, "the thread stays listed as ended");
+        assert!(
+            terms.snapshot(&info.id).is_ok(),
+            "its output is still readable"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_output_is_redacted_but_the_live_view_is_not() {
+        let dir = std::env::temp_dir().join(format!("evyro-term-redact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let secret = format!("ghp_{}", "A".repeat(36));
+        let terms = Terminals::with_store(dir.clone()).with_redactor(Arc::new({
+            let secret = secret.clone();
+            move |text| text.replace(&secret, "[REDACTED]")
+        }));
+        let (o, e, _, rx) = collect();
+        let info = terms
+            .open(
+                spec("/bin/sh", &["-c", &format!("echo key {secret}")]),
+                o,
+                e,
+            )
+            .unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(0));
+        terms.save_all();
+        let (live, _) = terms.snapshot(&info.id).unwrap();
+        assert!(live.contains(&secret), "the live view must stay unchanged");
+        let saved = std::fs::read_to_string(dir.join(format!("{}.log", info.id))).unwrap();
+        assert!(
+            saved.contains("[REDACTED]") && !saved.contains(&secret),
+            "{saved:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(unix)]

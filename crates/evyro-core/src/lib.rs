@@ -9,6 +9,7 @@ pub mod acceptance;
 pub mod adapters;
 pub mod backup;
 pub mod brand;
+pub mod checkout;
 pub mod checkpoints;
 pub mod comparison;
 pub mod context;
