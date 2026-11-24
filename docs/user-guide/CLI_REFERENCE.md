@@ -32,6 +32,7 @@ Commands:
   tasks          List tasks
   task           Create, inspect and update tasks
   context        Print the budgeted context packet for agents
+  heartbeat      Tell Evyro this session is still working. A session that has no process Evyro can watch counts as gone after 30 minutes without any checkpoint, event or heartbeat
   checkpoint     Record a checkpoint (git state captured automatically)
   handoff        Prepare a signed continuation contract for another agent
   work           Start the next ready task on a free AI. Nothing to name or set up: Evyro picks the most important task that can start, an installed AI that is not busy, and gives the task its own worktree when another AI is already working in the main checkout
@@ -706,6 +707,23 @@ Options:
       --task <TASK>          
       --project <PROJECT>    Target a registered project by id or alias instead of the current directory
   -h, --help                 Print help
+```
+
+### evyro heartbeat
+
+```text
+Tell Evyro this session is still working. A session that has no process Evyro can watch counts as gone after 30 minutes without any checkpoint, event or heartbeat
+
+Usage: evyro heartbeat [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+      --task <TASK>        The task the session holds (default: the session this command runs in, or the active task)
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
 ```
 
 ### evyro recover

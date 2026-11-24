@@ -2846,3 +2846,23 @@ fn tasks_an_agent_starts_are_freed_when_it_exits() {
     env.ok(&repo, &["task", "start", "T-1", "--agent", "gemini"]);
     env.ok(&repo, &["run", "--agent", "codex", "--headless"]);
 }
+
+/// A session with no process reports in with `evyro heartbeat`, and `evyro recover` leaves it
+/// alone while it does.
+#[test]
+fn heartbeat_keeps_a_session_without_a_process_alive() {
+    let mut env = Env::new();
+    let repo = env.repo("heartbeat");
+    env.init(&repo);
+    env.ok(&repo, &["task", "add", "Work", "--accept", "done"]);
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "claude"]);
+    let out = env.ok(&repo, &["heartbeat", "--task", "T-1"]);
+    assert!(out.contains("reported in"), "{out}");
+    let out = env.ok(&repo, &["recover"]);
+    assert!(out.contains("No stale sessions"), "{out}");
+    assert_eq!(env.json(&repo, &["sessions"])[0]["status"], "running");
+    // With nothing running there is nobody to report for.
+    env.ok(&repo, &["task", "update", "T-1", "--status", "in_review"]);
+    let o = env.run(&repo, &["heartbeat", "--task", "T-1"]);
+    assert!(!o.status.success());
+}

@@ -96,6 +96,14 @@ enum Cmd {
         #[arg(long)]
         quiet_errors: bool,
     },
+    /// Tell Evyro this session is still working. A session that has no process Evyro can watch
+    /// counts as gone after 30 minutes without any checkpoint, event or heartbeat.
+    Heartbeat {
+        /// The task the session holds (default: the session this command runs in, or the
+        /// active task)
+        #[arg(long)]
+        task: Option<String>,
+    },
     /// Record a checkpoint (git state captured automatically).
     Checkpoint(CheckpointArgs),
     /// Prepare a signed continuation contract for another agent.
@@ -1498,6 +1506,20 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                     .collect::<Vec<_>>()
                     .join("\n")
             });
+        }
+        Cmd::Heartbeat { task } => {
+            let p = project(&store, &cli.project, &dir)?;
+            let t = match &task {
+                Some(r) => Some(store.resolve_task(&p.id, r)?),
+                None => store.active_task(&p.id)?,
+            };
+            match attribute_session(&store, t.as_ref().map(|t| t.id.as_str())) {
+                Some(sid) => {
+                    store.heartbeat(&sid)?;
+                    o.print(&sid, || format!("Session {sid} reported in."));
+                }
+                None => return Err(anyhow::anyhow!("no running session to report for")),
+            }
         }
         Cmd::Recover { include_unknown } => {
             let p = project(&store, &cli.project, &dir)?;

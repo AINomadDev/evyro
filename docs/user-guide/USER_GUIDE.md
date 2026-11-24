@@ -418,6 +418,7 @@ If the task still belongs to another AI, **Switch to** opens the handoff form in
 | Target shows **needs setup** | `evyro targets check <name>` tells you the next step. |
 | Clipboard or app did not open | The text is saved at `.evyro/HANDOFF_PROMPT.md` or `.evyro/CHAT_PACK.md`. |
 | Session stuck as running | `evyro recover` (or **Recover** under Sessions). |
+| A session with no process looks gone | Evyro treats a session it cannot watch as gone after 30 minutes without a checkpoint or event. During a long quiet stretch run `evyro heartbeat`. |
 | Desktop app window is blank | Build with the default features (`cargo run -p evyro-desktop`); do not pass `--no-default-features`. |
 | Want a clean test area | `EVYRO_HOME=/tmp/evyro-test evyro ...` keeps tests out of your real database. |
 | Evyro crashed | It saved a report in the `logs` folder of its data folder. `evyro bug-report --out report.md` gathers it with the versions and doctor checks, secrets redacted. Read the file, then attach it to an issue. |

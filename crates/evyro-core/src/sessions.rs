@@ -127,6 +127,27 @@ pub struct Session {
     pub handoff_id: Option<String>,
 }
 
+/// How long a session without a recorded process may stay silent before it counts as gone.
+pub const HEARTBEAT_TIMEOUT_SECS: i64 = 30 * 60;
+
+impl Session {
+    /// Whether this session still looks alive. With a recorded process that is the process;
+    /// without one it is whether the session reported in (any event, checkpoint or
+    /// `evyro heartbeat`) within [`HEARTBEAT_TIMEOUT_SECS`].
+    pub fn is_live(&self) -> bool {
+        self.is_live_at(time::OffsetDateTime::now_utc().unix_timestamp())
+    }
+
+    pub(crate) fn is_live_at(&self, now: i64) -> bool {
+        if let Some(pid) = self.pid {
+            return session_process_alive(pid, self.pid_started);
+        }
+        let seen = self.last_event_at.as_deref().unwrap_or(&self.started_at);
+        time::OffsetDateTime::parse(seen, &time::format_description::well_known::Rfc3339)
+            .map_or(true, |t| now - t.unix_timestamp() <= HEARTBEAT_TIMEOUT_SECS)
+    }
+}
+
 /// A task and the AI chosen to start it.
 #[derive(Debug, Clone, Serialize)]
 pub struct NextWork {
@@ -666,15 +687,24 @@ impl Store {
     }
 
     /// Sessions that claim to be live but whose process is gone (crash, quota
-    /// kill, closed terminal). Sessions without a pid are reported only when
-    /// `include_unknown` is set, since we cannot prove they died.
+    /// kill, closed terminal). A session without a pid is reported once it has
+    /// been silent past the heartbeat timeout, or always when `include_unknown` is set.
+    /// Record that a session is still working, so one without a pid is not taken for dead.
+    pub fn heartbeat(&self, session_id: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE sessions SET last_event_at = ?1 WHERE id = ?2",
+            rusqlite::params![crate::util::now(), session_id],
+        )?;
+        Ok(())
+    }
+
     pub fn stale_sessions(&self, project_id: &str, include_unknown: bool) -> Result<Vec<Session>> {
         Ok(self
             .list_sessions(project_id, true)?
             .into_iter()
             .filter(|s| match s.pid {
                 Some(pid) => !session_process_alive(pid, s.pid_started),
-                None => include_unknown,
+                None => include_unknown || !s.is_live(),
             })
             .collect())
     }
