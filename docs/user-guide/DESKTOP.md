@@ -63,7 +63,7 @@ Choose **Columns → Side by side** to keep panes in one horizontal row. New thr
 
 Open a task and choose **Compare agents**. Pick two agent targets and select **Prepare comparison**. Evyro creates two child tasks and two Git worktrees at the same committed revision. Uncommitted edits in your checkout stay there.
 
-Use **Start agent** on each candidate when you’re ready. Run the usual task verification in each worktree, then reopen **Compare agents** and choose **Refresh results** to see the diffs and latest test results. **Prefer this result** records your choice and leaves both worktrees available.
+Use **Start agent** on each candidate when you’re ready. Choose **Run tests in both** to run the project's test command in each worktree one after the other (it can take a while), or run your own verification there. **Refresh results** shows each candidate's diff, a files and lines summary, and its latest test result. **Prefer this result** records your choice and leaves both worktrees available.
 
 To move the preferred result into the original task’s checkout, finish any active sessions in both checkouts and commit the candidate’s changes. Both checkouts must be clean. Select **Preview staging** to check the destination and review the file list, then choose **Stage changes**. Evyro rechecks the preview and stages the candidate’s committed changes for you to review and commit. If Git detects a conflict, handle it before trying again.
 

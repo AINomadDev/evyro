@@ -1,6 +1,17 @@
 // Compare two implementations from a common committed base.
 "use strict";
 
+/** Files and lines changed, counted from a unified diff. */
+function diffStats(diff) {
+  let files = 0, added = 0, removed = 0;
+  for (const line of (diff || "").split("\n")) {
+    if (line.startsWith("diff --git ")) files++;
+    else if (line.startsWith("+") && !line.startsWith("+++")) added++;
+    else if (line.startsWith("-") && !line.startsWith("---")) removed++;
+  }
+  return { files, added, removed };
+}
+
 async function openComparison(task) {
   const projectId = state.project.id;
   const args = { projectId, task: task.key };
@@ -107,6 +118,8 @@ async function openComparison(task) {
               selected && !r.error ? h("button", { class: "btn small", disabled: !!r.running,
                 onclick: (e) => previewStage(stagePanel, e.currentTarget, id) }, "Preview staging") : null),
             r.error ? h("div", { class: "banner bad" }, r.error) : h("div", { class: "stack" },
+              (() => { const n = diffStats(r.diff); return h("div", { class: "small muted comparison-stats" },
+                r.diff ? `${n.files ? plural(n.files, "file", "files") + " · " : ""}+${n.added} −${n.removed}` : "No changes from the shared base"); })(),
               h("div", { class: "row" }, pill(r.status), r.verification
                 ? pill(r.verification.passed ? "ok" : "fail", r.verification.passed ? "Last check passed" : "Last check failed")
                 : h("span", { class: "muted small" }, "No verification yet"),
@@ -120,6 +133,24 @@ async function openComparison(task) {
       if (current() && seq === request) clear(results).append(h("div", { class: "banner bad" }, errMsg(e)));
     }
   };
+  const runChecks = h("button", { class: "btn small", onclick: async () => {
+    const id = menu.value;
+    if (!id) return;
+    const run = (await invoke("comparison_list", args)).find((r) => r.id === id);
+    if (!run) return;
+    runChecks.disabled = true;
+    const status = h("span", { class: "small muted", role: "status" });
+    runChecks.after(status);
+    try {
+      for (const [index, candidate] of run.candidates.entries()) {
+        if (!current()) return;
+        status.textContent = `Running tests for ${candidate.target} (${index + 1} of 2)…`;
+        try { await invoke("run_verification", { projectId, task: candidate.key, kind: "test", index: 0 }); }
+        catch (e) { toast(`${candidate.target}: ${errMsg(e)}`, true); }
+      }
+      if (current()) await paint();
+    } finally { status.remove(); runChecks.disabled = false; }
+  } }, "Run tests in both");
   const load = async (id) => {
     try {
       const runs = await invoke("comparison_list", args);
@@ -142,7 +173,7 @@ async function openComparison(task) {
   } }, "Prepare comparison");
   body.append(h("p", { class: "small muted" }, "Each agent gets its own worktree at the same commit. Uncommitted edits stay in the original checkout. Preferences are recorded on this task."),
     h("div", { class: "row comparison-controls" }, field("First agent", first), field("Second agent", second), prepare),
-    h("div", { class: "row comparison-controls" }, field("Comparison", menu), h("button", { class: "btn small", onclick: () => load(menu.value) }, "Refresh results")), results);
+    h("div", { class: "row comparison-controls" }, field("Comparison", menu), h("button", { class: "btn small", onclick: () => load(menu.value) }, "Refresh results"), runChecks), results);
   modal(`Compare agents on ${task.key}`, [body], []);
   body.closest(".modal").classList.add("comparison-modal");
   await load();

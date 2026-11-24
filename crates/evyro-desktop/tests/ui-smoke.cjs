@@ -128,6 +128,7 @@ const FIX = {
             { status: "in_review", running: false, diff: "+first candidate", verification: { passed: true, command: ["cargo", "test"] } },
             { status: "in_progress", running: false, diff: "+second candidate", verification: { passed: false, command: ["cargo", "test"] }, verification_current: false },
           ] };
+          if (cmd === "run_verification" && args.kind === "test") { (window.__verified ||= []).push(args.task); return { receipt: { passed: true }, output_tail: "" }; }
           if (cmd === "comparison_prefer") { window.__comparisons.find((r) => r.id === args.id).preferred = args.candidate; return null; }
           if (cmd === "comparison_preview_stage") {
             if (window.__blockStagePreview) throw new Error("Commit or set aside changes in the destination checkout before staging");
@@ -1209,6 +1210,10 @@ const FIX = {
     await compare.getByText("Last check failed").waitFor();
     await compare.getByText("Earlier snapshot").waitFor();
     const second = compare.locator("article").nth(1);
+    await compare.getByText("+1 −0").first().waitFor();
+    await compare.getByRole("button", { name: "Run tests in both" }).click();
+    await page.waitForFunction(() => (window.__verified || []).join() === "T-2,T-3");
+    await compare.getByRole("button", { name: "Run tests in both" }).waitFor();
     await second.getByRole("button", { name: "Prefer this result" }).click();
     await second.getByText("Preferred", { exact: true }).waitFor();
     if (process.env.EVYRO_SHOTS) {
