@@ -52,6 +52,7 @@ pub async fn remote_tailscale(remote: State<'_, Remote>, enable: Option<bool>) -
                 "/usr/local/bin/tailscale",
                 "/opt/homebrew/bin/tailscale",
                 "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+                r"C:\Program Files\Tailscale\tailscale.exe",
             ]
             .into_iter()
             .map(PathBuf::from)

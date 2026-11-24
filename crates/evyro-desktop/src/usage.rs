@@ -58,7 +58,7 @@ pub async fn agent_quota(target: String) -> CmdResult {
                     cmd.env_remove(name);
                 }
                 cmd.envs(plan.env_set);
-                if let Some(home) = std::env::var_os("HOME") {
+                if let Some(home) = home_dir() {
                     cmd.current_dir(home);
                 }
                 match request(cmd, provider) {
@@ -223,9 +223,17 @@ fn antigravity(_bin: &Path) -> Value {
     json!({"state": "unsupported", "message": "Run /usage in the Antigravity terminal for account limits."})
 }
 
+/// The user's home folder: HOME on Unix, USERPROFILE on Windows.
+fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+}
+
 fn executable(harness: &str) -> Option<PathBuf> {
     adapters::which(harness).or_else(|| {
-        let home = PathBuf::from(std::env::var_os("HOME")?);
+        let home = home_dir()?;
+        let exe = format!("{harness}{}", std::env::consts::EXE_SUFFIX);
         [
             home.join(".local/bin"),
             home.join(".cargo/bin"),
@@ -233,7 +241,7 @@ fn executable(harness: &str) -> Option<PathBuf> {
             PathBuf::from("/usr/local/bin"),
         ]
         .into_iter()
-        .map(|dir| dir.join(harness))
+        .map(|dir| dir.join(&exe))
         .find(|bin| bin.is_file())
     })
 }
