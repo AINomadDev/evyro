@@ -237,21 +237,67 @@ fn paths_overlap(a: &str, b: &str) -> bool {
     a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
 }
 
-/// Ask the process of a session to stop. Refuses a pid that now belongs to a different
-/// process. Returns whether a stop signal was sent.
+/// Ask the process of a session, and everything it started, to stop. Refuses a pid that
+/// now belongs to a different process. Returns whether a stop signal was sent.
 pub fn stop_session_process(pid: i64, recorded_start: Option<i64>) -> bool {
     if !session_process_alive(pid, recorded_start) {
         return false;
     }
     #[cfg(unix)]
-    let sent = std::process::Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
-        .status();
+    {
+        // An agent's shell commands (tests, servers, sleeps) are its children and would
+        // otherwise outlive it, so stop the whole tree, deepest first.
+        let mut tree = process_descendants(pid);
+        tree.reverse();
+        tree.push(pid);
+        let mut sent = false;
+        for p in tree {
+            sent |= std::process::Command::new("kill")
+                .args(["-TERM", &p.to_string()])
+                .status()
+                .is_ok_and(|s| s.success());
+        }
+        sent
+    }
     #[cfg(windows)]
-    let sent = std::process::Command::new("taskkill")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status();
-    sent.is_ok_and(|s| s.success())
+    {
+        std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+}
+
+/// Every process started by `pid`, parents before children.
+#[cfg(unix)]
+fn process_descendants(pid: i64) -> Vec<i64> {
+    let Ok(out) = std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid="])
+        .output()
+    else {
+        return Vec::new();
+    };
+    let table: Vec<(i64, i64)> = String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            Some((f.next()?.parse().ok()?, f.next()?.parse().ok()?))
+        })
+        .collect();
+    let mut found = vec![pid];
+    let mut i = 0;
+    while i < found.len() {
+        let parent = found[i];
+        found.extend(
+            table
+                .iter()
+                .filter(|(_, pp)| *pp == parent)
+                .map(|(p, _)| *p),
+        );
+        i += 1;
+    }
+    found.remove(0);
+    found
 }
 
 pub fn session_process_alive(pid: i64, recorded_start: Option<i64>) -> bool {
@@ -576,6 +622,32 @@ mod liveness_tests {
         );
         assert_eq!(parse_etime(""), None);
         assert_eq!(parse_etime("x:y"), None);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn stopping_a_session_process_also_stops_what_it_started() {
+        use std::io::{BufRead, BufReader};
+        use std::process::{Command, Stdio};
+        let mut parent = Command::new("sh")
+            .args(["-c", "sleep 300 & echo $!; wait"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(parent.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        let child: i64 = line.trim().parse().unwrap();
+        assert!(pid_alive(child));
+        assert!(stop_session_process(parent.id() as i64, None));
+        parent.wait().unwrap();
+        for _ in 0..50 {
+            if !pid_alive(child) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        assert!(!pid_alive(child), "the child outlived its stopped parent");
     }
     #[test]
     fn this_process_is_alive_and_a_reused_pid_is_not() {

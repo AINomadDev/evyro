@@ -39,6 +39,11 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 - **Real Codex CLI:** finished a task across two sessions and a handoff; its verification passed. The run found 5 launch bugs, fixed in PR #12: Codex ran read-only (now `--sandbox workspace-write`), Codex waited on an open stdin (headless runs now get none), Gemini stopped at its folder-trust question, Claude Code had no headless permission mode, and a project.toml command in the wrong shape was ignored silently.
 - Real Gemini CLI and Claude Code were blocked by their accounts (Gemini wants a migration to Antigravity; Claude was at its usage limit). In both cases Evyro reopened the handoff correctly.
 
+## Works (real agents, 2026-11-24, macOS arm64)
+
+- **Switching a held task between two real agents** (scratch repo, scratch Evyro home). Codex 0.171 created a module, saved a checkpoint and held the task; Claude Code 2.1.331 was refused with the switch hint; `evyro switch --to claude-code --yes` ended Codex's session with a handoff, stopped it and started Claude Code from the handoff; Claude Code wrote the tests and `evyro verify` passed. The run found that Codex's own child process (`sleep`) survived the stop; stopping a session now stops everything it started (unit test).
+- Not covered by that run: the desktop dialog with real agents, an actual usage-limit message from an agent, and Gemini, OpenCode, Cursor and Copilot.
+
 ## Works (checked by hand on Linux)
 
 - Desktop app under Xvfb: creating a task, checking criteria, running tests, accepting a handoff with drift, saving commands, the AI targets screen, adding a target, switching to a chat app through a handoff, the Changes view, the palette and live refresh after a CLI checkpoint.
@@ -51,7 +56,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 ## Not yet verified
 
 - **Real ACP agents.** Chat has been run only with a stand-in ACP agent. Its messages matched the official ACP v1 schema in a hand check (2026-11-23). No run with Claude Agent ACP, Codex ACP, Gemini CLI, Goose, OpenCode or Copilot has been recorded; their commands come from their docs.
-- **Real agents.** Only Codex has finished a real run. Claude Code (after the usage reset on 2026-12-01), Gemini CLI (after the account migration) and OpenCode have not. Their headless flags in PR #12 come from their docs.
+- **Real agents.** Codex and Claude Code have finished a real run (see the 2026-11-24 switch run above). Gemini CLI (after the account migration) and OpenCode have not. Their headless flags in PR #12 come from their docs.
 - **Windows by hand.** Everything runs on Windows in CI, scenario tests included, but no one has used Evyro on a Windows machine.
 - **Notifications, agent threads and the Terminal launch** on a real Mac or Windows desktop. Agent threads were checked by hand on Linux with a real PTY and a stand-in agent.
 - **Signed installers.** The installers are installed and started in CI, and the .dmg on a real Mac, but they are not code-signed or notarized (needs an Apple Developer ID and a Windows certificate), so macOS and Windows warn on first open.
