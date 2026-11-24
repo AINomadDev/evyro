@@ -446,6 +446,15 @@ impl Terminals {
         })
     }
 
+    /// Stop the program but keep the thread: its output stays saved and listed as ended.
+    pub fn stop(&self, id: &str) -> Result<()> {
+        let t = self.get(id)?;
+        if t.info.lock().unwrap().running {
+            let _ = t.killer.lock().unwrap().kill();
+        }
+        Ok(())
+    }
+
     /// Stop the program if it is still running and forget the terminal.
     /// A saved thread from an earlier run is deleted from disk.
     pub fn close(&self, id: &str) -> Result<()> {
@@ -895,6 +904,22 @@ mod tests {
         let history = verify_attachment(&info.id, out, rx);
         assert!(history.contains(query));
         assert!(history.contains("[Resumed Evyro thread]"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stop_ends_the_program_but_keeps_the_thread_and_its_output() {
+        let terms = Terminals::new();
+        let (o, e, _, rx) = collect();
+        let info = terms.open(spec("/bin/cat", &[]), o, e).unwrap();
+        terms.stop(&info.id).unwrap();
+        rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let kept = terms.list().into_iter().find(|t| t.id == info.id).unwrap();
+        assert!(!kept.running, "the thread stays listed as ended");
+        assert!(
+            terms.snapshot(&info.id).is_ok(),
+            "its output is still readable"
+        );
     }
 
     #[cfg(unix)]

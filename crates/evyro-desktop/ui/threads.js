@@ -28,12 +28,12 @@ async function loadThreads() {
 }
 
 /** Start an agent or shell thread for the current project and show it. */
-async function startThread({ kind, target = null, task = null, handoffId = null, title = null, resumeId = null, creditBudget = null }) {
+async function startThread({ kind, target = null, task = null, handoffId = null, model = null, title = null, resumeId = null, creditBudget = null }) {
   // Start at the size the pane will have, so the program does not redraw at once.
   const v = $("#view");
   const size = state.termSize || { cols: Math.max(40, Math.floor((v.clientWidth - 320) / 8.1)), rows: Math.max(10, Math.floor((v.clientHeight - 140) / 17)) };
   const projectId = state.project.id;
-  const info = await act(() => invoke("term_open", { projectId, kind, target, task, handoffId, title, resumeId, creditBudget, ...size }));
+  const info = await act(() => invoke("term_open", { projectId, kind, target, task, handoffId, model, title, resumeId, creditBudget, ...size }));
   if (resumeId) {
     XTERMS.get(info.id)?.term.dispose();
     XTERMS.delete(info.id);

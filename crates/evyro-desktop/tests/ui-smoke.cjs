@@ -213,6 +213,8 @@ const FIX = {
             contract: { task: { key: window.__handoff.task } }, integrity_ok: true,
             markdown: "Reviewed the existing limiter.", resume_prompt: "Continue T-1. Write the failing test first."
           };
+          if (cmd === "term_stop") { (window.__stopped ||= []).push(args.id); const t = terms.find((x) => x.id === args.id); if (t) t.running = false; return null; }
+          if (cmd === "switch_owner") { window.__switch = args; return { handoff: { record: { id: "hnd_switch" } }, from: { harness: "claude-code" }, stopped: true }; }
           if (cmd === "term_list") return JSON.parse(JSON.stringify(terms));
           if (cmd === "term_open") {
             window.__lastTermOpen = args;
@@ -1133,24 +1135,32 @@ const FIX = {
     if (!/no usage left/.test(r.out) || !/codex has about 66%/.test(r.out)) throw new Error("banner text: " + r.out);
     if (r.fine) throw new Error("banner shown with plenty of usage left");
   });
-  await step("usage banner hands the task to the AI with the most usage left in one click", async () => {
+  await step("usage banner switches the task to another AI only after the usage is confirmed spent", async () => {
     await page.evaluate(() => {
-      const t = { id: "term_quick", title: "Quick handoff", kind: "agent", target: "claude-code", task: "T-1",
+      const t = { id: "term_quick", title: "Quick switch", kind: "agent", target: "claude-code", task: "T-1",
         project_id: state.project.id, started_at: 1, running: true };
       window.__terms.push(t);
       state.threads.push(t);
       accountQuota.set("claude-code", { state: "ready", windows: [{ remaining: 0, resets_at: Date.now() / 1000 + 3600 }], credits: null });
       accountQuota.set("codex", { state: "ready", windows: [{ remaining: 66 }], credits: null });
-      window.__handoff = null;
+      window.__switch = null; window.__stopped = []; window.__lastTermOpen = null;
       document.body.append(Object.assign(document.createElement("div"), { id: "quick-host" }));
       document.querySelector("#quick-host").append(quotaBanner(t));
     });
-    await page.locator("#quick-host").getByRole("button", { name: "Hand off to codex", exact: true }).click();
-    await page.getByRole("dialog").getByText(/Anything done since that checkpoint/).waitFor();
-    await page.getByRole("button", { name: "Hand off", exact: true }).click();
-    await page.waitForFunction(() => window.__handoff && window.__handoff.to === "codex" && window.__handoff.task === "T-1" && window.__lastTermOpen && window.__lastTermOpen.target === "codex" && window.__lastTermOpen.handoffId === "hnd_continue");
-    const h = await page.evaluate(() => window.__handoff);
-    if (h.next_action !== "Write the failing test first" || h.completed.length !== 1) throw new Error("handoff did not carry the checkpoint: " + JSON.stringify(h));
+    await page.locator("#quick-host").getByRole("button", { name: "Switch to codex…", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Switch T-1 to another AI" });
+    await dialog.getByText(/Only one AI works on T-1 at a time/).waitFor();
+    await dialog.getByPlaceholder(/Optional, for example/).fill("small-model");
+    await dialog.getByRole("button", { name: "Switch AI", exact: true }).click();
+    await page.getByText("Confirm that the usage has run out first.").waitFor();
+    if (await page.evaluate(() => window.__switch)) throw new Error("switched without confirmation");
+    await dialog.getByLabel(/usage has run out or is about to/).check();
+    await dialog.getByRole("button", { name: "Switch AI", exact: true }).click();
+    await page.waitForFunction(() => window.__switch && window.__lastTermOpen && window.__lastTermOpen.target === "codex");
+    const r = await page.evaluate(() => ({ sw: window.__switch, stopped: window.__stopped, open: window.__lastTermOpen }));
+    if (r.sw.confirmed !== true || r.sw.to !== "codex" || r.sw.task !== "T-1" || r.sw.model !== "small-model") throw new Error("switch args: " + JSON.stringify(r.sw));
+    if (!r.stopped.includes("term_quick")) throw new Error("the old AI was not stopped before the switch: " + JSON.stringify(r.stopped));
+    if (r.open.handoffId !== "hnd_switch" || r.open.model !== "small-model") throw new Error("new AI did not start from the handoff: " + JSON.stringify(r.open));
     await page.evaluate(() => {
       document.querySelector("#quick-host").remove();
       accountQuota.delete("claude-code"); accountQuota.delete("codex");

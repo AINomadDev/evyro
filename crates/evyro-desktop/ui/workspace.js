@@ -369,27 +369,53 @@ function bestFallback(exclude) {
   return best;
 }
 
-/** Hand a task to another AI from its latest checkpoint, without the notes form. */
-async function quickHandoff(t, to) {
+/**
+ * Switch the AI on a task because the current one is out of usage (or about to be).
+ * Only one AI works on a task at a time, so the person confirms, Evyro stops the old AI,
+ * carries the latest checkpoint over and starts the new one. A model on the same AI
+ * can be chosen too. `thread` is a pane to reuse for the new AI.
+ */
+async function switchOwnerDialog(task, { from = null, to = null, thread = null } = {}) {
   const projectId = state.project.id;
-  let cp;
-  try { cp = await act(() => invoke("handoff_checkpoint", { projectId, task: t.task })); }
-  catch { return; }
+  const sel = await targetSelect(to || "codex");
+  for (const g of [...sel.querySelectorAll("optgroup")]) {
+    if (![KIND_LABEL.harness, KIND_LABEL.api].includes(g.label)) g.remove();
+  }
   if (state.project?.id !== projectId) return;
-  if (!cp) { toast(`${t.task} has no checkpoint yet. Use Continue with… to write a short summary.`, true); return; }
-  const when = cp.created_at ? ` from ${ago(cp.created_at)}` : "";
-  if (!(await confirmDialog(`Hand ${t.task} to ${to}?`,
-    `${to} gets the latest checkpoint${when}, not this conversation. Anything done since that checkpoint is not included. Ask ${t.title} to checkpoint first if it can.`, "Hand off"))) return;
-  try {
-    const r = await act(() => invoke("prepare_handoff", { projectId, input: {
-      task: t.task, to,
-      summary: (cp.summary || "").slice(0, 800),
-      completed: (cp.completed || []).slice(-5).map((line) => line.slice(0, 240)),
-      remaining: (cp.remaining || []).slice(0, 5).map((line) => line.slice(0, 240)),
-      next_action: (cp.next_action || "").slice(0, 500),
-    } }, "Handoff prepared"));
-    if (state.project?.id === projectId) await handTo(to, t.task, null, false, r.record.id);
-  } catch { /* act reported the error */ }
+  const model = h("input", { type: "text", placeholder: "Optional, for example a smaller model", spellcheck: "false" });
+  const sure = h("input", { type: "checkbox", id: "switch-sure" });
+  const who = from || "the current AI";
+  modal(`Switch ${task} to another AI`, [
+    h("p", { class: "hint" }, `Only one AI works on ${task} at a time. Evyro stops ${who}, saves its checkpoint and starts the next AI from it. Anything ${who} did since its last checkpoint is kept in the files but not described.`),
+    field("Switch to", sel, "Pick the same AI with a different model to stay on it."),
+    field("Model", model),
+    h("label", { class: "check", for: "switch-sure" }, sure, ` ${who}'s usage has run out or is about to. Stop it and switch.`),
+  ], [{
+    label: "Switch AI", primary: true, run: async () => {
+      if (!sure.checked) { toast("Confirm that the usage has run out first.", true); return false; }
+      const target = sel.value;
+      const chosen = model.value.trim() || null;
+      try {
+        const owners = projThreads().filter((t) => t.task === task && t.running && (t.kind === "agent" || t.kind === "chat") && t.id !== thread?.id);
+        for (const t of owners) await invoke(t.kind === "chat" ? "chat_close" : "term_stop", { id: t.id });
+        for (let i = 0; i < 20 && owners.length; i++) {
+          await loadThreads();
+          if (!owners.some((o) => state.threads.find((t) => t.id === o.id)?.running)) break;
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        const r = await act(() => invoke("switch_owner", { projectId, task, to: target, model: chosen, confirmed: true }));
+        if (state.project?.id !== projectId) return true;
+        const handoffId = r.handoff.record.id;
+        if (thread) await resumeThread(thread, { handoffId, model: chosen });
+        else await startThread({ kind: "agent", target, task, handoffId, model: chosen });
+        toast(`${task} switched to ${target}.${r.from && !r.stopped && !owners.length ? ` Close ${r.from.harness} yourself if it is still open.` : ""}`);
+        return true;
+      } catch (e) {
+        if (!e?.message) toast(errMsg(e), true);
+        return false;
+      }
+    },
+  }]);
 }
 
 /** A running AI whose account is out of usage (or nearly) gets a way to carry its task to another AI. */
@@ -407,12 +433,9 @@ function quotaBanner(t) {
       : `${t.title} is low on usage (${Math.floor(left)}% left).${hint}`),
     h("div", { class: "row" },
       checkpointPrompt(t) ? h("button", { class: "btn small", onclick: () => stageCheckpointDraft(t, true) }, "Draft checkpoint prompt") : null,
-      t.task && alt ? h("button", { class: "btn small primary", onclick: (e) => {
-        const button = e.currentTarget;
-        button.disabled = true;
-        quickHandoff(t, alt.ai).finally(() => { if (button.isConnected) button.disabled = false; });
-      } }, `Hand off to ${alt.ai}`) : null,
-      h("button", { class: "btn small" + (out && !(t.task && alt) ? " primary" : ""), onclick: go }, t.task ? "Continue with…" : "Hand off…")));
+      t.task ? h("button", { class: "btn small primary", onclick: () => switchOwnerDialog(t.task, { from: t.target, to: alt?.ai || null }).catch(() => {}) },
+        alt ? `Switch to ${alt.ai}…` : "Switch AI…") : null,
+      h("button", { class: "btn small", onclick: go }, t.task ? "Write notes first…" : "Hand off…")));
 }
 
 function continueButton(t) {
@@ -461,7 +484,8 @@ async function offerRelease(el, t) {
   };
   el.querySelector(".thread-head").after(h("div", { class: "banner warn pane-fix", role: "status" },
     h("span", null, `${key} is still held by an earlier ${who} session. If that AI is no longer running, free it and try again.`),
-    h("button", { class: "btn small primary", onclick: fix }, `Free ${key} and retry`)));
+    h("button", { class: "btn small primary", onclick: fix }, `Free ${key} and retry`),
+    h("button", { class: "btn small", onclick: () => switchOwnerDialog(key, { from: who, to: t.target, thread: t }).catch(() => {}) }, `Switch ${key} here…`)));
 }
 
 /** The ✕ on a pane: take the thread out of view (it keeps running). */

@@ -100,9 +100,11 @@ enum Cmd {
     Checkpoint(CheckpointArgs),
     /// Prepare a signed continuation contract for another agent.
     Handoff(HandoffArgs),
-    /// Handoff and launch the target agent now (same as `handoff --launch`).
-    /// Use `handoff` to prepare the contract without launching anything.
-    Switch(HandoffArgs),
+    /// Switch a task to another AI because the current one ran out of usage.
+    /// You confirm the usage is used up; Evyro carries the latest checkpoint over, stops the
+    /// current AI and starts the new one, so only one AI works on the task at a time.
+    /// Use `handoff` to write your own notes or to prepare the contract without launching.
+    Switch(SwitchArgs),
     /// Accept a pending handoff as the receiving agent (validates state first).
     Resume {
         #[arg(long)]
@@ -402,6 +404,31 @@ struct HandoffArgs {
     /// Who is preparing the handoff (default: the owning session's agent, else human).
     #[arg(long)]
     from: Option<String>,
+    /// IDE/chat targets: prepare the hand-over without opening apps or the clipboard.
+    #[arg(long)]
+    no_open: bool,
+}
+
+#[derive(Args)]
+struct SwitchArgs {
+    /// The AI to continue with (a harness, or a model on the same harness with --model).
+    #[arg(long)]
+    to: String,
+    /// The task to switch (default: the active task).
+    #[arg(long)]
+    task: Option<String>,
+    /// The model to run on the new AI (default: its own).
+    #[arg(long)]
+    model: Option<String>,
+    /// Confirm that the current AI's usage has run out or is about to.
+    #[arg(long, short = 'y')]
+    yes: bool,
+    /// Launch in headless (non-interactive) mode.
+    #[arg(long)]
+    headless: bool,
+    /// Prepare the switch and stop the old AI, but do not start the new one.
+    #[arg(long)]
+    no_launch: bool,
     /// IDE/chat targets: prepare the hand-over without opening apps or the clipboard.
     #[arg(long)]
     no_open: bool,
@@ -1156,7 +1183,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
             });
         }
         Cmd::Handoff(a) => return handoff_cmd(&store, &cli.project, &dir, a, false, o),
-        Cmd::Switch(a) => return handoff_cmd(&store, &cli.project, &dir, a, true, o),
+        Cmd::Switch(a) => return switch_cmd(&store, &cli.project, &dir, a, o),
         Cmd::Resume {
             agent,
             handoff,
@@ -2616,6 +2643,112 @@ fn auto_recover(store: &Store, project_id: &str, o: &Out) {
             }
         }
     }
+}
+
+/// `evyro switch`: one confirmed step from the AI that is out of usage to the next one.
+fn switch_cmd(
+    store: &Store,
+    cli_project: &Option<String>,
+    dir: &Path,
+    a: SwitchArgs,
+    o: &Out,
+) -> anyhow::Result<i32> {
+    use std::io::{IsTerminal, Write};
+    let p = project(store, cli_project, dir)?;
+    let task = match &a.task {
+        Some(r) => store.resolve_task(&p.id, r)?,
+        None => match store.active_task(&p.id)? {
+            Some(t) => t,
+            // Nothing is being worked on, so there is no AI to stop: hand off and launch.
+            None => {
+                let args = HandoffArgs {
+                    to: a.to,
+                    task: None,
+                    summary: String::new(),
+                    done: vec![],
+                    remaining: vec![],
+                    next: String::new(),
+                    model: a.model,
+                    launch: true,
+                    headless: a.headless,
+                    from: None,
+                    no_open: a.no_open,
+                };
+                return handoff_cmd(store, cli_project, dir, args, true, o);
+            }
+        },
+    };
+    // Refuse before asking or changing anything if the new AI could not start.
+    store.check_switch_target(&a.to, a.model.as_deref())?;
+    let holder = store.active_session_for_task(&task.id)?;
+    let mut confirmed = a.yes || holder.is_none();
+    if !confirmed {
+        let who = holder
+            .as_ref()
+            .map_or("the current AI", |s| s.harness.as_str());
+        if !std::io::stdin().is_terminal() || o.json {
+            anyhow::bail!(
+                "{} is held by {who}. If its usage has run out or is about to, run again with --yes",
+                task.key
+            );
+        }
+        eprint!(
+            "{who} holds {}. Has its usage run out or is it about to? Evyro will stop it and start {} on this task. [y/N] ",
+            task.key, a.to
+        );
+        std::io::stderr().flush().ok();
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        confirmed = matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+        if !confirmed {
+            anyhow::bail!("not switched: {who} keeps {}", task.key);
+        }
+    }
+    let out = store.switch_task_owner(&p.id, &task.key, &a.to, a.model.clone(), confirmed)?;
+    let h = &out.handoff;
+    if let Some(from) = &out.from {
+        let stopped = from
+            .pid
+            .is_some_and(|pid| evyro_core::sessions::stop_session_process(pid, from.pid_started));
+        if !o.quiet && !o.json {
+            eprintln!(
+                "{} ended on {}{}.",
+                from.harness,
+                task.key,
+                if stopped {
+                    " and was told to stop"
+                } else if from.pid.is_some() {
+                    " (its process had already exited)"
+                } else {
+                    "; no process was recorded, so close it yourself if it is still open"
+                }
+            );
+        }
+    }
+    if a.no_launch {
+        o.print(&out, || format!(
+            "Handoff {} prepared for {} (quality {}/{}). Start it with `evyro run --agent {} --task {} --handoff {}`.",
+            h.record.id, h.record.to_harness, h.contract.quality.met, h.contract.quality.total, h.record.to_harness, task.key, h.record.id));
+        return Ok(0);
+    }
+    if !o.quiet && !o.json {
+        eprintln!("Starting {} on {}…", h.record.to_harness, task.key);
+    }
+    launch::run_agent(
+        store,
+        &p,
+        launch::RunOpts {
+            target: &h.record.to_harness,
+            task: Some(&task.key),
+            handoff: Some(&h.record.id),
+            headless: a.headless,
+            prompt: None,
+            model: a.model.as_deref(),
+            accept_drift: false,
+            no_open: a.no_open,
+        },
+        o,
+    )
 }
 
 fn handoff_cmd(

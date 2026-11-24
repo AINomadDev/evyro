@@ -838,6 +838,72 @@ fn export_import_and_backup_restore() {
         .any(|c| c["name"] == "database integrity" && c["status"] == "ok"));
 }
 
+/// `evyro switch` hands a held task to the next AI only after the usage is confirmed spent.
+#[test]
+fn switch_moves_a_held_task_after_confirmation() {
+    let mut env = Env::new();
+    let repo = env.repo("switch");
+    env.init(&repo);
+    env.agent("codex", "0.130.0", "exit 0");
+    env.ok(&repo, &["task", "add", "Work", "--accept", "done"]);
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "claude"]);
+    env.ok(
+        &repo,
+        &["checkpoint", "--done", "step one", "--next", "step two"],
+    );
+    // Another AI is refused while the first holds the task, and the error says how to switch.
+    let o = env.run(&repo, &["task", "start", "T-1", "--agent", "codex"]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("evyro switch"));
+    // An AI that is not installed is refused before anything changes.
+    let o = env.run(
+        &repo,
+        &[
+            "switch",
+            "--to",
+            "gemini",
+            "--task",
+            "T-1",
+            "--no-launch",
+            "--yes",
+        ],
+    );
+    assert!(!o.status.success());
+    assert_eq!(env.json(&repo, &["sessions"])[0]["status"], "running");
+    // Without confirmation nothing changes.
+    let o = env.run(
+        &repo,
+        &["switch", "--to", "codex", "--task", "T-1", "--no-launch"],
+    );
+    assert!(!o.status.success());
+    assert_eq!(env.json(&repo, &["sessions"])[0]["status"], "running");
+    // Confirmed: the first session ends, the handoff carries the latest checkpoint.
+    let r = env.json(
+        &repo,
+        &[
+            "switch",
+            "--to",
+            "codex",
+            "--task",
+            "T-1",
+            "--no-launch",
+            "--yes",
+        ],
+    );
+    assert_eq!(r["handoff"]["record"]["to_harness"], "codex");
+    assert_eq!(r["from"]["harness"], "claude-code");
+    assert!(r["handoff"]["contract"]["next_action"]["text"]
+        .as_str()
+        .unwrap()
+        .contains("step two"));
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "codex"]);
+    // The first AI cannot take it back while the second holds it.
+    assert!(!env
+        .run(&repo, &["task", "start", "T-1", "--agent", "claude"])
+        .status
+        .success());
+}
+
 /// The status-line hook saves a recognised payload and ignores anything else without failing.
 #[test]
 fn capture_usage_ignores_unreadable_input() {
@@ -1332,16 +1398,17 @@ fn switch_to_any_kind_of_ai() {
         toml.contains("key_env = \"MY_OR_KEY\"") && !toml.contains("sk-or-"),
         "{toml}"
     );
-    // Missing key: refused before anything changes.
-    let o = env.run(&repo, &["switch", "--to", "kimi", "--headless"]);
+    // Missing key: refused before anything changes; the AI holding the task keeps it.
+    let o = env.run(&repo, &["switch", "--to", "kimi", "--headless", "--yes"]);
     assert!(!o.status.success());
-    let hs = env.json(&repo, &["handoffs"]);
-    assert_eq!(
-        hs[0]["status"], "prepared",
-        "handoff not accepted when the key is missing"
-    );
+    assert!(env
+        .json(&repo, &["handoffs"])
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert_eq!(env.json(&repo, &["sessions"])[0]["status"], "running");
     let o = env
-        .cmd(&repo, &["run", "--agent", "kimi", "--headless"])
+        .cmd(&repo, &["switch", "--to", "kimi", "--headless", "--yes"])
         .env("MY_OR_KEY", "sk-or-v1-testkey")
         .output()
         .unwrap();

@@ -88,7 +88,7 @@ Choose **Search → Saved chats** to find a word or phrase in user messages and 
 
 If the account limit is shared across the available models, use **Continue with…** in a task's pane to move to another AI. Evyro fills the handoff from the last checkpoint. Review the summary and next action, prepare the handoff, then start the chosen AI. Its first message is an editable draft that points to the signed task checkpoint and the repo changes. Send it when you're ready.
 
-When an AI's usage is low and Evyro has read another AI's usage, the banner also offers **Hand off to <AI>**. One confirmation prepares the handoff from the latest checkpoint and opens that AI with the same editable draft. Only the checkpoint moves, so ask the first AI to save one beforehand if it can.
+When an AI's usage is low or out, the banner offers **Switch to <AI>…**. Pick the next AI (or the same AI with another model), tick that the usage has run out or is about to, and choose **Switch AI**. Only one AI works on a task at a time, so Evyro stops the old AI (keeping its saved output), carries the latest checkpoint into a handoff and starts the next AI with an editable draft. If a new thread is refused because another AI holds the task, its banner offers **Switch T-n here…** for the same step. Work since the last checkpoint stays in the files but is not described, so ask the first AI to save a checkpoint beforehand if it can. See [Developing Evyro with Evyro](../DEVELOPING_EVYRO_WITH_EVYRO.md).
 
 ## Away-from-home access
 

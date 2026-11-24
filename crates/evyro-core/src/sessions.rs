@@ -230,6 +230,30 @@ fn parse_etime(s: &str) -> Option<i64> {
 /// A recorded process is still the one Evyro started: it exists and, when
 /// its start time was recorded, started at that time. A pid reused by an
 /// unrelated process after the agent exited does not count.
+/// Whether two declared task paths are the same or one contains the other.
+fn paths_overlap(a: &str, b: &str) -> bool {
+    let norm = |p: &str| p.trim_start_matches("./").trim_end_matches('/').to_owned();
+    let (a, b) = (norm(a), norm(b));
+    a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
+}
+
+/// Ask the process of a session to stop. Refuses a pid that now belongs to a different
+/// process. Returns whether a stop signal was sent.
+pub fn stop_session_process(pid: i64, recorded_start: Option<i64>) -> bool {
+    if !session_process_alive(pid, recorded_start) {
+        return false;
+    }
+    #[cfg(unix)]
+    let sent = std::process::Command::new("kill")
+        .args(["-TERM", &pid.to_string()])
+        .status();
+    #[cfg(windows)]
+    let sent = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status();
+    sent.is_ok_and(|s| s.success())
+}
+
 pub fn session_process_alive(pid: i64, recorded_start: Option<i64>) -> bool {
     if !pid_alive(pid) {
         return false;
@@ -328,8 +352,43 @@ impl Store {
             let holder = self.get_session(&l.session_id)?;
             if !holder.status.is_ended() && Some(holder.id.as_str()) != by_session {
                 return Err(Error::Conflict(format!(
-                    "{} is owned by session {} ({}); hand off with `evyro handoff --to {}` or end that session first",
-                    t.key, holder.id, holder.harness, harness
+                    "{} is owned by session {} ({}); if its AI is out of usage, switch the task with `evyro switch --task {} --to {} --yes`, otherwise hand off or end that session first",
+                    t.key, holder.id, holder.harness, t.key, harness
+                )));
+            }
+        }
+        self.check_file_overlap(&t, by_session)
+    }
+
+    /// One AI at a time on a set of files: refuse a task whose declared files overlap a task
+    /// that another live session holds in the same checkout.
+    fn check_file_overlap(&self, t: &crate::tasks::Task, by_session: Option<&str>) -> Result<()> {
+        if t.files.is_empty() {
+            return Ok(());
+        }
+        let mut st = self
+            .conn
+            .prepare("SELECT task_id, session_id FROM leases WHERE task_id != ?1")?;
+        let held: Vec<(String, String)> = st
+            .query_map([&t.id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        for (other_id, session_id) in held {
+            let holder = self.get_session(&session_id)?;
+            if holder.status.is_ended() || Some(holder.id.as_str()) == by_session {
+                continue;
+            }
+            let other = self.get_task(&other_id)?;
+            if other.worktree != t.worktree {
+                continue;
+            }
+            if let Some(file) = t
+                .files
+                .iter()
+                .find(|a| other.files.iter().any(|b| paths_overlap(a, b)))
+            {
+                return Err(Error::Conflict(format!(
+                    "{} and {} both change {file}, and {} is held by session {} ({}). Only one AI works on a set of files at a time: finish or switch that task first",
+                    t.key, other.key, other.key, holder.id, holder.harness
                 )));
             }
         }

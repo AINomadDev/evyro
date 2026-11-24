@@ -439,6 +439,27 @@ async fn release_session(
     .await
 }
 
+/// Switch a held task to another AI after the person confirms the usage is spent.
+/// Ends the old session, prepares the handoff and stops any process still recorded for it.
+#[tauri::command]
+async fn switch_owner(
+    project_id: String,
+    task: String,
+    to: String,
+    model: Option<String>,
+    confirmed: bool,
+) -> CmdResult {
+    with_store(move |s| {
+        let out = s.switch_task_owner(&project_id, &task, &to, model, confirmed)?;
+        let stopped = out.from.as_ref().is_some_and(|f| {
+            f.pid
+                .is_some_and(|pid| evyro_core::sessions::stop_session_process(pid, f.pid_started))
+        });
+        Ok(json!({"handoff": out.handoff, "from": out.from, "stopped": stopped}))
+    })
+    .await
+}
+
 #[tauri::command]
 async fn list_handoffs(project_id: String) -> CmdResult {
     with_store(move |s| Ok(json!(s.list_handoffs(&project_id, 100)?))).await
@@ -1007,6 +1028,7 @@ fn main() {
             list_sessions,
             recover_sessions,
             release_session,
+            switch_owner,
             list_handoffs,
             handoff_detail,
             handoff_checkpoint,
@@ -1067,6 +1089,7 @@ fn main() {
             threads::term_open,
             usage::agent_quota,
             usage::opencode_usage,
+            threads::term_stop,
             threads::term_list,
             threads::term_write,
             threads::term_resize,

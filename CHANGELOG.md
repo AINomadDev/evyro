@@ -12,6 +12,9 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 - Threads and their output are saved and listed after the desktop app restarts (marked "earlier run"), with a **Resume** button; the pane layout is kept too.
 - A **Usage, by AI** section in the shared-context panel: tasks each AI holds, runs, failed runs, time worked and when it was last active.
 - A pane that stopped because a task is held by an AI that is gone offers **Free T-n and retry**.
+- `evyro switch` and a desktop **Switch to <AI>…** step move a task to another AI (or another model) after you confirm the usage is spent: the old AI is stopped, the latest checkpoint carries over and only one AI holds the task. A task whose declared files overlap one another AI holds is refused.
+- Saved terminal output and chat transcripts are redacted and private to your user. Community files: code of conduct, support guide, issue and pull request templates.
+- `docs/DEVELOPING_EVYRO_WITH_EVYRO.md` explains how several AIs build Evyro together.
 
 - New coding agents: Amp, Qwen Code, Kiro CLI, Factory Droid, Cline CLI and Crush (from their docs; not run with Evyro yet). Copilot CLI and Cursor now start in a terminal pane.
 - Local model servers: MLX, llama.cpp (also for Unsloth GGUF models) and vLLM, besides Ollama and LM Studio.
