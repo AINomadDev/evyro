@@ -1,0 +1,10 @@
+# Evyro project identity. Commit this file: it keeps the project id stable across clones and moves.
+schema_version = 1
+id = "prj_01a2081c24fc731ea41f32fb8dfb6b1a"
+name = "Evyro"
+
+# Verification commands as argv arrays (no shell). `evyro verify` and the MCP run_verification tool use these.
+[commands]
+build = [["cargo", "build", "--workspace", "--locked"]]
+test = [["cargo", "test", "--workspace", "--locked"]]
+lint = [["cargo", "fmt", "--all", "--check"], ["cargo", "clippy", "--workspace", "--all-targets", "--locked", "--", "-D", "warnings"]]

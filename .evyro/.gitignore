@@ -1,0 +1,5 @@
+# Local-only Evyro artifacts (may reference sensitive paths). Export explicitly with `evyro export`.
+handoffs/
+checkpoints/
+exports/
+CURRENT_TASK.md
