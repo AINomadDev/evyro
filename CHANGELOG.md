@@ -6,6 +6,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ### Added
 
+- A running AI thread that prints nothing for ten minutes, or repeats the same line 30 times in a row, is marked "stuck?" and shows a banner with **Switch to <AI>…** and **Stop**. Nothing is stopped for you, since a long silent step can be real work.
 - Sessions Evyro cannot watch as a process (a hand-started task, for instance) now count as live while they report in and as gone after 30 minutes of silence. Any checkpoint or event counts, and `evyro heartbeat` is there for a long quiet stretch. `evyro recover` and the task checkout no longer need a confirmation or wait on a session that went silent.
 - A monthly dependency review: Dependabot opens one grouped update pull request a month for Rust crates and GitHub Actions, and a scheduled workflow re-runs `cargo deny` so a new advisory shows up even when no pull request is open.
 - Desktop workspace for several AIs at once: threads side by side in 1, 2 or 4 panes, a sidebar that groups threads as Needs you, Working, Your turn and Ended, a shared-context panel (task and criteria, handoff, decisions, review notes, memory, activity across AIs, changed files) that sends any item to the focused AI, a box that messages several AIs at once, a terminal drawer and a status bar.

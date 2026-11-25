@@ -17,7 +17,12 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+pub mod watchdog;
+
+/// How long a running thread may print nothing before it is flagged, unless set otherwise.
+pub const QUIET_LIMIT_SECS: u64 = 10 * 60;
 
 /// Bytes of output kept per terminal for re-attaching.
 pub const SCROLLBACK_BYTES: usize = 512 * 1024;
@@ -68,6 +73,10 @@ pub struct TermInfo {
     pub credit_budget: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     provider_session: Option<uuid::Uuid>,
+    /// Why a running thread looks stuck (silent for a long time, or repeating a line).
+    /// Worked out when the thread is listed; never saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stuck: Option<String>,
 }
 
 /// Saved threads kept on disk; older ones are removed.
@@ -79,6 +88,7 @@ struct Term {
     master: Mutex<Box<dyn MasterPty + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
     scrollback: Mutex<Scrollback>,
+    watch: Mutex<watchdog::Watch>,
     /// Closed by the person: never saved again.
     forgotten: std::sync::atomic::AtomicBool,
     /// Applied to output before it is written to disk (never to the live view).
@@ -113,6 +123,8 @@ pub struct Terminals {
     redactor: Option<Redactor>,
     /// How many ended saved threads to keep; older ones are deleted.
     keep: AtomicUsize,
+    /// Seconds of silence before a running thread is flagged; 0 means the default.
+    quiet_secs: AtomicU64,
 }
 
 /// Turns output text into the text that may be saved, for example by hiding secrets.
@@ -368,6 +380,7 @@ impl Terminals {
             stopped_by_app: false,
             credit_budget,
             provider_session,
+            stuck: None,
         };
         let term = Arc::new(Term {
             info: Mutex::new(info.clone()),
@@ -375,6 +388,7 @@ impl Terminals {
             master: Mutex::new(pair.master),
             killer: Mutex::new(killer),
             scrollback: Mutex::new(scrollback),
+            watch: Mutex::new(watchdog::Watch::new(Instant::now())),
             forgotten: Default::default(),
             redactor: self.redactor.clone(),
         });
@@ -400,6 +414,9 @@ impl Terminals {
                         push_scrollback(&mut sb.buf, &buf[..n]);
                         sb.total += n as u64;
                         let text = carry.push(&buf[..n]);
+                        if !text.is_empty() {
+                            t.watch.lock().unwrap().feed(&text, Instant::now());
+                        }
                         if !text.is_empty() && !t.forgotten.load(Ordering::SeqCst) {
                             out(&rid, &text, sb.total);
                         }
@@ -550,13 +567,35 @@ impl Terminals {
     }
 
     /// Running and ended terminals of this run, then saved ones from earlier runs.
+    /// Flag threads that are running but silent for this long (default ten minutes).
+    pub fn set_quiet_limit(&self, limit: Duration) {
+        self.quiet_secs
+            .store(limit.as_secs().max(1), Ordering::SeqCst);
+    }
+
+    fn describe(&self, t: &Term) -> TermInfo {
+        let mut info = t.info.lock().unwrap().clone();
+        if info.running {
+            let secs = match self.quiet_secs.load(Ordering::SeqCst) {
+                0 => QUIET_LIMIT_SECS,
+                n => n,
+            };
+            info.stuck = t
+                .watch
+                .lock()
+                .unwrap()
+                .verdict(Instant::now(), Duration::from_secs(secs));
+        }
+        info
+    }
+
     pub fn list(&self) -> Vec<TermInfo> {
         let mut v: Vec<TermInfo> = self
             .terms
             .lock()
             .unwrap()
             .values()
-            .map(|t| t.info.lock().unwrap().clone())
+            .map(|t| self.describe(t))
             .collect();
         if let Some(dir) = &self.store {
             let live: std::collections::HashSet<String> = v.iter().map(|i| i.id.clone()).collect();
@@ -571,7 +610,8 @@ impl Terminals {
     }
 
     pub fn info(&self, id: &str) -> Result<TermInfo> {
-        Ok(self.get(id)?.info.lock().unwrap().clone())
+        let term = self.get(id)?;
+        Ok(self.describe(&term))
     }
 
     pub fn credits_used(&self, id: &str) -> Option<f64> {
@@ -1016,6 +1056,54 @@ mod tests {
             terms.snapshot(&info.id).is_ok(),
             "its output is still readable"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_running_thread_that_goes_quiet_or_loops_is_flagged() {
+        let terms = Terminals::new();
+        let (o, e, _, _rx) = collect();
+        // Loops: the same line again and again, still running.
+        let looping = terms
+            .open(
+                spec(
+                    "/bin/sh",
+                    &["-c", "i=0; while [ $i -lt 40 ]; do echo 'trying the same step again'; i=$((i+1)); done; sleep 30"],
+                ),
+                o,
+                e,
+            )
+            .unwrap();
+        // Quiet: prints once, then nothing.
+        let (o2, e2, _, _rx2) = collect();
+        let quiet = terms
+            .open(
+                spec("/bin/sh", &["-c", "echo started working; sleep 30"]),
+                o2,
+                e2,
+            )
+            .unwrap();
+        terms.set_quiet_limit(Duration::from_secs(1));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (mut l, mut q) = (None, None);
+        while Instant::now() < deadline && (l.is_none() || q.is_none()) {
+            std::thread::sleep(Duration::from_millis(100));
+            l = terms.info(&looping.id).unwrap().stuck;
+            q = terms.info(&quiet.id).unwrap().stuck;
+        }
+        assert!(
+            l.unwrap_or_default().contains("repeating"),
+            "loop not flagged"
+        );
+        assert!(
+            q.unwrap_or_default().contains("no output"),
+            "silence not flagged"
+        );
+        // An ended thread is never flagged.
+        terms.stop(&quiet.id).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(terms.info(&quiet.id).unwrap().stuck.is_none());
+        terms.close_all();
     }
 
     #[cfg(unix)]

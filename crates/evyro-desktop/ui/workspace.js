@@ -312,7 +312,7 @@ function drawPaneAt(i, takeFocus) {
     return;
   }
   const x = ensureXterm(t.id);
-  const banner = quotaBanner(t);
+  const banner = quotaBanner(t) || stuckBanner(t);
   const restart = t.running ? null : restartTerminalButton(t);
   const subtitle = t.running ? ([t.target, t.task].filter(Boolean).join(" · ") || "Project shell") : "Saved output · read-only";
   el.append(h("div", { class: "thread-head" },
@@ -437,6 +437,18 @@ function quotaBanner(t) {
       t.task ? h("button", { class: "btn small primary", onclick: () => switchOwnerDialog(t.task, { from: t.target, to: alt?.ai || null }).catch(() => {}) },
         alt ? `Switch to ${alt.ai}…` : "Switch AI…") : null,
       h("button", { class: "btn small", onclick: go }, t.task ? "Write notes first…" : "Hand off…")));
+}
+
+/** A running AI that is silent or repeating itself gets a way to stop it or carry its task on. */
+function stuckBanner(t) {
+  if (!t.running || t.kind !== "agent" || !t.stuck) return null;
+  const alt = bestFallback(agentKey(t));
+  return h("div", { class: "quota-banner small out", role: "status" },
+    h("span", null, `${t.title} looks stuck: ${t.stuck}. It may still be working, so nothing was stopped.`),
+    h("div", { class: "row" },
+      t.task ? h("button", { class: "btn small primary", onclick: () => switchOwnerDialog(t.task, { from: t.target, to: alt?.ai || null, thread: t }).catch(() => {}) },
+        alt ? `Switch to ${alt.ai}…` : "Switch AI…") : null,
+      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, "Stop")));
 }
 
 function continueButton(t) {

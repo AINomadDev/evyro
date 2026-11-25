@@ -27,6 +27,24 @@ async function loadThreads() {
   return state.threads;
 }
 
+/** Pick up "looks stuck" flags the app works out, without reloading everything. */
+async function refreshStuck() {
+  let terms;
+  try { terms = await invoke("term_list"); } catch { return; }
+  const changed = [];
+  for (const info of terms) {
+    const t = state.threads.find((x) => x.id === info.id);
+    if (t && t.kind !== "chat" && (t.stuck || null) !== (info.stuck || null)) {
+      t.stuck = info.stuck || null;
+      changed.push(t.id);
+    }
+  }
+  if (!changed.length) return;
+  drawThreadList();
+  for (const id of changed) if (panes().includes(id)) drawThreadPane(id);
+}
+setInterval(refreshStuck, 30000);
+
 /** Start an agent or shell thread for the current project and show it. */
 async function startThread({ kind, target = null, task = null, handoffId = null, model = null, title = null, resumeId = null, creditBudget = null }) {
   // Start at the size the pane will have, so the program does not redraw at once.
@@ -245,7 +263,7 @@ function threadStatus(t) {
     if (asking) return pill("warn", "needs you");
     return t.busy ? pill("running", "working") : pill("ok", "your turn");
   }
-  if (t.running) return pill("running");
+  if (t.running) return t.stuck ? pill("warn", "stuck?") : pill("running");
   if (t.stopped_by_app) return pill("", "stopped with app");
   return pill(t.exit_code === 0 ? "" : "bad", t.exit_code == null ? "ended" : `exit ${t.exit_code}`);
 }
