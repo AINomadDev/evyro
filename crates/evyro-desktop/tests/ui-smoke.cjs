@@ -1294,6 +1294,39 @@ const FIX = {
     if (!r.buttons.includes("Stop") || !r.buttons.some((b) => /^Switch/.test(b))) throw new Error("buttons: " + r.buttons);
     if (!r.cleared) throw new Error("banner stayed after output resumed");
   });
+  await step("an AI that prints its usage limit gets the switch offered with what it said", async () => {
+    const r = await page.evaluate(async () => {
+      const t = { id: "term_limit", title: "Limited AI", kind: "agent", target: "claude-code", task: "T-1", project_id: state.project.id, started_at: 3, running: true };
+      window.__terms.push({ ...t });
+      state.threads.push(t);
+      const none = limitBanner(t);
+      window.__terms.find((x) => x.id === "term_limit").limit_hit = "You've hit your limit · resets 5pm";
+      await refreshStuck();
+      const live = state.threads.find((x) => x.id === "term_limit");
+      const banner = limitBanner(live);
+      document.body.append(Object.assign(document.createElement("div"), { id: "limit-host" }));
+      document.querySelector("#limit-host").append(banner);
+      return { none: !!none, text: banner.textContent, pill: threadStatus(live).textContent, toast: [...document.querySelectorAll("#toast, .toast")].map((t) => t.textContent).join(" ") };
+    });
+    if (r.none) throw new Error("banner shown before any limit message");
+    if (!/says it has hit a usage limit: “You've hit your limit · resets 5pm”/.test(r.text) || !/Nothing was stopped/.test(r.text)) throw new Error("banner: " + r.text);
+    if (r.pill !== "limit hit?") throw new Error("pill: " + r.pill);
+    if (!/usage limit/.test(r.toast)) throw new Error("no toast: " + r.toast);
+    await page.locator("#limit-host").getByRole("button", { name: /^Switch/ }).click();
+    const dialog = page.getByRole("dialog", { name: "Switch T-1 to another AI" });
+    await dialog.getByText("printed: “You've hit your limit · resets 5pm”").waitFor();
+    // It still asks for the person's confirmation before anything is stopped.
+    await page.evaluate(() => { window.__switch = null; document.querySelectorAll(".toast").forEach((t) => t.remove()); });
+    await dialog.getByRole("button", { name: "Switch AI", exact: true }).click();
+    await page.getByText("Confirm that the usage has run out first.").first().waitFor();
+    if (await page.evaluate(() => window.__switch)) throw new Error("switched without confirmation");
+    await page.keyboard.press("Escape");
+    await page.evaluate(() => {
+      document.querySelector("#limit-host")?.remove();
+      window.__terms = window.__terms.filter((x) => x.id !== "term_limit");
+      state.threads = state.threads.filter((x) => x.id !== "term_limit");
+    });
+  });
   await step("Plan first is offered for a task, and a waiting plan can be approved by a person", async () => {
     await page.evaluate(() => { window.__plan = null; window.__lastTermOpen = null; setTab("workspace"); newThreadDialog("T-1"); });
     const dialog = page.getByRole("dialog", { name: "New agent thread" });

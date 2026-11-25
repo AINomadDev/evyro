@@ -312,7 +312,7 @@ function drawPaneAt(i, takeFocus) {
     return;
   }
   const x = ensureXterm(t.id);
-  const banner = quotaBanner(t) || stuckBanner(t);
+  const banner = limitBanner(t) || quotaBanner(t) || stuckBanner(t);
   const restart = t.running ? null : restartTerminalButton(t);
   const subtitle = t.running ? ([t.target, t.task].filter(Boolean).join(" · ") || "Project shell") : "Saved output · read-only";
   el.append(h("div", { class: "thread-head" },
@@ -376,7 +376,7 @@ function bestFallback(exclude) {
  * carries the latest checkpoint over and starts the new one. A model on the same AI
  * can be chosen too. `thread` is a pane to reuse for the new AI.
  */
-async function switchOwnerDialog(task, { from = null, to = null, thread = null } = {}) {
+async function switchOwnerDialog(task, { from = null, to = null, thread = null, evidence = null } = {}) {
   const projectId = state.project.id;
   const sel = await targetSelect(to || "codex");
   for (const g of [...sel.querySelectorAll("optgroup")]) {
@@ -387,6 +387,7 @@ async function switchOwnerDialog(task, { from = null, to = null, thread = null }
   const sure = h("input", { type: "checkbox", id: "switch-sure" });
   const who = from || "the current AI";
   modal(`Switch ${task} to another AI`, [
+    evidence ? h("p", { class: "banner warn", role: "status" }, `${who} printed: “${evidence}”`) : null,
     h("p", { class: "hint" }, `Only one AI works on ${task} at a time. Evyro stops ${who}, saves its checkpoint and starts the next AI from it. Anything ${who} did since its last checkpoint is kept in the files but not described.`),
     field("Switch to", sel, "Pick the same AI with a different model to stay on it."),
     field("Model", model),
@@ -437,6 +438,18 @@ function quotaBanner(t) {
       t.task ? h("button", { class: "btn small primary", onclick: () => switchOwnerDialog(t.task, { from: t.target, to: alt?.ai || null }).catch(() => {}) },
         alt ? `Switch to ${alt.ai}…` : "Switch AI…") : null,
       h("button", { class: "btn small", onclick: go }, t.task ? "Write notes first…" : "Hand off…")));
+}
+
+/** A running AI that printed a usage-limit message gets the switch offered at once, with what it said. */
+function limitBanner(t) {
+  if (!t.running || t.kind !== "agent" || !t.limit_hit) return null;
+  const alt = bestFallback(agentKey(t));
+  return h("div", { class: "quota-banner small out", role: "status" },
+    h("span", null, `${t.title} says it has hit a usage limit: “${t.limit_hit}”. Nothing was stopped. Switching carries its latest checkpoint to the next AI once you confirm.`),
+    h("div", { class: "row" },
+      t.task ? h("button", { class: "btn small primary", onclick: () => switchOwnerDialog(t.task, { from: t.target, to: alt?.ai || null, thread: t, evidence: t.limit_hit }).catch(() => {}) },
+        alt ? `Switch to ${alt.ai}…` : "Switch AI…") : null,
+      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, "Stop")));
 }
 
 /** A running AI that is silent or repeating itself gets a way to stop it or carry its task on. */

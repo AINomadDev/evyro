@@ -29,21 +29,26 @@ async function loadThreads() {
 
 /** Pick up "looks stuck" flags the app works out, without reloading everything. */
 async function refreshStuck() {
+  // Only worth asking while an AI is running in a terminal.
+  if (!(state.threads || []).some((t) => t.running && t.kind === "agent")) return;
   let terms;
   try { terms = await invoke("term_list"); } catch { return; }
   const changed = [];
   for (const info of terms) {
     const t = state.threads.find((x) => x.id === info.id);
-    if (t && t.kind !== "chat" && (t.stuck || null) !== (info.stuck || null)) {
+    if (t && t.kind !== "chat" && ((t.stuck || null) !== (info.stuck || null) || (t.limit_hit || null) !== (info.limit_hit || null))) {
+      const newLimit = info.limit_hit && !t.limit_hit;
       t.stuck = info.stuck || null;
+      t.limit_hit = info.limit_hit || null;
       changed.push(t.id);
+      if (newLimit) toast(`${t.title} says it has hit a usage limit. Its pane offers to switch the task to another AI.`, true);
     }
   }
   if (!changed.length) return;
   drawThreadList();
   for (const id of changed) if (panes().includes(id)) drawThreadPane(id);
 }
-setInterval(refreshStuck, 30000);
+setInterval(refreshStuck, 5000);
 
 /** Start an agent or shell thread for the current project and show it. */
 async function startThread({ kind, target = null, task = null, handoffId = null, model = null, title = null, resumeId = null, creditBudget = null, planFirst = false }) {
@@ -270,7 +275,7 @@ function threadStatus(t) {
     if (asking) return pill("warn", "needs you");
     return t.busy ? pill("running", "working") : pill("ok", "your turn");
   }
-  if (t.running) return t.stuck ? pill("warn", "stuck?") : pill("running");
+  if (t.running) return t.limit_hit ? pill("warn", "limit hit?") : t.stuck ? pill("warn", "stuck?") : pill("running");
   if (t.stopped_by_app) return pill("", "stopped with app");
   return pill(t.exit_code === 0 ? "" : "bad", t.exit_code == null ? "ended" : `exit ${t.exit_code}`);
 }
