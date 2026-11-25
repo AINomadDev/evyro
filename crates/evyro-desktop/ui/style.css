@@ -597,3 +597,10 @@ label.check.ap-row { display: flex; }
 .ws-hint span, .quota-banner span { flex: 1; min-width: 0; }
 .plan-card { margin-top: 12px; }
 .plan-body { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; margin: 8px 0; max-height: 260px; overflow: auto; }
+.tour { margin-bottom: 14px; }
+.tour-steps { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tour-steps li { display: flex; align-items: center; gap: 10px; }
+.tour-steps li > span:nth-child(2) { flex: 1; }
+.tour-steps li.done { color: var(--muted); }
+.tour-mark { width: 1.2em; text-align: center; color: var(--accent); }
+.tour-steps li.done .tour-mark { color: var(--ok); }

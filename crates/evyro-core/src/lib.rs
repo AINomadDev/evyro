@@ -35,6 +35,7 @@ pub mod redact;
 pub mod remote;
 pub mod retention;
 pub mod review;
+pub mod sample;
 pub mod search;
 pub mod sessions;
 pub mod skills;

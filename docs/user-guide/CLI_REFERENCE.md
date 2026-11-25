@@ -46,6 +46,7 @@ Commands:
   sessions       Agent sessions
   recover        Recover sessions whose process died (quota kill, crash)
   worktrees      Git worktrees
+  sample         Create a small sample project to try Evyro on (inside Evyro's own data folder) with two ready tasks and a test command that works anywhere, and print the first steps
   pr             The pull request of a task: what is failing and what reviewers asked for, as a prompt for the AI that owns the branch. Needs the GitHub CLI (`gh`)
   plan           Plan first: an AI proposes a plan, you approve it, then it builds
   verify         Run a verification command and record a receipt: `evyro verify -- cargo test`
@@ -1108,6 +1109,22 @@ Usage: evyro sessions [OPTIONS]
 
 Options:
       --active             
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro sample
+
+```text
+Create a small sample project to try Evyro on (inside Evyro's own data folder) with two ready tasks and a test command that works anywhere, and print the first steps
+
+Usage: evyro sample [OPTIONS]
+
+Options:
       --json               Machine-readable JSON output
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors

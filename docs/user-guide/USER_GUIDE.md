@@ -45,6 +45,16 @@ evyro doctor      # database, Git, agents, projects
 evyro targets     # every AI Evyro can hand work to, and whether it is ready
 ```
 
+### 1.2a Try the sample project first
+
+Not ready to point Evyro at your own code? Make a sample project and walk the whole loop on it.
+
+```bash
+evyro sample        # creates it inside Evyro's data folder, never in your folders
+```
+
+It has two small tasks on different files (so two AIs can take one each) and a test command that works on any machine with Git (`git diff --check`). In the desktop app, choose **Try the sample project** on the welcome screen, or from the command palette. A short checklist on the Tasks screen ticks off, from what Evyro really recorded: an AI started on the task, a checkpoint saved, a test run kept as a receipt, a handoff to a different AI. **Dismiss** hides it. The sample is an ordinary project: archive it from the project list when you are done.
+
 ### 1.3 Your first project in five minutes
 
 ```bash
