@@ -14,7 +14,7 @@ mkdir -p "$dir"
 repos=(
   pingdotgg/t3code maria-rcks/t1code MiaAI-Lab/m3code stablyai/orca getpaseo/paseo
   slopus/happy OrchestratorInc/agent-orchestrator ParadevAI/Paradev get-bb/bb
-  generalaction/emdash Emanuele-web04/synara coollabsio/jean
+  generalaction/emdash Emanuele-web04/synara coollabsio/jean monorepo-labs/dray
 )
 for r in "${repos[@]}"; do
   name="${r#*/}"

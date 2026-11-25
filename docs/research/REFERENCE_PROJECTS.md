@@ -30,18 +30,19 @@ It clones or updates each project and prints the commit it moved from and to. Re
 | [generalaction/emdash](https://github.com/generalaction/emdash) | Apache-2.0 | Parallel agents in worktrees, local or over SSH; issues from ten trackers; lifecycle hooks | c876989 (2026-11-23) |
 | [Emanuele-web04/synara](https://github.com/Emanuele-web04/synara) | MIT | Local-first desktop app: threads, split views, previews, automations, external MCP | 001454e (2026-11-25) |
 | [coollabsio/jean](https://github.com/coollabsio/jean) | Apache-2.0 | Tauri desktop plus headless server; Plan/Build/Yolo modes, "magic commands", issue-to-worktree bot | c2d9b7d (2026-11-24) |
+| [monorepo-labs/dray](https://github.com/monorepo-labs/dray) | Apache-2.0 | Tauri 2 (Rust and React) desktop app, the same stack as Evyro. Worktree, diff, PR, issue and browser panels per session; a `dray` CLI over a local socket lets one agent create, list and message others; iPhone client; Linux server mode; local dictation | 83306bf (2026-11-25) |
 
-**Not found:** "dray". Searching GitHub gave no coding-agent project of that name. Send the link and it goes in this table.
+**dray** was added on 2026-11-25 after the link was supplied. It is the closest in stack to Evyro (Tauri 2 with a Rust core).
 
 ## What they have that Evyro does not (yet)
 
-Only gaps are listed. Everything these projects do that Evyro already covers (parallel worktrees, task switching, handoffs, a phone companion, MCP, diff review comments, receipts) is left out. Each gap has a task in the tracker, under the epic T-108 "Learn from reference projects" (T-109 to T-126).
+Only gaps are listed. Everything these projects do that Evyro already covers (parallel worktrees, task switching, handoffs, a phone companion, MCP, diff review comments, receipts) is left out. Each gap has a task in the tracker, under the epic T-108 "Learn from reference projects" (T-109 to T-127).
 
 | Gap | Seen in | Why it matters to Evyro |
 |---|---|---|
 | A watchdog for a stuck or looping agent: repeated text, long silence, no first token | m3code | Evyro knows when an AI's process is gone, not when it is alive and useless. Its answer should be the switch flow, not a kill |
 | Plan / Build / Auto modes with plan approval before edits | jean | A person approves the plan of a risky task, then lets the AI run |
-| One AI splits a task and starts workers | orca, agent-orchestrator, paseo, paradev | `evyro work` starts one AI; there is no way for an AI to hand pieces to others through MCP |
+| One AI splits a task and starts workers | orca, agent-orchestrator, paseo, paradev, dray (agents message each other through a local socket CLI) | `evyro work` starts one AI; there is no way for an AI to hand pieces to others through MCP |
 | A board that puts what needs you on top | agent-orchestrator | Evyro's thread sidebar groups this way; the task board does not |
 | Failing CI and review comments go back to the AI that owns the branch | orca, agent-orchestrator | Evyro does not watch a pull request's checks yet (T-61 and T-62 only plan to show them). Sending the failure to the AI that owns the branch is the useful half |
 | Run a task on an SSH host | emdash, orca, jean, m3code | Evyro's phone page reaches the machine the app runs on; it cannot start an AI on another host |
@@ -55,7 +56,8 @@ Only gaps are listed. Everything these projects do that Evyro already covers (pa
 | A "local models only" setting that never falls back to a cloud AI | m3code | Matters for teams that cannot send code out |
 | Install through winget, scoop, npx and a one-line script | t3code, agent-orchestrator, bb | Evyro has a Homebrew script only |
 | A short recap on each thread and side notes | jean, synara | Handoffs carry state; a person returning to a thread has to read it |
-| An in-app browser with click-to-edit | paradev, synara | Larger and later |
+| A small always-on panel showing which AI needs you (dray's "Island" on the Mac) | dray |
+| An in-app browser with click-to-edit | paradev, synara, dray | Larger and later |
 | Voice control, shared multiplayer sessions | paseo, happy | Interesting; not now |
 
 ## Deliberately not copied
@@ -68,4 +70,5 @@ Only gaps are listed. Everything these projects do that Evyro already covers (pa
 
 | Date | What was read | Result |
 |---|---|---|
-| 2026-11-25 | READMEs, licenses and layout of the twelve projects above | Gaps above, tasks added to the tracker |
+| 2026-11-25 | READMEs, licenses and layout of the projects above | Gaps above, tasks added to the tracker |
+| 2026-11-25 | dray, after the link was supplied | One more gap (always-on panel); one more source for task splitting |
