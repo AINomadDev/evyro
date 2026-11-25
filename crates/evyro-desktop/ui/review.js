@@ -2,7 +2,10 @@
 // the open comments to an agent. Loaded after app.js and threads.js.
 "use strict";
 
-const STATUS_GIT = { "M": ["accent", "modified"], "A": ["ok", "added"], "D": ["bad", "deleted"], "R": ["accent", "renamed"], "??": ["ok", "new"], "MM": ["accent", "modified"], "AM": ["ok", "added"] };
+const statusGit = () => {
+  const modified = ["accent", t("review.git.modified")], added = ["ok", t("review.git.added")];
+  return { "M": modified, "A": added, "D": ["bad", t("review.git.deleted")], "R": ["accent", t("review.git.renamed")], "??": ["ok", t("review.git.new")], "MM": modified, "AM": added };
+};
 const lineClass = (l) => (l.startsWith("@@") ? "hunk" : l.startsWith("+") ? "add" : l.startsWith("-") ? "del" : "");
 
 /** Split a unified diff by file, numbering lines on both sides. */
@@ -27,18 +30,18 @@ async function loadReview(pid) {
 }
 
 function commentBox(c, refresh) {
-  const sentNote = c.status === "sent" ? pill("accent", "sent to agent") : null;
+  const sentNote = c.status === "sent" ? pill("accent", t("review.sent")) : null;
   return h("div", { class: "rv-comment" + (c.status === "sent" ? " sent" : "") },
     h("div", { class: "rv-head" },
-      h("span", { class: "small muted" }, c.author === "human" ? "You" : c.author, " · ", ago(c.created_at)), sentNote,
+      h("span", { class: "small muted" }, c.author === "human" ? t("review.you") : c.author, " · ", ago(c.created_at)), sentNote,
       h("span", { class: "spacer" }),
-      h("button", { class: "btn ghost small", title: "Mark as addressed", onclick: async () => { await act(() => invoke("set_review_status", { id: c.id, status: "resolved" })); refresh(); } }, "Resolve"),
-      h("button", { class: "btn ghost small", title: "Delete comment", onclick: async () => { await act(() => invoke("delete_review_comment", { id: c.id })); refresh(); } }, "Delete")),
+      h("button", { class: "btn ghost small", title: t("review.resolve.title"), onclick: async () => { await act(() => invoke("set_review_status", { id: c.id, status: "resolved" })); refresh(); } }, t("review.resolve")),
+      h("button", { class: "btn ghost small", title: t("review.delete.title"), onclick: async () => { await act(() => invoke("delete_review_comment", { id: c.id })); refresh(); } }, t("review.delete"))),
     h("div", { class: "rv-body" }, c.body));
 }
 
 function commentForm(path, line, snippet, refresh, onCancel) {
-  const ta = h("textarea", { rows: 3, placeholder: line ? `Comment on line ${line}…` : `Comment on ${path}…`, "aria-label": "Review comment" });
+  const ta = h("textarea", { rows: 3, placeholder: line ? t("review.ph.line", { line }) : t("review.ph.file", { path }), "aria-label": t("review.formLabel") });
   const save = async () => {
     if (!ta.value.trim()) return;
     await act(() => invoke("add_review_comment", { projectId: state.project.id, path, line: line || null, snippet: snippet || null, body: ta.value, task: null }));
@@ -50,9 +53,9 @@ function commentForm(path, line, snippet, refresh, onCancel) {
   });
   const f = h("div", { class: "rv-form" }, ta,
     h("div", { class: "row" },
-      h("span", { class: "muted small" }, `${MOD}+Enter to save`), h("span", { class: "spacer" }),
-      h("button", { class: "btn small", onclick: onCancel }, "Cancel"),
-      h("button", { class: "btn primary small", onclick: save }, "Comment")));
+      h("span", { class: "muted small" }, t("review.saveHint", { keys: MOD + "+Enter" })), h("span", { class: "spacer" }),
+      h("button", { class: "btn small", onclick: onCancel }, t("common.cancel")),
+      h("button", { class: "btn primary small", onclick: save }, t("review.comment"))));
   setTimeout(() => ta.focus(), 0);
   return f;
 }
@@ -66,23 +69,23 @@ async function sendReviewDialog(refresh) {
     || (t.kind === "chat" && t.state === "ready" && !t.busy && !t.switching_model && !needsYou(t))));
   const preview = await act(() => invoke("review_prompt_text", { projectId: pid }));
   if (state.project?.id !== pid) return;
-  if (!preview.count) { toast("No open comments to send."); return; }
+  if (!preview.count) { toast(t("review.none")); return; }
   const sel = h("select", null,
-    running.map((t) => h("option", { value: t.id }, `${t.title} (${t.kind === "chat" ? "chat" : "terminal"})`)),
-    h("option", { value: "copy" }, "Copy as a prompt for any AI"));
-  modal(`Send ${preview.count} comment${preview.count === 1 ? "" : "s"}`, [
-    field("Send to", sel, running.length ? "Deliver the preview as one message or copy it for later." : "Copy the prompt for another AI, or start an agent thread first."),
+    running.map((t) => h("option", { value: t.id }, `${t.title} (${t.kind === "chat" ? I18N.t("review.kind.chat") : I18N.t("review.kind.terminal")})`)),
+    h("option", { value: "copy" }, t("review.copyOption")));
+  modal(t("review.sendTitle", { count: preview.count }), [
+    field(t("review.sendTo"), sel, running.length ? t("review.sendHint") : t("review.sendHintNone")),
     h("pre", { class: "rv-preview" }, preview.prompt),
   ], [{
-    label: "Send", primary: true, run: async () => {
+    label: t("review.send"), primary: true, run: async () => {
       if (state.project?.id !== pid) return;
       if (sel.value === "copy") {
-        await copy(preview.prompt, "Review comments copied. Paste them into the AI.");
+        await copy(preview.prompt, t("review.copied"));
       } else {
         const id = sel.value;
         try { await sendToThread(id, preview.prompt); }
         catch (e) { toast(errMsg(e), true); return false; }
-        toast("Comments sent to the agent.");
+        toast(t("review.delivered"));
         await recordReviewDelivery(pid, preview.ids);
         if (state.project?.id === pid) placeThread(id);
       }
@@ -93,13 +96,13 @@ async function sendReviewDialog(refresh) {
 
 async function recordReviewDelivery(projectId, ids) {
   try { await invoke("review_mark_sent", { projectId, ids }); }
-  catch (e) { toast(`The agent received the comments, but Evyro could not record delivery. ${errMsg(e)}`, true); }
+  catch (e) { toast(t("review.deliveryFailed", { error: errMsg(e) }), true); }
 }
 
 async function viewChanges(v) {
   const pid = state.project.id;
   let c;
-  v.append(h("div", { class: "muted" }, "Reading changes…"));
+  v.append(h("div", { class: "muted" }, t("review.reading")));
   try { c = await invoke("repo_changes", { projectId: pid }); } catch (e) { clear(v).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
   const comments = await loadReview(pid);
   if (state.view !== "changes" || state.project.id !== pid) return;
@@ -108,15 +111,15 @@ async function viewChanges(v) {
   const files = c.files.filter((f) => !f.path.startsWith(".evyro/"));
   const open = comments.filter((x) => x.status === "open").length;
   v.append(h("div", { class: "row rv-bar" },
-    h("span", { class: "muted" }, files.length ? `${files.length} changed file(s) since the last commit` : "No uncommitted changes."),
-    comments.length ? pill(open ? "warn" : "accent", open ? `${open} open comment${open === 1 ? "" : "s"}` : `${comments.length} sent, waiting`) : null,
+    h("span", { class: "muted" }, files.length ? t("review.changed", { count: files.length }) : t("review.noChanges")),
+    comments.length ? pill(open ? "warn" : "accent", open ? t("review.open", { count: open }) : t("review.waiting", { count: comments.length })) : null,
     h("span", { class: "spacer" }),
-    c.redactions ? pill("warn", `${c.redactions} secret(s) hidden`) : null,
-    h("button", { class: "btn small", onclick: refresh }, "Refresh"),
-    h("button", { class: "btn small", onclick: () => copy(c.diff, "Diff copied") }, "Copy diff"),
-    h("button", { class: "btn primary small", disabled: open ? null : true, onclick: () => sendReviewDialog(refresh) }, "Send comments to agent")));
+    c.redactions ? pill("warn", t("review.secrets", { count: c.redactions })) : null,
+    h("button", { class: "btn small", onclick: refresh }, t("review.refresh")),
+    h("button", { class: "btn small", onclick: () => copy(c.diff, t("review.diffCopied")) }, t("review.copyDiff")),
+    h("button", { class: "btn primary small", disabled: open ? null : true, onclick: () => sendReviewDialog(refresh) }, t("review.sendBtn"))));
   if (!files.length && !comments.length) return;
-  if (files.length) v.append(h("p", { class: "muted small", style: "margin:0 0 10px" }, "Click a line number or + to comment on that line. Comments go to the next agent with its context, or straight into a running agent thread."));
+  if (files.length) v.append(h("p", { class: "muted small", style: "margin:0 0 10px" }, t("review.help")));
 
   const byFile = splitDiff(c.diff);
   const byPath = {};
@@ -127,20 +130,20 @@ async function viewChanges(v) {
     shown.add(f.path);
     const d = byFile[f.path];
     const fileComments = byPath[f.path] || [];
-    const st = STATUS_GIT[f.status.trim()];
+    const st = statusGit()[f.status.trim()];
     const body = h("div", { class: "diff-body" });
     const det = h("details", { class: "diff-file", open: files.length <= 6 || fileComments.length ? true : null },
       h("summary", null, pill(st ? st[0] : "", st ? st[1] : f.status.trim()),
         h("span", { class: "mono" }, f.path), d ? h("span", { class: "muted small" }, `+${d.add} −${d.del}`) : null,
-        fileComments.length ? pill("warn", `${fileComments.length} comment${fileComments.length === 1 ? "" : "s"}`) : null),
+        fileComments.length ? pill("warn", t("review.comments", { count: fileComments.length })) : null),
       body);
     // Outside <summary>: a button inside it would be a control within a control.
     const tools = h("div", { class: "diff-tools" },
-      h("button", { class: "btn ghost small", onclick: () => { tools.after(commentForm(f.path, null, null, refresh, () => refresh())); } }, "Comment on file"));
+      h("button", { class: "btn ghost small", onclick: () => { tools.after(commentForm(f.path, null, null, refresh, () => refresh())); } }, t("review.commentFile")));
     body.append(tools);
     for (const x of fileComments.filter((x) => !x.line)) body.append(commentBox(x, refresh));
     if (d) {
-      const pre = h("div", { class: "diff", role: "group", "aria-label": `Changes in ${f.path}` });
+      const pre = h("div", { class: "diff", role: "group", "aria-label": t("review.changesIn", { path: f.path }) });
       for (const ln of d.lines) {
         const here = ln.n ? fileComments.filter((x) => x.line === ln.n) : [];
         const add = () => {
@@ -150,23 +153,23 @@ async function viewChanges(v) {
         };
         let form = null;
         const row = h("div", { class: "dl " + ln.kind },
-          h("span", { class: "ln" }, ln.o || ""), h("span", { class: "ln" + (ln.n ? " can" : ""), onclick: ln.n ? add : null, title: ln.n ? "Comment on this line" : null }, ln.n || ""),
+          h("span", { class: "ln" }, ln.o || ""), h("span", { class: "ln" + (ln.n ? " can" : ""), onclick: ln.n ? add : null, title: ln.n ? t("review.commentLine") : null }, ln.n || ""),
           h("span", { class: "code" }, ln.text),
-          ln.n ? h("button", { class: "cbtn", title: "Comment on this line", "aria-label": `Comment on line ${ln.n}`, onclick: add }, "+") : null);
+          ln.n ? h("button", { class: "cbtn", title: t("review.commentLine"), "aria-label": t("review.ph.line", { line: ln.n }), onclick: add }, "+") : null);
         pre.append(row, ...here.map((x) => commentBox(x, refresh)));
       }
       body.append(pre);
     } else {
-      body.append(h("div", { class: "muted small", style: "padding:6px 10px" }, f.status.trim() === "??" ? "New file, not yet tracked by Git. Comment on the whole file above." : "No text diff (binary, deleted or excluded)."));
+      body.append(h("div", { class: "muted small", style: "padding:6px 10px" }, f.status.trim() === "??" ? t("review.newFile") : t("review.noDiff")));
     }
     card.append(det);
   }
   // Comments on files that have no changes any more (committed or reverted).
   const orphans = comments.filter((x) => !shown.has(x.path));
   if (orphans.length) {
-    card.append(h("div", { class: "diff-file" }, h("div", { class: "rv-orphans-head muted small" }, "Comments on files with no uncommitted changes"),
+    card.append(h("div", { class: "diff-file" }, h("div", { class: "rv-orphans-head muted small" }, t("review.orphans")),
       ...orphans.map((x) => h("div", null, h("div", { class: "mono small", style: "padding:6px 4px 0" }, x.path + (x.line ? `:${x.line}` : "")), commentBox(x, refresh)))));
   }
   v.append(card);
-  if (c.truncated) v.append(h("div", { class: "banner warn", style: "margin-top:10px" }, "The diff is long and was cut off. Use git diff in a terminal for the rest."));
+  if (c.truncated) v.append(h("div", { class: "banner warn", style: "margin-top:10px" }, t("review.cut")));
 }
