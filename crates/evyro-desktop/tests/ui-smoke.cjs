@@ -1186,6 +1186,31 @@ const FIX = {
     });
     await page.evaluate(() => loadThreads().then(() => render()));
   });
+  await step("a thread that looks stuck says why, offers Stop and Switch, and clears when output resumes", async () => {
+    const r = await page.evaluate(async () => {
+      const t = { id: "term_stuck", title: "Looping AI", kind: "agent", target: "claude-code", task: "T-1",
+        project_id: state.project.id, started_at: 2, running: true };
+      window.__terms.push({ ...t });
+      state.threads.push(t);
+      const none = stuckBanner(t);
+      window.__terms.find((x) => x.id === "term_stuck").stuck = "repeating the same line 31 times: trying again";
+      await refreshStuck();
+      const live = state.threads.find((x) => x.id === "term_stuck");
+      const banner = stuckBanner(live);
+      const out = { none: !!none, text: banner?.textContent || "", pill: threadStatus(live).textContent, buttons: [...(banner?.querySelectorAll("button") || [])].map((b) => b.textContent) };
+      delete window.__terms.find((x) => x.id === "term_stuck").stuck;
+      await refreshStuck();
+      out.cleared = !stuckBanner(state.threads.find((x) => x.id === "term_stuck"));
+      window.__terms = window.__terms.filter((x) => x.id !== "term_stuck");
+      state.threads = state.threads.filter((x) => x.id !== "term_stuck");
+      return out;
+    });
+    if (r.none) throw new Error("banner shown for a healthy thread");
+    if (!/looks stuck: repeating the same line 31 times/.test(r.text) || !/nothing was stopped/.test(r.text)) throw new Error("banner text: " + r.text);
+    if (r.pill !== "stuck?") throw new Error("pill: " + r.pill);
+    if (!r.buttons.includes("Stop") || !r.buttons.some((b) => /^Switch/.test(b))) throw new Error("buttons: " + r.buttons);
+    if (!r.cleared) throw new Error("banner stayed after output resumed");
+  });
   await step("Settings can limit and clear saved history, asking before deleting", async () => {
     await page.evaluate(() => { window.__history = null; window.__historyCalls = []; setTab("settings"); });
     const card = page.locator(".card", { has: page.getByRole("heading", { name: "Saved history" }) });
