@@ -148,6 +148,25 @@ Options:
   -h, --help                         Print help
 ```
 
+### evyro task approve-pieces
+
+```text
+Approve the pieces an AI wrote for a task, so workers may start them. A person has to run it at a terminal and type the task key
+
+Usage: evyro task approve-pieces [OPTIONS] <TASK>
+
+Arguments:
+  <TASK>  The task whose pieces to approve
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
 ### evyro task split
 
 ```text

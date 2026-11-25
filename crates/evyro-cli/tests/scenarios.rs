@@ -3103,3 +3103,50 @@ fn split_a_task_then_start_its_pieces_one_ai_each() {
         "nothing was created"
     );
 }
+
+/// Pieces an AI wrote do not start until a person approves them at a terminal.
+#[test]
+fn pieces_an_ai_wrote_wait_for_a_person_to_approve_them() {
+    let mut env = Env::new();
+    let repo = env.repo("split-review");
+    env.init(&repo);
+    env.agent("claude", "2.1.0", "exit 0");
+    env.ok(&repo, &["task", "add", "Big job", "--kind", "epic"]);
+    let pieces = repo.join("pieces.json");
+    std::fs::write(
+        &pieces,
+        r#"[{"title": "api", "files": ["src/api"]}, {"title": "ui", "files": ["src/ui"]}]"#,
+    )
+    .unwrap();
+    // Run from inside an AI's session, the split is accepted but gated.
+    let o = env
+        .cmd(
+            &repo,
+            &["task", "split", "T-1", "--file", pieces.to_str().unwrap()],
+        )
+        .env("EVYRO_SESSION_ID", "ses_any")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("approve-pieces"));
+    let o = env.run(
+        &repo,
+        &["work", "--under", "T-1", "--agent", "claude", "--dry-run"],
+    );
+    assert!(!o.status.success(), "an unapproved piece must not start");
+    // A script cannot approve.
+    let o = env.run(&repo, &["task", "approve-pieces", "T-1"]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("a person has to do it"));
+    // A person at a terminal can.
+    #[cfg(unix)]
+    {
+        let (code, out) = on_terminal(&env, &repo, &["task", "approve-pieces", "T-1"], "T-1");
+        assert_eq!(code, 0, "{out}");
+        let next = env.json(
+            &repo,
+            &["work", "--under", "T-1", "--agent", "claude", "--dry-run"],
+        );
+        assert_eq!(next["task"], "T-2");
+    }
+}

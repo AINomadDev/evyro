@@ -547,7 +547,10 @@ impl Store {
             if parent.is_some_and(|p| t.parent_id.as_deref() != Some(p.id.as_str())) {
                 continue;
             }
-            if crate::comparison::is_candidate(&t) || t.needs_person().is_some() {
+            if crate::comparison::is_candidate(&t)
+                || t.needs_person().is_some()
+                || t.awaiting_review()
+            {
                 continue;
             }
             if self.check_claim(project_id, &t.id, harness, None).is_ok() {

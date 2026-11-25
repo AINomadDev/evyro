@@ -64,7 +64,7 @@ fn tools() -> Vec<ToolDef> {
             schema: s(json!({"id": {"type": "string"}}), &[]) },
         ToolDef { name: "record_decision", mutating: true, description: "Record an architecture/implementation decision with rationale.",
             schema: s(json!({"title": {"type": "string"}, "decision": {"type": "string"}, "rationale": {"type": "string"}, "task": {"type": "string"}}), &["title", "decision"]) },
-        ToolDef { name: "split_task", mutating: true, description: "Split a task into up to 8 pieces other AIs can take, each with the files it changes. Pieces that share files are ordered one after the other. Nothing is started: a person or `evyro work --under <task>` starts the workers.",
+        ToolDef { name: "split_task", mutating: true, description: "Split a task into up to 8 pieces other AIs can take, each with the files it changes. Pieces that share files are ordered one after the other. Nothing is started, and the pieces wait for a person to approve them (`evyro task approve-pieces`) before `evyro work` will start them.",
             schema: s(json!({"task": {"type": "string", "description": "The task to split; defaults to the active task"},
                 "pieces": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "object", "additionalProperties": false, "required": ["title"],
                     "properties": {"title": {"type": "string"}, "description": {"type": "string"}, "files": strs, "acceptance": strs,
@@ -392,7 +392,7 @@ impl Server {
                 let pieces: Vec<evyro_core::split::SplitPart> =
                     serde_json::from_value(args.get("pieces").cloned().unwrap_or(Value::Null))
                         .map_err(|e| Error::Invalid(format!("pieces: {e}")))?;
-                json!(s.split_task(&pid, &t.key, &pieces)?)
+                json!(s.split_task_as(&pid, &t.key, &pieces, true)?)
             }
             "propose_plan" => {
                 let t = self

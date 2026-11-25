@@ -303,6 +303,12 @@ enum TaskCmd {
         #[arg(long)]
         file: PathBuf,
     },
+    /// Approve the pieces an AI wrote for a task, so workers may start them. A person has to
+    /// run it at a terminal and type the task key.
+    ApprovePieces {
+        /// The task whose pieces to approve.
+        task: String,
+    },
     /// Add a task.
     Add {
         title: String,
@@ -1256,6 +1262,8 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                                 .unwrap_or_default(),
                             if t.needs_person().is_some() {
                                 "  (needs a person)"
+                            } else if t.awaiting_review() {
+                                "  (awaiting review)"
                             } else {
                                 ""
                             }
@@ -2722,6 +2730,23 @@ fn task_cmd(
                 )
             });
         }
+        TaskCmd::ApprovePieces { task } => {
+            let t = store.resolve_task(&p.id, &task)?;
+            confirm_person(
+                &t.key,
+                "approve the pieces of",
+                std::env::var("EVYRO_SESSION_ID").is_ok_and(|v| !v.is_empty()),
+            )?;
+            let approved = store.approve_pieces(&p.id, &t.key)?;
+            o.print(&approved, || {
+                format!(
+                    "Approved {} pieces of {}. Start them with `evyro work --under {}`.",
+                    approved.len(),
+                    t.key,
+                    t.key
+                )
+            });
+        }
         TaskCmd::Split { task, file } => {
             use std::io::Read;
             let text = if file.as_os_str() == "-" {
@@ -2733,7 +2758,8 @@ fn task_cmd(
             };
             let parts: Vec<evyro_core::split::SplitPart> = serde_json::from_str(&text)
                 .map_err(|e| Error::Invalid(format!("the pieces are not valid JSON: {e}")))?;
-            let r = store.split_task(&p.id, &task, &parts)?;
+            let by_ai = std::env::var("EVYRO_SESSION_ID").is_ok_and(|v| !v.is_empty());
+            let r = store.split_task_as(&p.id, &task, &parts, by_ai)?;
             o.print(&r, || {
                 let mut out = format!("Split {} into {} pieces:\n", r.parent, r.created.len());
                 for t in &r.created {
@@ -2752,10 +2778,14 @@ fn task_cmd(
                         }
                     ));
                 }
-                out.push_str(&format!(
-                    "Start them with `evyro work --under {}` (one AI each).",
-                    r.parent
-                ));
+                out.push_str(&if by_ai {
+                    format!(
+                        "An AI wrote these, so they wait for you: read them, then `evyro task approve-pieces {}`.",
+                        r.parent
+                    )
+                } else {
+                    format!("Start them with `evyro work --under {}` (one AI each).", r.parent)
+                });
                 out
             });
         }

@@ -44,6 +44,50 @@ fn overlaps(a: &str, b: &str) -> bool {
     a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
 }
 
+impl Store {
+    /// A person approves the pieces an AI wrote for `parent`, so workers may start them.
+    pub fn approve_pieces(&self, project_id: &str, parent: &str) -> Result<Vec<Task>> {
+        let parent = self.resolve_task(project_id, parent)?;
+        let tx = self.conn.unchecked_transaction()?;
+        let mut approved = Vec::new();
+        for t in self.list_tasks(project_id, None, true)? {
+            if t.parent_id.as_deref() != Some(parent.id.as_str()) || !t.awaiting_review() {
+                continue;
+            }
+            let kept: Vec<String> = t
+                .constraints
+                .iter()
+                .filter(|c| !c.starts_with(crate::tasks::AWAITING_REVIEW))
+                .cloned()
+                .collect();
+            self.conn.execute(
+                "UPDATE tasks SET constraints = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![
+                    serde_json::to_string(&kept).unwrap_or_else(|_| "[]".into()),
+                    crate::util::now(),
+                    t.id
+                ],
+            )?;
+            approved.push(self.get_task(&t.id)?);
+        }
+        if approved.is_empty() {
+            return Err(Error::Invalid(format!(
+                "{} has no pieces waiting for approval",
+                parent.key
+            )));
+        }
+        self.emit(
+            Some(project_id),
+            Some(&parent.id),
+            None,
+            "task.pieces_approved",
+            serde_json::json!({"task": parent.key, "pieces": approved.iter().map(|t| &t.key).collect::<Vec<_>>()}),
+        )?;
+        tx.commit()?;
+        Ok(approved)
+    }
+}
+
 /// A title is one short line: no line breaks to hide instructions behind.
 fn one_line(title: &str) -> String {
     title
@@ -65,7 +109,20 @@ fn untrusted_description(text: &str) -> String {
 }
 
 impl Store {
+    /// Split a task as a person: the pieces can be started at once.
     pub fn split_task(&self, project_id: &str, parent: &str, parts: &[SplitPart]) -> Result<Split> {
+        self.split_task_as(project_id, parent, parts, false)
+    }
+
+    /// Split a task. When an AI wrote the pieces (`by_ai`), they wait for a person to approve
+    /// them with [`Self::approve_pieces`] before `evyro work` will start them.
+    pub fn split_task_as(
+        &self,
+        project_id: &str,
+        parent: &str,
+        parts: &[SplitPart],
+        by_ai: bool,
+    ) -> Result<Split> {
         let parent = self.resolve_task(project_id, parent)?;
         if parent.status.is_closed() {
             return Err(Error::Invalid(format!(
@@ -117,9 +174,21 @@ impl Store {
         let constraints: Vec<String> = parent
             .constraints
             .iter()
-            .filter(|c| !c.starts_with(crate::tasks::NEEDS_PERSON))
+            .filter(|c| {
+                !c.starts_with(crate::tasks::NEEDS_PERSON)
+                    && !c.starts_with(crate::tasks::AWAITING_REVIEW)
+            })
             .cloned()
             .collect();
+        // Pieces an AI wrote wait for a person: `evyro work` skips them until they are approved.
+        let mut constraints = constraints;
+        if by_ai {
+            constraints.push(format!(
+                "{} written by an AI; a person reads it and runs `evyro task approve-pieces {}`",
+                crate::tasks::AWAITING_REVIEW,
+                parent.key
+            ));
+        }
         let tx = self.conn.unchecked_transaction()?;
         let mut created: Vec<Task> = Vec::new();
         for (i, p) in parts.iter().enumerate() {
@@ -290,6 +359,41 @@ mod tests {
             .split_task(&pid, &parent.key, &[part("plain", &[], &[])])
             .unwrap();
         assert_eq!(r.created[0].description, "");
+    }
+
+    #[test]
+    fn pieces_an_ai_wrote_wait_for_a_person_before_work_can_start_them() {
+        let (_d, store, pid, parent) = setup();
+        store
+            .split_task_as(
+                &pid,
+                &parent.key,
+                &[part("a", &["src/a"], &[]), part("b", &["src/b"], &[])],
+                true,
+            )
+            .unwrap();
+        let under = |store: &Store| {
+            store
+                .next_claimable_under(&pid, "claude-code", Some(&parent))
+                .unwrap()
+        };
+        assert!(under(&store).is_none(), "AI-written pieces must not start");
+        // A person approves; both can start, and the marker is gone.
+        let approved = store.approve_pieces(&pid, &parent.key).unwrap();
+        assert_eq!(approved.len(), 2);
+        assert!(approved.iter().all(|t| !t.awaiting_review()));
+        assert!(under(&store).is_some());
+        // Nothing is left to approve.
+        assert!(store.approve_pieces(&pid, &parent.key).is_err());
+        // A person's own split needs no approval, and a piece does not inherit the marker.
+        let (_d2, store2, pid2, parent2) = setup();
+        store2
+            .split_task(&pid2, &parent2.key, &[part("a", &[], &[])])
+            .unwrap();
+        assert!(store2
+            .next_claimable_under(&pid2, "claude-code", Some(&parent2))
+            .unwrap()
+            .is_some());
     }
 
     #[test]

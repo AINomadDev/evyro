@@ -227,7 +227,17 @@ pub struct Dependency {
 /// A task constraint that keeps `evyro work` and the desktop from handing the task to an AI.
 pub const NEEDS_PERSON: &str = "needs a person:";
 
+/// A task constraint on pieces an AI wrote: `evyro work` skips them until a person approves.
+pub const AWAITING_REVIEW: &str = "awaiting review:";
+
 impl Task {
+    /// Whether an AI wrote this task and no person has approved it for work yet.
+    pub fn awaiting_review(&self) -> bool {
+        self.constraints
+            .iter()
+            .any(|c| c.starts_with(AWAITING_REVIEW))
+    }
+
     /// Why this task needs a person (a phone, a certificate, an account sign-in), if it does.
     /// Such a task is never picked automatically; naming it explicitly still works.
     pub fn needs_person(&self) -> Option<&str> {
