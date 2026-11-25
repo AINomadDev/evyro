@@ -229,6 +229,9 @@ const FIX = {
             }
             return JSON.parse(JSON.stringify({ ...hs, removed }));
           }
+          if (cmd === "pr_feedback") return { task: args.task, branch: "feat/x", pr: { number: 5, url: "https://github.com/o/r/pull/5", state: "OPEN" }, pending: 0,
+            failed: [{ name: "test (ubuntu)", url: null, log_tail: "boom" }], review: [{ author: "reviewer", path: "src/a.rs", line: 12, body: "rename" }], actionable: true,
+            prompt: "The pull request for T-1 needs changes. FIX-ME-PROMPT" };
           if (cmd === "plan_get") return JSON.parse(JSON.stringify({ task: args.task, plan: window.__plan || null }));
           if (cmd === "plan_decide") {
             window.__planDecision = args;
@@ -439,6 +442,15 @@ const FIX = {
       || window.__lastTermWrite.includes("Check behavior after reload"))) throw new Error("a late note was included in the earlier review batch");
     await page.click(".rv-comment.sent >> text=Resolve");
     await page.waitForSelector(".rv-comment.sent", { state: "detached" });
+  });
+  await step("PR feedback shows what is failing and sends the prompt to the AI on the task", async () => {
+    await page.evaluate(() => { window.__lastTermWrite = null; return loadThreads().then(() => prFeedbackDialog({ key: "T-1" })); });
+    const dialog = page.getByRole("dialog", { name: "PR feedback for T-1" });
+    await dialog.getByText("1 failing check and 1 open review comment").waitFor();
+    await dialog.getByText("FIX-ME-PROMPT").waitFor();
+    await dialog.getByRole("button", { name: "Send to codex on T-1" }).click();
+    await page.waitForFunction(() => window.__lastTermWrite && window.__lastTermWrite.includes("FIX-ME-PROMPT"));
+    await dialog.waitFor({ state: "detached" });
   });
   await step("chat thread over ACP: plan, permission, diff, reply", async () => {
     await tab("workspace");

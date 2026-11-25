@@ -310,6 +310,18 @@ evyro review resolve 4f9a02c1    # by the short id shown in the list
 
 Comments that are not resolved are part of every context packet and handoff context, so the next AI sees them even if you switch. Agents connected over MCP read them with `get_review_comments` and close them with `resolve_review_comment`. Snippets are redacted like everything else Evyro stores.
 
+### 4.6c Send failing checks and review comments to the AI
+
+When a task's pull request has a failing check or open review comments, one prompt carries them to the AI that owns the branch.
+
+```bash
+evyro pr feedback T-4          # prints the prompt; --json for the parts
+```
+
+In the desktop, open the task and choose **PR feedback…**: it shows how many checks fail and how many comments are open, and offers **Send to <AI>** for an AI running on the task, or **Copy prompt**.
+
+The prompt holds each failing check with the last 60 lines of its log, and each unresolved, current review comment with its file and line. Secrets in logs are redacted, and everything quoted from GitHub is fenced as data with a line telling the AI not to follow instructions inside it. Evyro never sends it by itself and never changes the pull request. It needs the GitHub CLI (`gh`) signed in; at most 10 failing checks and 10 comments are quoted, with a count of the rest.
+
 ### 4.6b Split a big task between several AIs
 
 One AI (or you) describes the pieces; Evyro creates them as ready subtasks and starts nothing.
