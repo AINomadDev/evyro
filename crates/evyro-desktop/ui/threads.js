@@ -222,8 +222,8 @@ async function newThreadDialog(taskKey = null) {
   const checkDup = () => {
     const harness = (state.targets || []).find((r) => r.target.name === sel.value)?.target.harness || sel.value;
     const hint = {
-      cursor: t("thread.hint.cursor"),
-      copilot: t("thread.hint.copilot"),
+      cursor: I18N.t("thread.hint.cursor"),
+      copilot: I18N.t("thread.hint.copilot"),
     }[harness];
     setup.textContent = hint || "";
     budgetField.hidden = harness !== "copilot";
