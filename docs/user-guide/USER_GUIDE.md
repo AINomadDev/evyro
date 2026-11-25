@@ -326,7 +326,8 @@ In the desktop app, tick **Plan first** when you start a thread on a task. The p
 What is and is not enforced:
 
 - **Claude Code and Codex start read-only** in plan mode (Claude Code's `plan` permission mode, Codex's `read-only` sandbox). For every other AI the instruction is a request, not a lock, and Evyro says so when it starts.
-- **Only a person approves.** `evyro plan approve` refuses inside an AI's session, and the MCP server has `propose_plan` and `get_plan` but no way to approve. A new plan after an approval needs its own approval.
+- **Only a person approves.** `evyro plan approve` needs a real terminal and makes you type the task key, so it refuses when an AI or a script runs it. The desktop's **Approve plan** button is the other route, and the MCP server has `propose_plan` and `get_plan` but no way to approve. A new plan after an approval needs its own approval.
+- **This is a strong speed bump, not a lock.** A program running as you could still open a terminal of its own or edit Evyro's database. If you do not trust the AI with that, use the desktop button and a sandboxed or read-only AI.
 - **The plan is text from an AI**, so the next AI reads it fenced as data, like every note carried between AIs. Secrets in it are redacted.
 - Nothing stops an AI that ignores the request from editing. Review the diff as usual.
 
