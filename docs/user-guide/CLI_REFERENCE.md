@@ -1086,7 +1086,7 @@ Usage: evyro plan [OPTIONS] <COMMAND>
 Commands:
   show     Show the plan for a task and whether it is approved
   set      Propose a plan for a task. An AI in plan mode does this; the plan then waits for you
-  approve  Approve the plan that is waiting. Run it yourself: it refuses inside an AI's session
+  approve  Approve the plan that is waiting. A person has to run it at a terminal and type the task key; it refuses when run by an AI or from a script
   reject   Reject the plan that is waiting, with the reason the AI should read
   help     Print this message or the help of the given subcommand(s)
 

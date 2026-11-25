@@ -2941,40 +2941,107 @@ fn plan_first_then_approve_then_build() {
     let plan = env.json(&repo, &["plan", "show", "T-1"]);
     assert_eq!(plan["status"], "proposed");
 
-    // Inside an AI's session the approval is refused.
-    let o = env
-        .cmd(&repo, &["plan", "approve", "T-1"])
-        .env("EVYRO_SESSION_ID", "ses_any")
-        .output()
-        .unwrap();
-    assert!(!o.status.success());
-    assert!(String::from_utf8_lossy(&o.stderr).contains("for a person"));
+    // Nothing but a person at a terminal can decide: a script, a pipe or an AI's session is refused.
+    for session in [None, Some("ses_any")] {
+        let mut cmd = env.cmd(&repo, &["plan", "approve", "T-1"]);
+        if let Some(s) = session {
+            cmd.env("EVYRO_SESSION_ID", s);
+        }
+        let o = cmd.output().unwrap();
+        assert!(!o.status.success());
+        assert!(String::from_utf8_lossy(&o.stderr).contains("a person has to do it"));
+    }
     assert_eq!(
         env.json(&repo, &["plan", "show", "T-1"])["status"],
         "proposed"
     );
 
-    // A person approves; the builder gets the plan as fenced data.
-    env.ok(&repo, &["plan", "approve", "T-1", "--note", "go"]);
-    assert_eq!(
-        env.json(&repo, &["plan", "show", "T-1"])["status"],
-        "approved"
-    );
-    let ctx = env.ok(&repo, &["context", "--task", "T-1", "--budget", "large"]);
-    assert!(ctx.contains("approved by a person"), "{ctx}");
-    assert!(ctx.contains("add the flag"), "{ctx}");
-    env.ok(
-        &repo,
-        &["run", "--to", "claude", "--task", "T-1", "--headless"],
-    );
-    let args = read(&repo.join(".agent-claude-args"));
-    assert!(!args.contains("PLAN FIRST"), "{args}");
-    assert!(
-        args.contains("acceptEdits"),
-        "building is not read-only: {args}"
-    );
+    // At a real terminal: the wrong text decides nothing; the task key approves.
+    #[cfg(unix)]
+    {
+        let (code, _) = on_terminal(&env, &repo, &["plan", "approve", "T-1"], "yes");
+        assert_ne!(code, 0);
+        assert_eq!(
+            env.json(&repo, &["plan", "show", "T-1"])["status"],
+            "proposed"
+        );
+        let (code, out) = on_terminal(
+            &env,
+            &repo,
+            &["plan", "approve", "T-1", "--note", "go"],
+            "T-1",
+        );
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(
+            env.json(&repo, &["plan", "show", "T-1"])["status"],
+            "approved"
+        );
+        let ctx = env.ok(&repo, &["context", "--task", "T-1", "--budget", "large"]);
+        assert!(ctx.contains("approved by a person"), "{ctx}");
+        assert!(ctx.contains("add the flag"), "{ctx}");
+        env.ok(
+            &repo,
+            &["run", "--to", "claude", "--task", "T-1", "--headless"],
+        );
+        let args = read(&repo.join(".agent-claude-args"));
+        assert!(!args.contains("PLAN FIRST"), "{args}");
+        assert!(
+            args.contains("acceptEdits"),
+            "building is not read-only: {args}"
+        );
+        // A second approval is refused: it cannot be replayed onto a newer plan.
+        let (code, _) = on_terminal(&env, &repo, &["plan", "approve", "T-1"], "T-1");
+        assert_ne!(code, 0);
+    }
+}
 
-    // A second approval is refused: it cannot be replayed onto a newer plan.
-    let o = env.run(&repo, &["plan", "approve", "T-1"]);
-    assert!(!o.status.success());
+/// Run `evyro` attached to a pseudo-terminal, type `typed` when it asks, and return its exit
+/// code and output.
+#[cfg(unix)]
+fn on_terminal(env: &Env, dir: &Path, args: &[&str], typed: &str) -> (i32, String) {
+    const SCRIPT: &str = r#"
+import os, pty, signal, sys
+signal.alarm(30)
+argv = sys.argv[1:]
+typed = os.environ.pop("EVYRO_TEST_TYPED", "")
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv(argv[0], argv)
+out, sent = b"", False
+while True:
+    try:
+        data = os.read(fd, 4096)
+    except OSError:
+        break
+    if not data:
+        break
+    out += data
+    if not sent and b"Type " in out:
+        os.write(fd, (typed + "\n").encode())
+        sent = True
+_, status = os.waitpid(pid, 0)
+sys.stdout.write(out.decode(errors="replace"))
+sys.exit(os.waitstatus_to_exitcode(status))
+"#;
+    let inner = env.cmd(dir, args);
+    let mut c = Command::new(python());
+    c.args(["-c", SCRIPT, env!("CARGO_BIN_EXE_evyro")])
+        .args(args)
+        .current_dir(dir);
+    for (k, v) in inner.get_envs() {
+        match v {
+            Some(v) => c.env(k, v),
+            None => c.env_remove(k),
+        };
+    }
+    c.env("EVYRO_TEST_TYPED", typed);
+    let o = c.output().unwrap();
+    (
+        o.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+    )
 }
