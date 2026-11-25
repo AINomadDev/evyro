@@ -91,10 +91,20 @@ const PROV = { human_recorded: "checked by you", evyro_verified: "backed by a pa
 const pill = (s, label) => h("span", { class: "pill " + (STATUS_PILL[s] ?? "") }, label ?? String(s).replace(/_/g, " "));
 
 // ---------- modal ----------
+/** Close the open dialog and give focus back to whatever opened it. */
+function closeModal() {
+  const root = $("#modal-root");
+  const opener = root._opener;
+  clear(root);
+  root._opener = null;
+  if (opener && opener !== document.body && opener.isConnected) opener.focus();
+}
 function modal(title, bodyNodes, actions) {
   const root = $("#modal-root");
   // Close only this dialog: a slow action finishing late must not wipe a dialog opened since.
-  const close = () => { if (back.isConnected) back.remove(); };
+  // Remember what opened the dialog, so closing it hands the keyboard back instead of leaving it at the top.
+  if (!root.firstChild) root._opener = document.activeElement;
+  const close = () => { if (back.isConnected) closeModal(); };
   const back = h("div", { class: "modal-back", onclick: (e) => { if (e.target === back) close(); } },
     h("div", { class: "modal", role: "dialog", "aria-label": title },
       h("h2", null, title), bodyNodes,
@@ -108,9 +118,19 @@ function modal(title, bodyNodes, actions) {
             finally { ev.target.disabled = false; }
           },
         }, a.label)))));
+  // Tab stays inside the dialog: it wraps from the last control to the first and back.
+  back.addEventListener("keydown", (e) => {
+    if (e.key !== "Tab") return;
+    const items = [...back.querySelectorAll("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")].filter((el) => el.getClientRects().length);
+    if (!items.length) return;
+    const [lo, hi] = [items[0], items[items.length - 1]];
+    if (e.shiftKey && document.activeElement === lo) { e.preventDefault(); hi.focus(); }
+    else if (!e.shiftKey && document.activeElement === hi) { e.preventDefault(); lo.focus(); }
+  });
   clear(root).append(back);
   const first = back.querySelector("input, textarea, select");
   if (first) first.focus();
+  else (back.querySelector(".btn.primary") || back.querySelector("button"))?.focus();
 }
 const field = (label, input, hint) => h("label", { class: "field" }, label, input, hint ? h("div", { class: "hint" }, hint) : null);
 const lines = (s) => String(s || "").split("\n").map((x) => x.trim()).filter(Boolean);
@@ -1212,9 +1232,47 @@ async function updateLiveBadge() {
 
 // ---------- command palette ----------
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
+/** Every keyboard shortcut, in one place: the sheet shows this list and the smoke test presses each one. */
+const SHORTCUTS = [
+  ["Everywhere", [
+    ["Command palette: every action", `${MOD} K`],
+    ["Go to a screen (Workspace, Tasks, Changes, History, Knowledge, Skills, AI targets, Settings)", `${MOD} 1 … 8`],
+    ["Go to file", `${MOD} P`],
+    ["Search in code", `${MOD} ⇧ F`],
+    ["Go to symbol", `${MOD} ⇧ O`],
+    ["New task", `${MOD} N`],
+    ["Show or hide the shared context panel", `${MOD} .`],
+    ["Show or hide the terminal drawer", "Ctrl `"],
+    ["This list of shortcuts", "?"],
+    ["Close the palette, a dialog or the task drawer", "Esc"],
+  ]],
+  ["In a dialog", [
+    ["Next or previous control (it stays inside the dialog)", "Tab / ⇧ Tab"],
+    ["Press the highlighted button or choose in a list", "Enter"],
+  ]],
+  ["Command palette and search", [
+    ["Move through the results", "↑ ↓"],
+    ["Run the highlighted command", "Enter"],
+  ]],
+  ["Threads", [
+    ["Leave a terminal and return to the page", "F6"],
+    ["Send a chat message", "Enter"],
+    ["New line in a message", "⇧ Enter"],
+  ]],
+];
+
+function shortcutSheet() {
+  modal("Keyboard shortcuts", [
+    h("p", { class: "muted small" }, "Everything else is in the command palette (", h("kbd", null, `${MOD} K`), "): type part of what you want to do."),
+    ...SHORTCUTS.map(([group, rows]) => h("section", { "aria-label": group },
+      h("h3", { class: "ks-head" }, group),
+      h("dl", { class: "ks" }, rows.flatMap(([what, keys]) => [h("dt", null, what), h("dd", null, h("kbd", null, keys))])))),
+  ], []);
+}
 const TABS = [["workspace", "Workspace"], ["tasks", "Tasks"], ["changes", "Changes"], ["history", "History"], ["knowledge", "Knowledge (decisions and memory)"], ["skills", "Skills"], ["agents", "AI targets"], ["settings", "Settings"]];
 async function paletteActions() {
   const acts = TABS.map(([v, l], i) => ({ label: `Go to ${l}`, hint: i < 9 ? `${MOD} ${i + 1}` : "", run: () => setTab(v) }));
+  acts.push({ label: "Keyboard shortcuts", hint: "?", run: shortcutSheet });
   acts.push({ label: "Add a project", run: addProjectDialog });
   acts.push({ label: "Try the sample project", run: trySample });
   if (isSample(state.project)) acts.push({ label: "Show the guided tour", run: () => { setTourDismissed(false); setTab("tasks"); } });
@@ -1235,6 +1293,29 @@ async function paletteActions() {
     acts.push({ label: "Layout: grid of four panes", run: () => { setTab("workspace"); setLayout(4); } });
     acts.push({ label: state.ctxOpen ? "Hide shared context" : "Show shared context", hint: `${MOD} .`, run: () => setCtxOpen(!state.ctxOpen) });
     acts.push({ label: "Toggle terminal drawer", hint: "Ctrl `", run: () => toggleTermDrawer() });
+    acts.push({ label: state.focusMode ? "Leave focus mode" : "Focus on one pane", run: () => { setTab("workspace"); toggleFocusMode(); } });
+    acts.push({ label: "Next pane", run: () => { setTab("workspace"); const n = Math.max(1, panes().length); focusPane(((state.focus ?? -1) + 1) % n, true); } });
+    acts.push({ label: "Previous pane", run: () => { setTab("workspace"); const n = Math.max(1, panes().length); focusPane(((state.focus ?? 0) - 1 + n) % n, true); } });
+    const live = (state.threads || []).find((x) => x.id === state.thread && x.running && x.kind !== "shell");
+    if (live) {
+      acts.push({ label: `Send the shared context to ${live.title}`, run: () => sendContext(live) });
+      acts.push({ label: `Stop ${live.title}`, run: () => closeThread(live.id) });
+    }
+    acts.push({ label: "Recover sessions whose AI has gone", run: async () => { try { const r = await act(() => invoke("recover_sessions", { projectId: state.project.id, includeUnknown: false })); toast(r.length ? `Recovered ${r.length} session(s).` : "No stale sessions."); } catch { /* toast shown */ } } });
+    acts.push({ label: "Settings: appearance, themes and motion", run: () => setTab("settings") });
+    try {
+      const rows = await invoke("list_tasks", { projectId: state.project.id });
+      const active = rows.find((r) => r.task.status === "in_progress") || null;
+      if (active) {
+        const t = active.task;
+        acts.push({ label: `Run tests for ${t.key}`, run: () => runVerify(t.key, () => render()) });
+        acts.push({ label: `Hand off ${t.key}`, run: () => handoffDialog(t.key) });
+        acts.push({ label: `Switch ${t.key} to another AI…`, run: () => switchOwnerDialog(t.key, {}) });
+        acts.push({ label: `Compare agents on ${t.key}`, run: () => openComparison(t) });
+        acts.push({ label: `PR feedback for ${t.key}`, run: () => prFeedbackDialog(t) });
+      }
+      for (const r of rows.slice(0, 40)) acts.push({ label: `Open task ${r.task.key} ${r.task.title}`, run: () => { setTab("tasks"); openTask(r.task.key); } });
+    } catch { /* tasks unavailable */ }
     acts.push({ label: "Add an AI target", run: () => { setTab("agents"); addTargetDialog(); } });
     try {
       for (const t of await loadTargets()) acts.push({ label: `Switch to ${t.target.name}`, hint: KIND_LABEL[t.target.kind], run: () => handTo(t.target.name, null, h("div")) });
@@ -1243,14 +1324,23 @@ async function paletteActions() {
   for (const p of state.projects) acts.push({ label: `Open project ${p.alias || p.name}`, run: () => selectProject(p.id) });
   return acts;
 }
+/** Close the command palette and give focus back to whatever had it. */
+function closePalette() {
+  const root = $("#palette-root");
+  const opener = root._opener;
+  clear(root);
+  root._opener = null;
+  if (opener && opener !== document.body && opener.isConnected) opener.focus();
+}
 async function openPalette() {
   const root = $("#palette-root");
-  if (root.firstChild) { clear(root); return; }
+  if (root.firstChild) { closePalette(); return; }
+  root._opener = document.activeElement;
   const acts = await paletteActions();
   const input = h("input", { type: "text", placeholder: "Type a command, a screen, an AI or a project…", "aria-label": "Command" });
   const list = h("ul", { class: "palette-list", role: "listbox" });
   let sel = 0, shown = acts;
-  const close = () => clear(root);
+  const close = () => closePalette();
   const draw = () => {
     const q = input.value.trim().toLowerCase();
     shown = acts.filter((a) => q.split(/\s+/).every((w) => a.label.toLowerCase().includes(w)));
@@ -1282,7 +1372,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Inside a terminal, Ctrl keys belong to the program (Ctrl+K, Ctrl+N...); only ⌘ shortcuts stay global.
     if (e.target.closest && e.target.closest(".xterm") && !e.metaKey) return;
     const mod = e.metaKey || e.ctrlKey;
-    if (e.key === "Escape") { if ($("#palette-root").firstChild) clear($("#palette-root")); else if ($("#modal-root").firstChild) clear($("#modal-root")); else closeDrawer(); return; }
+    if (e.key === "Escape") { if ($("#palette-root").firstChild) closePalette(); else if ($("#modal-root").firstChild) closeModal(); else closeDrawer(); return; }
     if (mod && e.key.toLowerCase() === "k") { e.preventDefault(); openPalette(); return; }
     if (mod && state.project && (e.key.toLowerCase() === "p" && !e.shiftKey)) { e.preventDefault(); openSearch("files"); return; }
     if (mod && state.project && e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); openSearch("text"); return; }
@@ -1290,7 +1380,10 @@ document.addEventListener("DOMContentLoaded", () => {
     if (mod && /^[1-9]$/.test(e.key) && TABS[Number(e.key) - 1]) { e.preventDefault(); setTab(TABS[Number(e.key) - 1][0]); return; }
     if (mod && e.key === "." && state.project) { e.preventDefault(); setCtxOpen(!state.ctxOpen); return; }
     if (e.ctrlKey && e.key === "`" && state.project) { e.preventDefault(); toggleTermDrawer(); return; }
-    if (mod && e.key.toLowerCase() === "n" && state.project) { e.preventDefault(); setTab("tasks"); newTaskDialog(); }
+    if (mod && e.key.toLowerCase() === "n" && state.project) { e.preventDefault(); setTab("tasks"); newTaskDialog(); return; }
+    // "?" opens the shortcut list, except where it is a character being typed.
+    const typing = e.target.closest && e.target.closest("input, textarea, select, [contenteditable=true], .xterm");
+    if (e.key === "?" && !mod && !e.altKey && !typing && !$("#modal-root").firstChild && !$("#palette-root").firstChild) { e.preventDefault(); shortcutSheet(); }
   });
   $("#palette-btn").addEventListener("click", openPalette);
   $("#palette-btn").textContent = `${MOD} K`;
