@@ -77,7 +77,7 @@ function ensureXterm(id) {
     existing.running = running;
     existing.el.classList.toggle("saved-size", !running && existing.savedSize);
     existing.term.options.disableStdin = !running;
-    existing.term.options.cursorBlink = running;
+    existing.term.options.cursorBlink = running && !reducedMotion();
     return existing;
   }
   const savedSize = info?.cols > 0 && info?.rows > 0;
@@ -85,7 +85,7 @@ function ensureXterm(id) {
   const term = new Terminal({
     ...(savedSize ? { cols: info.cols, rows: info.rows } : {}),
     fontFamily: getComputedStyle(document.documentElement).getPropertyValue("--mono").trim() || "ui-monospace, Menlo, Consolas, monospace",
-    fontSize: appearance().termSize, cursorBlink: running, disableStdin: !running, scrollback: 5000, allowProposedApi: false, theme: termTheme(),
+    fontSize: appearance().termSize, cursorBlink: running && !reducedMotion(), disableStdin: !running, scrollback: 5000, allowProposedApi: false, theme: termTheme(),
     // Keep agent output readable: xterm raises any color below WCAG AA (4.5:1).
     minimumContrastRatio: 4.5,
   });

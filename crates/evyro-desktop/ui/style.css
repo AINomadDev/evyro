@@ -66,6 +66,35 @@
   --shadow: 0 1px 2px rgba(60, 40, 10, .07), 0 4px 16px rgba(60, 40, 10, .06); --term-bg: #fffcf5; color-scheme: light;
 }
 
+/* High contrast: every text pair is at least 7:1 (WCAG AAA), borders and focus rings are solid. */
+:root[data-theme="contrast-light"] {
+  --bg: #ffffff; --panel: #ffffff; --panel-2: #f5f5f5; --border: #000000; --text: #000000; --muted: #3d3d3d;
+  --accent: #0033cc; --accent-soft: #e6ecff; --on-accent: #ffffff;
+  --ok: #004d1f; --ok-soft: #e0f5e8; --warn: #6b3d00; --warn-soft: #fff0d6; --bad: #8f0018; --bad-soft: #fde3e6;
+  --shadow: none; --term-bg: #ffffff; color-scheme: light;
+}
+:root[data-theme="contrast-dark"] {
+  --bg: #000000; --panel: #000000; --panel-2: #1a1a1a; --border: #ffffff; --text: #ffffff; --muted: #d0d0d0;
+  --accent: #8ab4ff; --accent-soft: #0b1a3d; --on-accent: #000000;
+  --ok: #5df08c; --ok-soft: #0a2a14; --warn: #ffd24a; --warn-soft: #332600; --bad: #ff8a8a; --bad-soft: #3a0d0d;
+  --shadow: none; --term-bg: #000000; color-scheme: dark;
+}
+:root[data-theme^="contrast"] :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+:root[data-theme^="contrast"] .btn, :root[data-theme^="contrast"] input, :root[data-theme^="contrast"] select, :root[data-theme^="contrast"] textarea { border-color: var(--text); }
+/* The operating system's own forced colors (Windows contrast themes) win over every theme. */
+@media (forced-colors: active) {
+  .btn, .seg-btn, input, select, textarea, .card, .task-card { border: 1px solid CanvasText; }
+  :focus-visible { outline: 3px solid Highlight; outline-offset: 2px; }
+  .pill { border: 1px solid CanvasText; }
+}
+/* Motion: off when the system asks for it or the person turned it off here. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+:root[data-motion="reduce"] *, :root[data-motion="reduce"] *::before, :root[data-motion="reduce"] *::after {
+  animation: none !important; transition: none !important; scroll-behavior: auto !important;
+}
+
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body {
@@ -541,6 +570,8 @@ label.check.ap-row { display: flex; }
 [data-theme-preview="dark"] .ap-swatch { background: linear-gradient(90deg, #181b22 0 30%, #111318 30% 100%); }
 [data-theme-preview="midnight"] .ap-swatch { background: linear-gradient(90deg, #111833 0 30%, #0b1020 30% 100%); }
 [data-theme-preview="paper"] .ap-swatch { background: linear-gradient(90deg, #fffcf5 0 30%, #f0e9db 30% 100%); }
+[data-theme-preview="contrast-light"] .ap-swatch { background: linear-gradient(90deg, #ffffff 0 30%, #000000 30% 34%, #ffffff 34% 100%); }
+[data-theme-preview="contrast-dark"] .ap-swatch { background: linear-gradient(90deg, #000000 0 30%, #ffffff 30% 34%, #000000 34% 100%); }
 [data-theme-preview="system"] .ap-swatch { background: linear-gradient(135deg, #ffffff 0 50%, #111318 50% 100%); }
 .ap-accents { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .ap-accent { width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--panel); box-shadow: 0 0 0 1px var(--border); background: var(--sw); cursor: pointer; padding: 0; position: relative; overflow: hidden; }

@@ -4,7 +4,8 @@
 "use strict";
 
 const APPEARANCE_DEFAULTS = {
-  theme: "system", // system | light | dark | midnight | paper
+  theme: "system", // system | light | dark | midnight | paper | contrast-light | contrast-dark
+  motion: "system", // system: follow the operating system; reduce: no animation or smooth scrolling
   accent: "indigo", // a name from ACCENTS, or "custom"
   customAccent: "#0e7490",
   uiFont: "system", // a key of UI_FONTS, or "custom"
@@ -31,6 +32,8 @@ const THEMES = [
   ["dark", "Dark", "dark"],
   ["midnight", "Midnight", "dark"],
   ["paper", "Paper", "light"],
+  ["contrast-light", "High contrast light", "light"],
+  ["contrast-dark", "High contrast dark", "dark"],
 ];
 // Each accent has a light-scheme and a dark-scheme shade, both readable as text (WCAG AA) on panels.
 const ACCENTS = {
@@ -76,6 +79,7 @@ function cleanAppearance(o) {
   const bool = (k) => { if (typeof o[k] === "boolean") out[k] = o[k]; };
   const text = (k, re) => { if (typeof o[k] === "string" && re.test(o[k])) out[k] = o[k]; };
   one("theme", THEMES.map((t) => t[0]));
+  one("motion", ["system", "reduce"]);
   one("accent", [...Object.keys(ACCENTS), "custom"]);
   text("customAccent", /^#[0-9a-fA-F]{6}$/);
   one("uiFont", [...Object.keys(UI_FONTS), "custom"]);
@@ -100,6 +104,10 @@ function saveAppearance(patch) {
 }
 
 const systemDark = matchMedia("(prefers-color-scheme: dark)");
+const systemMoreContrast = matchMedia("(prefers-contrast: more)");
+const systemReducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+/** True when animation should be off: the operating system asks for it, or it is turned off here. */
+function reducedMotion() { return appearance().motion === "reduce" || systemReducedMotion.matches; }
 /** "light" or "dark": the scheme the current theme uses. */
 function colorScheme() {
   const t = THEMES.find((x) => x[0] === appearance().theme);
@@ -115,6 +123,9 @@ const contrast = (a, b) => { const [x, y] = [hexLum(a), hexLum(b)].sort((p, q) =
 /** The accent color for the current scheme. */
 function accentColor() {
   const a = appearance();
+  // The high-contrast themes fix the accent: a custom color could not be trusted to reach 7:1.
+  if (a.theme === "contrast-light") return "#0033cc";
+  if (a.theme === "contrast-dark") return "#8ab4ff";
   if (a.accent === "custom") return a.customAccent;
   const pair = ACCENTS[a.accent] || ACCENTS.indigo;
   return colorScheme() === "dark" ? pair[2] : pair[1];
@@ -124,8 +135,10 @@ function applyAppearance() {
   const a = appearance();
   const root = document.documentElement;
   const scheme = colorScheme();
-  const theme = a.theme === "system" ? scheme : a.theme;
+  // "System" follows the operating system's contrast request too.
+  const theme = a.theme === "system" ? (systemMoreContrast.matches ? `contrast-${scheme}` : scheme) : a.theme;
   root.dataset.theme = theme;
+  root.dataset.motion = reducedMotion() ? "reduce" : "full";
   root.dataset.scheme = scheme;
   root.dataset.density = a.density;
   root.dataset.inspector = a.inspectorSide;
@@ -147,6 +160,7 @@ function applyAppearance() {
     for (const [id, x] of XTERMS) {
       x.term.options.theme = termTheme();
       x.term.options.fontSize = a.termSize;
+      x.term.options.cursorBlink = !!x.running && !reducedMotion();
       x.term.options.fontFamily = getComputedStyle(root).getPropertyValue("--mono").trim();
       fitThread(id);
     }
@@ -154,6 +168,8 @@ function applyAppearance() {
   if (typeof drawStatusBar === "function") drawStatusBar();
 }
 systemDark.addEventListener("change", () => { if (appearance().theme === "system") applyAppearance(); });
+systemMoreContrast.addEventListener("change", () => { if (appearance().theme === "system") applyAppearance(); });
+systemReducedMotion.addEventListener("change", applyAppearance);
 applyAppearance();
 
 // ---------- the Settings card ----------
@@ -206,7 +222,9 @@ function appearanceCard() {
               h("label", { class: "ap-accent custom" + (a.accent === "custom" ? " active" : ""), title: "Your own color" },
                 h("input", { type: "color", value: a.customAccent, "aria-label": "Custom accent color", onchange: (e) => set({ accent: "custom", customAccent: e.target.value }) })))),
           ratio < 4.5 ? h("div", { class: "hint bad-text" }, `This accent reads at ${ratio.toFixed(1)}:1 on panels, below the 4.5:1 that text needs. Pick a ${colorScheme() === "dark" ? "lighter" : "darker"} shade.`) : null,
+          a.theme.startsWith("contrast") ? h("div", { class: "hint" }, "High-contrast themes use their own accent so every text pair keeps at least 7:1.") : null,
           seg("Density", "density", [["comfortable", "Comfortable"], ["compact", "Compact"]]),
+          seg("Motion", "motion", [["system", "Follow system"], ["reduce", "Reduce always"]]),
           range("Corners", "radius", 0, 16)),
         h("section", null, h("h3", null, "Typography"),
           select("Interface font", "uiFont", [...Object.entries(UI_FONTS).map(([k, [l]]) => [k, l]), ["custom", "Other…"]]),
