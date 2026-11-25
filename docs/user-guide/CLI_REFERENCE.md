@@ -1148,6 +1148,7 @@ Arguments:
 
 Options:
       --json               Machine-readable JSON output
+      --links-only         Name the failing checks and comments with links, but quote no log or comment text
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors
   -C, --dir <DIR>          Run as if started in this directory

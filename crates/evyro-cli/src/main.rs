@@ -775,6 +775,9 @@ enum PrCmd {
     Feedback {
         /// The task (default: the active task).
         task: Option<String>,
+        /// Name the failing checks and comments with links, but quote no log or comment text.
+        #[arg(long)]
+        links_only: bool,
     },
 }
 
@@ -1653,7 +1656,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
         Cmd::Pr { cmd } => {
             let p = project(&store, &cli.project, &dir)?;
             match cmd {
-                PrCmd::Feedback { task } => {
+                PrCmd::Feedback { task, links_only } => {
                     let t = match task {
                         Some(r) => store.resolve_task(&p.id, &r)?,
                         None => store.active_task(&p.id)?.ok_or_else(|| {
@@ -1662,7 +1665,11 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                             )
                         })?,
                     };
-                    let f = store.pr_feedback(&t, &evyro_core::pr_feedback::RealGh)?;
+                    let f = store.pr_feedback_with(
+                        &t,
+                        &evyro_core::pr_feedback::RealGh,
+                        !links_only,
+                    )?;
                     o.print(&f, || f.prompt.clone());
                 }
             }
