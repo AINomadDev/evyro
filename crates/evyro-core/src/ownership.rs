@@ -247,7 +247,7 @@ mod tests {
         let _none = task(&store, &pid, "No files", &[]);
         // Nobody holds anything yet: the overlap is shown, nothing is blocked.
         let v = store.file_views(&pid).unwrap();
-        assert_eq!(v[&api.id].overlaps, [tests.key.clone()]);
+        assert_eq!(v[&api.id].overlaps, std::slice::from_ref(&tests.key));
         assert!(v[&api.id].blocked_by.is_none());
         assert!(!v.contains_key(&ui.id), "UI overlaps nothing");
         // An AI takes the API task: the tests task is blocked by it, by name.
