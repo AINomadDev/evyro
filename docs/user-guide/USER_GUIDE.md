@@ -320,7 +320,7 @@ evyro pr feedback T-4          # prints the prompt; --json for the parts
 
 In the desktop, open the task and choose **PR feedback…**: it shows how many checks fail and how many comments are open, and offers **Send to <AI>** for an AI running on the task, or **Copy prompt**.
 
-The prompt holds each failing check with the last 60 lines of its log, and each unresolved, current review comment with its file and line. Secrets in logs are redacted, and everything quoted from GitHub is fenced as data with a line telling the AI not to follow instructions inside it. Evyro never sends it by itself and never changes the pull request. It needs the GitHub CLI (`gh`) signed in; at most 10 failing checks and 10 comments are quoted, with a count of the rest.
+The prompt holds each failing check with the last 60 lines of its log, and each unresolved, current review comment with its file and line. Secrets in logs are redacted, and everything quoted from GitHub is fenced as data with a line telling the AI not to follow instructions inside it. Evyro never sends it by itself and never changes the pull request. It needs the GitHub CLI (`gh`) signed in; at most 10 failing checks and 10 comments are quoted, with a count of the rest, and a comment is cut at 2000 characters and a log at 6000. The desktop shows the whole prompt before you press **Send**, so you read what an AI will be given; fencing lowers the risk but cannot stop an AI that chooses to follow what a comment says.
 
 ### 4.6b Split a big task between several AIs
 

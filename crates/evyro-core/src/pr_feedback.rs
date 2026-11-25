@@ -22,6 +22,9 @@ const LOG_TAIL_LINES: usize = 60;
 const MAX_ITEMS: usize = 10;
 /// Longest a `gh` call may take.
 const GH_TIMEOUT: Duration = Duration::from_secs(60);
+/// Longest review comment quoted, and longest log tail, in characters.
+const MAX_COMMENT_CHARS: usize = 2000;
+const MAX_LOG_CHARS: usize = 6000;
 
 /// Runs `gh`. A trait so tests can answer without a network.
 pub trait Gh {
@@ -32,7 +35,9 @@ pub struct RealGh;
 
 impl Gh for RealGh {
     fn run(&self, cwd: &Path, args: &[&str]) -> Result<String> {
-        let mut child = Command::new("gh")
+        // `EVYRO_GH_BIN` points at another `gh` (tests use a stand-in; Windows finds `.cmd` shims only by path).
+        let bin = std::env::var_os("EVYRO_GH_BIN").unwrap_or_else(|| "gh".into());
+        let mut child = Command::new(bin)
             .args(args)
             .current_dir(cwd)
             .stdin(Stdio::null())
@@ -172,6 +177,29 @@ fn tail(text: &str, n: usize) -> String {
     lines[lines.len().saturating_sub(n)..].join("\n")
 }
 
+/// At most `max` characters, keeping the start and saying so when text was cut.
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
+    }
+    let cut: String = text.chars().take(max).collect();
+    format!(
+        "{cut}\n[cut: {} more characters]",
+        text.chars().count() - max
+    )
+}
+
+/// The end of a log, limited in lines and in characters (the end is where the error is).
+fn clip_log(text: &str) -> String {
+    let t = tail(text, LOG_TAIL_LINES);
+    let n = t.chars().count();
+    if n <= MAX_LOG_CHARS {
+        return t;
+    }
+    let kept: String = t.chars().skip(n - MAX_LOG_CHARS).collect();
+    format!("[start cut]\n{kept}")
+}
+
 /// The job id in a GitHub Actions URL (`.../runs/1/job/2`).
 fn job_id(url: &str) -> Option<&str> {
     url.split("/job/")
@@ -301,7 +329,7 @@ impl Store {
                 let log_tail = url.as_deref().and_then(job_id).and_then(|id| {
                     gh.run(&root, &["run", "view", "--job", id, "--log-failed"])
                         .ok()
-                        .map(|l| redact::redact(&tail(&l, LOG_TAIL_LINES)).0)
+                        .map(|l| redact::redact(&clip_log(&l)).0)
                 });
                 FailedCheck {
                     name,
@@ -314,7 +342,7 @@ impl Store {
             .into_iter()
             .take(MAX_ITEMS)
             .map(|mut n| {
-                n.body = redact::redact(&n.body).0;
+                n.body = redact::redact(&clip(&n.body, MAX_COMMENT_CHARS)).0;
                 n
             })
             .collect();
@@ -408,6 +436,22 @@ mod tests {
             "each quoted block is fenced: {p}"
         );
         assert!(p.contains("Review comment by bot on a.rs:7") && p.contains("2 more not shown"));
+    }
+
+    #[test]
+    fn long_comments_and_logs_are_cut_to_a_fixed_size() {
+        let c = clip(&"x".repeat(MAX_COMMENT_CHARS + 500), MAX_COMMENT_CHARS);
+        assert!(
+            c.contains("[cut: 500 more characters]") && c.chars().count() < MAX_COMMENT_CHARS + 40
+        );
+        assert_eq!(clip("short", MAX_COMMENT_CHARS), "short");
+        let wide: String = (0..30).map(|_| format!("{}\n", "y".repeat(1000))).collect();
+        let l = clip_log(&wide);
+        assert!(
+            l.starts_with("[start cut]") && l.chars().count() <= MAX_LOG_CHARS + 20,
+            "{}",
+            l.len()
+        );
     }
 
     #[test]
