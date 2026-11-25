@@ -37,6 +37,7 @@ pub mod review;
 pub mod search;
 pub mod sessions;
 pub mod skills;
+pub mod split;
 pub mod targets;
 pub mod tasks;
 pub mod util;

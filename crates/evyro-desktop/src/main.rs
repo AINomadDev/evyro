@@ -488,7 +488,7 @@ async fn plan_decide(
 /// The next ready task and a free AI to start it, chosen by Evyro.
 #[tauri::command]
 async fn next_work(project_id: String) -> CmdResult {
-    with_store(move |s| Ok(json!(s.next_work(&project_id, None, None)?))).await
+    with_store(move |s| Ok(json!(s.next_work(&project_id, None, None, None)?))).await
 }
 
 fn history_status(terms: &threads::Terms, chats: &chat::Chats, removed: Value) -> CmdResult {

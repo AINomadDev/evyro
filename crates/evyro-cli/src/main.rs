@@ -293,6 +293,16 @@ struct InitArgs {
 
 #[derive(Subcommand)]
 enum TaskCmd {
+    /// Split a task into pieces other AIs can take. Reads a JSON list of pieces
+    /// (`title`, optional `description`, `files`, `acceptance`, `after`) from a file or `-`.
+    /// Pieces that share files run one after the other. Nothing is started.
+    Split {
+        /// The task to split.
+        task: String,
+        /// The pieces as JSON, from a file or `-` for standard input.
+        #[arg(long)]
+        file: PathBuf,
+    },
     /// Add a task.
     Add {
         title: String,
@@ -448,6 +458,9 @@ struct WorkArgs {
     /// The task to start (default: the most important ready task).
     #[arg(long)]
     task: Option<String>,
+    /// Pick only among the ready pieces of this task (see `evyro task split`).
+    #[arg(long, conflicts_with = "task")]
+    under: Option<String>,
     /// Launch in headless (non-interactive) mode.
     #[arg(long)]
     headless: bool,
@@ -2680,6 +2693,43 @@ fn task_cmd(
                 )
             });
         }
+        TaskCmd::Split { task, file } => {
+            use std::io::Read;
+            let text = if file.as_os_str() == "-" {
+                let mut b = String::new();
+                std::io::stdin().take(1 << 20).read_to_string(&mut b)?;
+                b
+            } else {
+                std::fs::read_to_string(&file)?
+            };
+            let parts: Vec<evyro_core::split::SplitPart> = serde_json::from_str(&text)
+                .map_err(|e| Error::Invalid(format!("the pieces are not valid JSON: {e}")))?;
+            let r = store.split_task(&p.id, &task, &parts)?;
+            o.print(&r, || {
+                let mut out = format!("Split {} into {} pieces:\n", r.parent, r.created.len());
+                for t in &r.created {
+                    let waits = store
+                        .open_blockers(&t.id)
+                        .map(|b| b.into_iter().map(|x| x.key).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    out.push_str(&format!(
+                        "  {}  {}{}\n",
+                        t.key,
+                        t.title,
+                        if waits.is_empty() {
+                            String::new()
+                        } else {
+                            format!("  (after {})", waits.join(", "))
+                        }
+                    ));
+                }
+                out.push_str(&format!(
+                    "Start them with `evyro work --under {}` (one AI each).",
+                    r.parent
+                ));
+                out
+            });
+        }
         TaskCmd::Start {
             task,
             agent,
@@ -2849,7 +2899,12 @@ fn work_cmd(
     o: &Out,
 ) -> anyhow::Result<i32> {
     let p = project(store, cli_project, dir)?;
-    let next = store.next_work(&p.id, a.agent.as_deref(), a.task.as_deref())?;
+    let next = store.next_work(
+        &p.id,
+        a.agent.as_deref(),
+        a.task.as_deref(),
+        a.under.as_deref(),
+    )?;
     let (task, agent) = (next.task, next.agent);
     let summary = format!(
         "{} (P{}) {} with {agent}",

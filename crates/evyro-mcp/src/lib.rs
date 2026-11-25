@@ -64,6 +64,11 @@ fn tools() -> Vec<ToolDef> {
             schema: s(json!({"id": {"type": "string"}}), &[]) },
         ToolDef { name: "record_decision", mutating: true, description: "Record an architecture/implementation decision with rationale.",
             schema: s(json!({"title": {"type": "string"}, "decision": {"type": "string"}, "rationale": {"type": "string"}, "task": {"type": "string"}}), &["title", "decision"]) },
+        ToolDef { name: "split_task", mutating: true, description: "Split a task into up to 8 pieces other AIs can take, each with the files it changes. Pieces that share files are ordered one after the other. Nothing is started: a person or `evyro work --under <task>` starts the workers.",
+            schema: s(json!({"task": {"type": "string", "description": "The task to split; defaults to the active task"},
+                "pieces": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "object", "additionalProperties": false, "required": ["title"],
+                    "properties": {"title": {"type": "string"}, "description": {"type": "string"}, "files": strs, "acceptance": strs,
+                        "after": {"type": "array", "items": {"type": "integer", "minimum": 1}, "description": "1-based numbers of earlier pieces this one waits for"}}}}}), &["pieces"]) },
         ToolDef { name: "propose_plan", mutating: true, description: "Propose a plan for a task before you edit anything: the steps, the files you expect to change, how you will check it, and the risks. A person approves or rejects it; there is no tool to approve. Stop after proposing and wait.",
             schema: s(json!({"task": {"type": "string"}, "plan": {"type": "string", "description": "The plan, at most 20000 characters"}}), &["plan"]) },
         ToolDef { name: "get_plan", mutating: false, description: "The plan for a task and whether a person approved or rejected it, with their note.",
@@ -379,6 +384,15 @@ impl Server {
                 }
                 let c = evyro_core::contract::load(std::path::Path::new(&h.contract_path))?;
                 json!({"record": h, "markdown": c.to_markdown(), "contract": c})
+            }
+            "split_task" => {
+                let t = self
+                    .task(args)?
+                    .ok_or_else(|| Error::Invalid("no task given and none is active".into()))?;
+                let pieces: Vec<evyro_core::split::SplitPart> =
+                    serde_json::from_value(args.get("pieces").cloned().unwrap_or(Value::Null))
+                        .map_err(|e| Error::Invalid(format!("pieces: {e}")))?;
+                json!(s.split_task(&pid, &t.key, &pieces)?)
             }
             "propose_plan" => {
                 let t = self

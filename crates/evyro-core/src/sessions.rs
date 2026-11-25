@@ -476,6 +476,7 @@ impl Store {
         project_id: &str,
         agent: Option<&str>,
         task: Option<&str>,
+        under: Option<&str>,
     ) -> Result<NextWork> {
         let agent = match agent {
             Some(a) => a.to_owned(),
@@ -505,13 +506,22 @@ impl Store {
         };
         let task = match task {
             Some(r) => self.resolve_task(project_id, r)?,
-            None => self
-                .next_claimable_task(project_id, &agent)?
-                .ok_or_else(|| {
-                    Error::NotFound(format!(
-                        "no ready task {agent} can start: add one, or finish a blocker"
-                    ))
-                })?,
+            None => {
+                let parent = match under {
+                    Some(r) => Some(self.resolve_task(project_id, r)?),
+                    None => None,
+                };
+                self.next_claimable_under(project_id, &agent, parent.as_ref())?
+                    .ok_or_else(|| match &parent {
+                        Some(p) => Error::NotFound(format!(
+                            "no ready piece of {} that {agent} can start: finish a blocker or split more",
+                            p.key
+                        )),
+                        None => Error::NotFound(format!(
+                            "no ready task {agent} can start: add one, or finish a blocker"
+                        )),
+                    })?
+            }
         };
         Ok(NextWork { task, agent })
     }
@@ -523,7 +533,20 @@ impl Store {
         project_id: &str,
         harness: &str,
     ) -> Result<Option<crate::tasks::Task>> {
+        self.next_claimable_under(project_id, harness, None)
+    }
+
+    /// Like [`Self::next_claimable_task`], limited to the direct pieces of `parent` when given.
+    pub fn next_claimable_under(
+        &self,
+        project_id: &str,
+        harness: &str,
+        parent: Option<&crate::tasks::Task>,
+    ) -> Result<Option<crate::tasks::Task>> {
         for t in self.ready_tasks(project_id)? {
+            if parent.is_some_and(|p| t.parent_id.as_deref() != Some(p.id.as_str())) {
+                continue;
+            }
             if crate::comparison::is_candidate(&t) || t.needs_person().is_some() {
                 continue;
             }

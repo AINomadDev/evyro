@@ -1298,6 +1298,7 @@ fn mcp_round_trip() {
         .map(|t| t["name"].as_str().unwrap().to_owned())
         .collect();
     assert!(names.contains(&"propose_plan".to_owned()) && names.contains(&"get_plan".to_owned()));
+    assert!(names.contains(&"split_task".to_owned()));
     assert!(
         !names
             .iter()
@@ -2977,4 +2978,61 @@ fn plan_first_then_approve_then_build() {
     // A second approval is refused: it cannot be replayed onto a newer plan.
     let o = env.run(&repo, &["plan", "approve", "T-1"]);
     assert!(!o.status.success());
+}
+
+/// An AI splits a task; pieces that share files wait for each other, and `evyro work --under`
+/// starts only the pieces that can run now, one AI each.
+#[test]
+fn split_a_task_then_start_its_pieces_one_ai_each() {
+    let mut env = Env::new();
+    let repo = env.repo("split");
+    env.init(&repo);
+    env.agent("claude", "2.1.0", "exit 0");
+    env.agent("codex", "0.130.0", "exit 0");
+    env.ok(&repo, &["task", "add", "Big job", "--kind", "epic"]);
+    env.ok(&repo, &["task", "add", "Unrelated", "--priority", "0"]);
+    let pieces = repo.join("pieces.json");
+    std::fs::write(
+        &pieces,
+        r#"[
+          {"title": "api", "files": ["src/api"]},
+          {"title": "ui", "files": ["src/ui"]},
+          {"title": "api tests", "files": ["src/api/tests"]},
+          {"title": "docs", "files": ["docs"], "after": [1, 2]}
+        ]"#,
+    )
+    .unwrap();
+    let out = env.ok(
+        &repo,
+        &["task", "split", "T-1", "--file", pieces.to_str().unwrap()],
+    );
+    assert!(out.contains("T-4") && out.contains("(after T-3)"), "{out}");
+
+    // The unrelated P0 task is not picked: only pieces of T-1 are.
+    let first = env.json(
+        &repo,
+        &["work", "--under", "T-1", "--agent", "claude", "--dry-run"],
+    );
+    assert_eq!(first["task"], "T-3");
+    env.ok(
+        &repo,
+        &["work", "--under", "T-1", "--agent", "claude", "--headless"],
+    );
+    // The second AI gets the other independent piece, never the one that waits.
+    let second = env.json(
+        &repo,
+        &["work", "--under", "T-1", "--agent", "codex", "--dry-run"],
+    );
+    assert_eq!(second["task"], "T-4");
+    // Bad input is refused and creates nothing.
+    std::fs::write(&pieces, r#"[{"title": "x", "after": [3]}]"#).unwrap();
+    let o = env.run(
+        &repo,
+        &["task", "split", "T-1", "--file", pieces.to_str().unwrap()],
+    );
+    assert!(!o.status.success());
+    assert!(
+        !String::from_utf8_lossy(&env.run(&repo, &["tasks", "--all"]).stdout).contains("T-8"),
+        "nothing was created"
+    );
 }

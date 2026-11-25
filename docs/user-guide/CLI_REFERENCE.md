@@ -148,6 +148,26 @@ Options:
   -h, --help                         Print help
 ```
 
+### evyro task split
+
+```text
+Split a task into pieces other AIs can take. Reads a JSON list of pieces (`title`, optional `description`, `files`, `acceptance`, `after`) from a file or `-`. Pieces that share files run one after the other. Nothing is started
+
+Usage: evyro task split [OPTIONS] --file <FILE> <TASK>
+
+Arguments:
+  <TASK>  The task to split
+
+Options:
+      --file <FILE>        The pieces as JSON, from a file or `-` for standard input
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
 ### evyro task start
 
 ```text
@@ -1095,6 +1115,27 @@ Options:
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors
   -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro work
+
+```text
+Start the next ready task on a free AI. Nothing to name or set up: Evyro picks the most important task that can start, an installed AI that is not busy, and gives the task its own worktree when another AI is already working in the main checkout
+
+Usage: evyro work [OPTIONS]
+
+Options:
+      --agent <AGENT>      The AI to use (default: an installed AI that is not working on anything)
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --task <TASK>        The task to start (default: the most important ready task)
+      --debug              Print debug details on errors
+      --under <UNDER>      Pick only among the ready pieces of this task (see `evyro task split`)
+  -C, --dir <DIR>          Run as if started in this directory
+      --headless           Launch in headless (non-interactive) mode
+      --dry-run            Show what would start without starting it
       --project <PROJECT>  Target a registered project by id or alias instead of the current directory
   -h, --help               Print help
 ```

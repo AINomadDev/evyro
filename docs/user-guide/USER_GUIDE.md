@@ -310,6 +310,25 @@ evyro review resolve 4f9a02c1    # by the short id shown in the list
 
 Comments that are not resolved are part of every context packet and handoff context, so the next AI sees them even if you switch. Agents connected over MCP read them with `get_review_comments` and close them with `resolve_review_comment`. Snippets are redacted like everything else Evyro stores.
 
+### 4.6b Split a big task between several AIs
+
+One AI (or you) describes the pieces; Evyro creates them as ready subtasks and starts nothing.
+
+```bash
+cat > pieces.json <<'JSON'
+[
+  {"title": "API", "files": ["src/api"]},
+  {"title": "UI", "files": ["src/ui"]},
+  {"title": "API tests", "files": ["src/api/tests"]},
+  {"title": "Docs", "files": ["docs"], "after": [1, 2]}
+]
+JSON
+evyro task split T-1 --file pieces.json   # up to 8 pieces; an AI uses the split_task tool
+evyro work --under T-1                    # starts the next piece on a free AI
+```
+
+Pieces that share files (`src/api` and `src/api/tests` here) wait for each other, and `after` names earlier pieces by number, so two AIs never edit the same files at once. Pieces inherit the task's priority and constraints. You start the workers: an AI cannot spend other AIs' usage on its own, and a piece that needs a person is not split. The pieces' own progress shows on the board; the parent stays yours to move to review when they are done.
+
 ### 4.6a Plan first, then build
 
 For a risky or unclear task, make the AI show its plan before it edits anything.
