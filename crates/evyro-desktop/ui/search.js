@@ -3,11 +3,12 @@
 // Loaded after app.js and uses its helpers (h, invoke, state, act, toast...).
 "use strict";
 
-const SEARCH_MODES = [
-  ["files", "Files", "Go to a file by name…"],
-  ["text", "Text", "Search the code…"],
-  ["symbols", "Symbols", "Go to a function, type or class…"],
-  ["chats", "Saved chats", "Search saved chat messages…"],
+// [mode, tab label, placeholder]; a function so the text follows the chosen language.
+const searchModes = () => [
+  ["files", t("search.mode.files"), t("search.ph.files")],
+  ["text", t("search.mode.text"), t("search.ph.text")],
+  ["symbols", t("search.mode.symbols"), t("search.ph.symbols")],
+  ["chats", t("search.mode.chats"), t("search.ph.chats")],
 ];
 state.search = { mode: "files", query: "", regex: false, caseSensitive: false, path: "" };
 
@@ -50,13 +51,13 @@ function splitPath(p) {
 
 /** Open the project search panel. */
 function openSearch(mode) {
-  if (!state.project) { toast("Pick a project first", true); return; }
+  if (!state.project) { toast(t("search.pickProject"), true); return; }
   const root = $("#palette-root");
   const s = state.search;
   const pid = state.project.id;
   if (mode) s.mode = mode;
   const close = () => { clearTimeout(timer); seq++; clear(root); };
-  const input = h("input", { type: "text", "aria-label": "Search", spellcheck: "false", autocomplete: "off" });
+  const input = h("input", { type: "text", "aria-label": t("search.label"), spellcheck: "false", autocomplete: "off" });
   input.value = s.query;
   const modes = h("div", { class: "seg", role: "tablist" });
   const opts = h("div", { class: "search-opts" });
@@ -65,19 +66,19 @@ function openSearch(mode) {
   let rows = [], sel = 0, seq = 0, timer = null;
 
   const drawModes = () => {
-    clear(modes).append(...SEARCH_MODES.map(([m, label]) => h("button", {
+    clear(modes).append(...searchModes().map(([m, label]) => h("button", {
       class: "seg-btn" + (s.mode === m ? " active" : ""), role: "tab", "aria-selected": s.mode === m ? "true" : "false",
       onmousedown: (e) => { e.preventDefault(); s.mode = m; refresh(); },
     }, label)));
-    input.placeholder = SEARCH_MODES.find((x) => x[0] === s.mode)[2];
+    input.placeholder = searchModes().find((x) => x[0] === s.mode)[2];
     clear(opts);
     if (s.mode === "text") {
       const check = (label, key, title) => h("label", { class: "check small", title },
         h("input", { type: "checkbox", checked: s[key], onchange: (e) => { s[key] = e.target.checked; run(); } }), label);
-      const pathIn = h("input", { type: "text", class: "small", placeholder: "in paths containing…", value: s.path, "aria-label": "Only paths containing" });
+      const pathIn = h("input", { type: "text", class: "small", placeholder: t("search.pathPh"), value: s.path, "aria-label": t("search.pathLabel") });
       pathIn.addEventListener("input", () => { s.path = pathIn.value; schedule(); });
       pathIn.addEventListener("keydown", keys);
-      opts.append(check(".* Regex", "regex", "Treat the search as a regular expression"), check("Aa Match case", "caseSensitive", "Match upper and lower case exactly"), pathIn);
+      opts.append(check(t("search.regex"), "regex", t("search.regex.title")), check(t("search.case"), "caseSensitive", t("search.case.title")), pathIn);
     }
   };
   const drawRows = () => {
@@ -101,10 +102,10 @@ function openSearch(mode) {
     sel = 0;
     drawRows();
     if (s.mode !== "files" && !q) {
-      status.textContent = { text: "Type to search every file Git knows about.", chats: "Type a word or phrase from a saved chat.", symbols: "Type part of a name." }[s.mode];
+      status.textContent = { text: t("search.hint.text"), chats: t("search.hint.chats"), symbols: t("search.hint.symbols") }[s.mode];
       return;
     }
-    status.textContent = "Searching…";
+    status.textContent = t("search.searching");
     try {
       if (s.mode === "files") {
         const hits = await invoke("find_files", { projectId: pid, query: q, limit: 60 });
@@ -117,7 +118,7 @@ function openSearch(mode) {
             h("span", { class: "sr-dir muted small" }, marked(dir, f.matched.filter((i) => i < off))),
           ] };
         });
-        status.textContent = hits.length ? `${hits.length} file${hits.length === 1 ? "" : "s"}` : "No file matches";
+        status.textContent = hits.length ? t("search.files.count", { count: hits.length }) : t("search.files.none");
       } else if (s.mode === "text") {
         const r = await invoke("search_text", { projectId: pid, pattern: q, regex: s.regex, caseSensitive: s.caseSensitive, path: s.path || null, limit: 300 });
         if (!current()) return;
@@ -127,8 +128,8 @@ function openSearch(mode) {
         ] }));
         const files = new Set(r.hits.map((x) => x.path)).size;
         status.textContent = r.hits.length
-          ? `${r.hits.length}${r.truncated ? "+" : ""} match${r.hits.length === 1 ? "" : "es"} in ${files} file${files === 1 ? "" : "s"} (${r.files_searched} searched)${r.truncated ? ". Showing the first ones; narrow the search to see more." : ""}`
-          : `No matches in ${r.files_searched} files`;
+          ? (r.truncated ? t("search.text.countMore", { count: r.hits.length, files, searched: r.files_searched }) : t("search.text.count", { count: r.hits.length, files, searched: r.files_searched }))
+          : t("search.text.none", { count: r.files_searched });
       } else if (s.mode === "symbols") {
         const syms = await invoke("find_symbols", { projectId: pid, query: q, limit: 60 });
         if (!current()) return;
@@ -137,7 +138,7 @@ function openSearch(mode) {
           h("span", { class: "sr-name" }, x.name),
           h("span", { class: "sr-dir muted small" }, `${x.path}:${x.line}`),
         ] }));
-        status.textContent = syms.length ? `${syms.length} symbol${syms.length === 1 ? "" : "s"}` : "No symbol matches";
+        status.textContent = syms.length ? t("search.symbols.count", { count: syms.length }) : t("search.symbols.none");
       } else {
         const hits = await invoke("chat_search_saved", { projectId: pid, query: q });
         if (!current()) return;
@@ -145,7 +146,7 @@ function openSearch(mode) {
           h("span", { class: "sr-loc small" }, hit.title),
           h("span", { class: "sr-code" }, markedLine(hit.excerpt, { query: q })),
         ] }));
-        status.textContent = hits.length ? `${hits.length === 60 ? "First 60 matches" : plural(hits.length, "match", "matches")}` : "No matches in saved chats";
+        status.textContent = hits.length ? (hits.length === 60 ? t("search.chats.first") : t("search.chats.count", { count: hits.length })) : t("search.chats.none");
       }
     } catch (e) {
       if (!current()) return;
@@ -162,8 +163,9 @@ function openSearch(mode) {
     else if (e.key === "Enter" && rows[sel]) { e.preventDefault(); const r = rows[sel]; close(); r.open(); }
     else if (e.key === "Tab" && e.target === input) {
       e.preventDefault();
-      const i = SEARCH_MODES.findIndex((x) => x[0] === s.mode);
-      s.mode = SEARCH_MODES[(i + (e.shiftKey ? SEARCH_MODES.length - 1 : 1)) % SEARCH_MODES.length][0];
+      const modes = searchModes();
+      const i = modes.findIndex((x) => x[0] === s.mode);
+      s.mode = modes[(i + (e.shiftKey ? modes.length - 1 : 1)) % modes.length][0];
       refresh();
     }
     else if (e.key === "Escape") { close(); e.stopPropagation(); }
@@ -171,8 +173,8 @@ function openSearch(mode) {
   input.addEventListener("input", schedule);
   input.addEventListener("keydown", keys);
   clear(root).append(h("div", { class: "modal-back palette-back", onclick: (e) => { if (e.target.classList.contains("palette-back")) close(); } },
-    h("div", { class: "palette search", role: "dialog", "aria-label": "Search project" },
-      h("div", { class: "search-head" }, modes, h("span", { class: "muted small" }, "Tab switches")),
+    h("div", { class: "palette search", role: "dialog", "aria-label": t("search.dialog") },
+      h("div", { class: "search-head" }, modes, h("span", { class: "muted small" }, t("search.tab"))),
       input, opts, status, list)));
   refresh();
   input.select();
@@ -183,7 +185,7 @@ async function openFile(path, line) {
   let f;
   try { f = await invoke("view_file", { projectId: state.project.id, path }); }
   catch (e) { toast(errMsg(e), true); return; }
-  const code = h("div", { class: "fv-code", tabindex: "0", "aria-label": `${f.path}, ${f.lines} lines` });
+  const code = h("div", { class: "fv-code", tabindex: "0", "aria-label": t("file.aria", { path: f.path, count: f.lines }) });
   const text = f.text.endsWith("\n") ? f.text.slice(0, -1) : f.text;
   const rowsEls = text.split("\n").map((l, i) => h("div", { class: "fv-line", "data-line": String(i + 1) },
     h("span", { class: "ln" }, String(i + 1)), h("span", { class: "code" }, l || " ")));
@@ -195,19 +197,19 @@ async function openFile(path, line) {
     el.classList.add("hit");
     code.scrollTop = Math.max(0, el.offsetTop - code.clientHeight / 3);
   };
-  const outline = h("nav", { class: "fv-outline", "aria-label": "Outline" },
-    h("div", { class: "side-label" }, "Outline"),
+  const outline = h("nav", { class: "fv-outline", "aria-label": t("file.outline") },
+    h("div", { class: "side-label" }, t("file.outline")),
     f.symbols.length
-      ? f.symbols.map((x) => h("button", { class: "fv-sym", title: `${x.kind} at line ${x.line}`, onclick: () => go(x.line) },
+      ? f.symbols.map((x) => h("button", { class: "fv-sym", title: t("file.symAt", { kind: x.kind, line: x.line }), onclick: () => go(x.line) },
         h("span", { class: "pill sym-kind" }, x.kind), h("span", null, x.name), h("span", { class: "muted small" }, String(x.line))))
-      : h("div", { class: "muted small" }, "No symbols found in this file."));
+      : h("div", { class: "muted small" }, t("file.noSymbols")));
   const ref = () => (line ? `${f.path}:${line}` : f.path);
   modal(f.path, [
     h("div", { class: "fv-meta muted small" },
-      `${f.lines} lines · read only`,
-      f.redactions ? h("span", { class: "pill warn" }, `${f.redactions} secret${f.redactions === 1 ? "" : "s"} hidden`) : null,
-      h("button", { class: "btn ghost small", onclick: () => copy(ref(), `Copied ${ref()}`) }, "Copy path"),
-      h("button", { class: "btn ghost small", onclick: () => { clear($("#modal-root")); openSearch("text"); } }, "Search again")),
+      t("file.meta", { count: f.lines }),
+      f.redactions ? h("span", { class: "pill warn" }, t("file.hidden", { count: f.redactions })) : null,
+      h("button", { class: "btn ghost small", onclick: () => copy(ref(), t("file.copied", { ref: ref() })) }, t("file.copyPath")),
+      h("button", { class: "btn ghost small", onclick: () => { clear($("#modal-root")); openSearch("text"); } }, t("file.searchAgain"))),
     h("div", { class: "fv" }, outline, code),
   ], []);
   const m = $("#modal-root .modal");

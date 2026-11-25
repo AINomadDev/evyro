@@ -32,23 +32,23 @@ async function openComparison(task) {
   const previewStage = async (panel, button, id) => {
     button.disabled = true;
     panel.hidden = false;
-    clear(panel).append(h("p", { class: "small muted", role: "status" }, "Checking the destination checkout…"));
+    clear(panel).append(h("p", { class: "small muted", role: "status" }, t("cmp.checking")));
     try {
       const plan = await invoke("comparison_preview_stage", { ...args, id });
       if (!current() || !panel.isConnected) return;
-      const heading = h("h3", { tabindex: "-1" }, `Stage changes from ${plan.candidate}?`);
+      const heading = h("h3", { tabindex: "-1" }, t("cmp.stageTitle", { candidate: plan.candidate }));
       const cancel = h("button", { class: "btn small", onclick: () => {
         clear(panel).hidden = true;
         button.disabled = false;
         button.focus();
-      } }, "Cancel staging");
+      } }, t("cmp.cancelStage"));
       const confirm = h("button", { class: "btn primary small", onclick: async () => {
         confirm.disabled = cancel.disabled = true;
         try {
           await invoke("comparison_stage", { ...args, id, plan });
-          toast("Preferred changes staged");
+          toast(t("cmp.staged"));
           if (current() && panel.isConnected) {
-            clear(panel).append(h("p", { role: "status" }, "Changes staged in ", h("code", { class: "comparison-path" }, plan.destination)));
+            clear(panel).append(h("p", { role: "status" }, t("cmp.stagedIn"), " ", h("code", { class: "comparison-path" }, plan.destination)));
           }
         } catch (e) {
           toast(errMsg(e), true);
@@ -58,13 +58,13 @@ async function openComparison(task) {
             button.focus();
           }
         }
-      } }, "Stage changes");
+      } }, t("cmp.stage"));
       clear(panel).append(heading,
-        h("div", { class: "small" }, "Candidate commit ", h("code", null, plan.candidate_commit.slice(0, 12))),
-        h("div", { class: "small" }, `Destination ${plan.destination_branch || "detached HEAD"} at `, h("code", null, plan.destination_commit.slice(0, 12))),
+        h("div", { class: "small" }, t("cmp.candidate"), " ", h("code", null, plan.candidate_commit.slice(0, 12))),
+        h("div", { class: "small" }, t("cmp.destination", { branch: plan.destination_branch || t("cmp.detached") }), " ", h("code", null, plan.destination_commit.slice(0, 12))),
         h("code", { class: "comparison-path" }, plan.destination),
         h("details", { open: true },
-          h("summary", null, `${plan.files.length} changed ${plan.files.length === 1 ? "file" : "files"}`),
+          h("summary", null, t("cmp.changedFiles", { count: plan.files.length })),
           h("ul", { class: "small comparison-path" }, plan.files.map((file) => h("li", null, h("code", null, file))))),
         h("div", { class: "row" }, cancel, confirm));
       heading.focus();
@@ -78,14 +78,14 @@ async function openComparison(task) {
   const paint = async () => {
     const id = menu.value;
     const seq = ++request;
-    clear(results).append(h("div", { class: "muted small" }, id ? "Reading worktrees…" : "No comparisons yet."));
+    clear(results).append(h("div", { class: "muted small" }, id ? t("cmp.reading") : t("cmp.none")));
     if (!id) return;
     try {
       const data = await invoke("comparison_results", { ...args, id });
       if (!current() || seq !== request) return;
-      const stagePanel = h("section", { class: "card comparison-stage", hidden: true, "aria-label": "Staging preview" });
+      const stagePanel = h("section", { class: "card comparison-stage", hidden: true, "aria-label": t("cmp.stagePreview") });
       clear(results).append(
-        h("div", { class: "muted small" }, "Shared base ", h("code", null, data.comparison.base.slice(0, 12))),
+        h("div", { class: "muted small" }, t("cmp.base"), " ", h("code", null, data.comparison.base.slice(0, 12))),
         stagePanel,
         h("div", { class: "comparison-grid" }, data.comparison.candidates.map((candidate, index) => {
           const r = data.results[index];
@@ -99,7 +99,7 @@ async function openComparison(task) {
             clear($("#modal-root"));
           };
           return h("article", { class: "card" },
-            h("div", { class: "row" }, h("h3", null, candidate.target), h("span", { class: "key" }, candidate.key), selected ? pill("ok", "Preferred") : null),
+            h("div", { class: "row" }, h("h3", null, candidate.target), h("span", { class: "key" }, candidate.key), selected ? pill("ok", t("cmp.preferred")) : null),
             h("code", { class: "comparison-path" }, candidate.branch),
             h("div", { class: "row comparison-actions" },
               h("button", { class: "btn small", disabled: !!r.error || (r.running && !thread), onclick: async (e) => {
@@ -107,27 +107,27 @@ async function openComparison(task) {
                 button.disabled = true;
                 try { await launch(); } catch { /* startThread reported the error */ }
                 finally { if (button.isConnected) button.disabled = false; }
-              } }, thread ? "Open thread" : r.running ? "Agent running" : "Start agent"),
-              h("button", { class: "btn small", onclick: () => copy(candidate.worktree, "Worktree path copied") }, "Copy worktree path"),
+              } }, thread ? t("cmp.openThread") : r.running ? t("cmp.running") : t("cmp.startAgent")),
+              h("button", { class: "btn small", onclick: () => copy(candidate.worktree, t("cmp.pathCopied")) }, t("cmp.copyPath")),
               h("button", { class: "btn small", disabled: selected || !!r.error, onclick: async (e) => {
                 const button = e.currentTarget;
                 button.disabled = true;
-                try { await act(() => invoke("comparison_prefer", { ...args, id, candidate: candidate.key }), "Preference saved"); await paint(); }
+                try { await act(() => invoke("comparison_prefer", { ...args, id, candidate: candidate.key }), t("cmp.saved")); await paint(); }
                 catch { if (button.isConnected) button.disabled = false; }
-              } }, "Prefer this result"),
+              } }, t("cmp.prefer")),
               selected && !r.error ? h("button", { class: "btn small", disabled: !!r.running,
-                onclick: (e) => previewStage(stagePanel, e.currentTarget, id) }, "Preview staging") : null),
+                onclick: (e) => previewStage(stagePanel, e.currentTarget, id) }, t("cmp.previewStage")) : null),
             r.error ? h("div", { class: "banner bad" }, r.error) : h("div", { class: "stack" },
               (() => { const n = diffStats(r.diff); return h("div", { class: "small muted comparison-stats" },
-                r.diff ? `${n.files ? plural(n.files, "file", "files") + " · " : ""}+${n.added} −${n.removed}` : "No changes from the shared base"); })(),
+                r.diff ? `${n.files ? t("cmp.files", { count: n.files }) + " · " : ""}+${n.added} −${n.removed}` : t("cmp.noChangeBase")); })(),
               h("div", { class: "row" }, pill(r.status), r.verification
-                ? pill(r.verification.passed ? "ok" : "fail", r.verification.passed ? "Last check passed" : "Last check failed")
-                : h("span", { class: "muted small" }, "No verification yet"),
-                r.verification && r.verification_current === false ? pill("warn", "Earlier snapshot") : null,
-                r.redactions ? pill("warn", `${r.redactions} redactions`) : null),
+                ? pill(r.verification.passed ? "ok" : "fail", r.verification.passed ? t("cmp.checkPassed") : t("cmp.checkFailed"))
+                : h("span", { class: "muted small" }, t("cmp.noVerify")),
+                r.verification && r.verification_current === false ? pill("warn", t("cmp.earlier")) : null,
+                r.redactions ? pill("warn", t("cmp.redactions", { count: r.redactions })) : null),
               r.verification ? h("code", { class: "comparison-path" }, r.verification.command.join(" ")) : null,
-              r.diff ? h("pre", { class: "comparison-diff", tabindex: "0", "aria-label": `Changes for ${candidate.target}` }, r.diff)
-                : h("div", { class: "muted small" }, "No changes from the shared base.")));
+              r.diff ? h("pre", { class: "comparison-diff", tabindex: "0", "aria-label": t("cmp.changesFor", { target: candidate.target }) }, r.diff)
+                : h("div", { class: "muted small" }, t("cmp.noChangeBase.dot"))));
         })));
     } catch (e) {
       if (current() && seq === request) clear(results).append(h("div", { class: "banner bad" }, errMsg(e)));
@@ -144,18 +144,18 @@ async function openComparison(task) {
     try {
       for (const [index, candidate] of run.candidates.entries()) {
         if (!current()) return;
-        status.textContent = `Running tests for ${candidate.target} (${index + 1} of 2)…`;
+        status.textContent = t("cmp.running.tests", { target: candidate.target, n: index + 1 });
         try { await invoke("run_verification", { projectId, task: candidate.key, kind: "test", index: 0 }); }
         catch (e) { toast(`${candidate.target}: ${errMsg(e)}`, true); }
       }
       if (current()) await paint();
     } finally { status.remove(); runChecks.disabled = false; }
-  } }, "Run tests in both");
+  } }, t("cmp.runBoth"));
   const load = async (id) => {
     try {
       const runs = await invoke("comparison_list", args);
       if (!current()) return;
-      clear(menu).append(...runs.map((run) => h("option", { value: run.id }, run.candidates.map((c) => `${c.target} (${c.key})`).join(" and "))));
+      clear(menu).append(...runs.map((run) => h("option", { value: run.id }, run.candidates.map((c) => `${c.target} (${c.key})`).join(t("cmp.and")))));
       menu.disabled = !runs.length;
       if (id && runs.some((r) => r.id === id)) menu.value = id;
       await paint();
@@ -163,18 +163,18 @@ async function openComparison(task) {
   };
   menu.addEventListener("change", paint);
   const prepare = h("button", { class: "btn primary", disabled: !first.value || !second.value, onclick: async () => {
-    if (first.value === second.value) { toast("Choose two different agent targets.", true); return; }
+    if (first.value === second.value) { toast(t("cmp.different"), true); return; }
     prepare.disabled = true;
     try {
       const run = await act(() => invoke("comparison_create", { ...args, targets: [first.value, second.value] }));
       if (current()) await load(run.id);
     } catch { /* act reported the error */ }
     finally { prepare.disabled = false; }
-  } }, "Prepare comparison");
-  body.append(h("p", { class: "small muted" }, "Each agent gets its own worktree at the same commit. Uncommitted edits stay in the original checkout. Preferences are recorded on this task."),
-    h("div", { class: "row comparison-controls" }, field("First agent", first), field("Second agent", second), prepare),
-    h("div", { class: "row comparison-controls" }, field("Comparison", menu), h("button", { class: "btn small", onclick: () => load(menu.value) }, "Refresh results"), runChecks), results);
-  modal(`Compare agents on ${task.key}`, [body], []);
+  } }, t("cmp.prepare"));
+  body.append(h("p", { class: "small muted" }, t("cmp.intro")),
+    h("div", { class: "row comparison-controls" }, field(t("cmp.first"), first), field(t("cmp.second"), second), prepare),
+    h("div", { class: "row comparison-controls" }, field(t("cmp.comparison"), menu), h("button", { class: "btn small", onclick: () => load(menu.value) }, t("cmp.refresh")), runChecks), results);
+  modal(t("cmp.title", { task: task.key }), [body], []);
   body.closest(".modal").classList.add("comparison-modal");
   await load();
 }

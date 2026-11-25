@@ -41,7 +41,7 @@ async function refreshStuck() {
       t.stuck = info.stuck || null;
       t.limit_hit = info.limit_hit || null;
       changed.push(t.id);
-      if (newLimit) toast(`${t.title} says it has hit a usage limit. Its pane offers to switch the task to another AI.`, true);
+      if (newLimit) toast(I18N.t("thread.limitToast", { title: t.title }), true);
     }
   }
   if (!changed.length) return;
@@ -69,7 +69,7 @@ async function startThread({ kind, target = null, task = null, handoffId = null,
   else if (state.drawerThread !== info.id) placeThread(info.id, !resumeId);
   setTab("workspace");
   if (kind === "agent") prepareTerminalDraft(info, handoffId);
-  toast(resumeId ? `Resumed ${info.title}.` : kind === "agent" ? `Started ${info.title}.` : "Shell started.");
+  toast(resumeId ? t("thread.resumed", { title: info.title }) : kind === "agent" ? t("thread.started", { title: info.title }) : t("thread.shellStarted"));
   return true;
 }
 
@@ -151,7 +151,8 @@ function threadExit(p) {
     x.el.classList.add("saved-size");
     x.term.options.disableStdin = true;
     x.term.options.cursorBlink = false;
-    x.term.write(`\r\n\x1b[2m[${t ? t.title : "thread"} ended${p.code != null ? `, exit code ${p.code}` : ""}]\x1b[0m\r\n`);
+    const name = t ? t.title : I18N.t("thread.word");
+    x.term.write(`\r\n\x1b[2m[${p.code != null ? I18N.t("thread.endedCode", { title: name, code: p.code }) : I18N.t("thread.ended", { title: name })}]\x1b[0m\r\n`);
   }
   drawThreadList();
   if (state.view === "workspace" && state.drawerThread === p.id) render();
@@ -162,8 +163,8 @@ function threadExit(p) {
 async function closeThread(id) {
   const t = state.threads.find((t) => t.id === id);
   if (t && t.kind === "chat") {
-    if (t.running && !(await confirmDialog(`End the chat with ${t.agent || t.target}?`, "Evyro stops the agent, records a checkpoint and keeps the transcript in the sidebar."))) return;
-    if (t.archived && !(await confirmDialog("Delete this transcript?", "Evyro permanently removes the saved chat messages from this computer.", "Delete transcript"))) return;
+    if (t.running && !(await confirmDialog(I18N.t("thread.endChatTitle", { agent: t.agent || t.target }), I18N.t("thread.endChatBody")))) return;
+    if (t.archived && !(await confirmDialog(I18N.t("thread.deleteTitle"), I18N.t("thread.deleteBody"), I18N.t("thread.deleteAction")))) return;
     await act(() => invoke("chat_close", { id, forget: !!t.archived }));
     if (state.project?.id === t.project_id) {
       const slots = panes();
@@ -177,7 +178,7 @@ async function closeThread(id) {
     render();
     return;
   }
-  if (t && t.running && !(await confirmDialog(`Stop ${t.title}?`, "The program is still running. Evyro stops it; its last checkpoint and session stay recorded."))) return;
+  if (t && t.running && !(await confirmDialog(I18N.t("thread.stopTitle", { title: t.title }), I18N.t("thread.stopBody")))) return;
   await act(() => invoke("term_close", { id }));
   const x = XTERMS.get(id);
   if (x) { x.term.dispose(); XTERMS.delete(id); }
@@ -186,22 +187,22 @@ async function closeThread(id) {
   render();
 }
 
-function confirmDialog(title, text, action = "Stop it") {
+function confirmDialog(title, text, action = t("thread.stopIt")) {
   return new Promise((resolve) => {
     const root = $("#modal-root");
     const done = (v) => { clear(root); resolve(v); };
     root.append(h("div", { class: "modal-back" }, h("div", { class: "modal", role: "dialog" },
       h("h2", null, title), h("p", { class: "muted" }, text),
       h("div", { class: "actions" },
-        h("button", { class: "btn", onclick: () => done(false) }, "Cancel"),
+        h("button", { class: "btn", onclick: () => done(false) }, t("common.cancel")),
         h("button", { class: "btn primary", onclick: () => done(true) }, action)))));
   });
 }
 
 async function newThreadDialog(taskKey = null) {
-  const title = h("input", { type: "text", maxlength: "80", placeholder: "Optional" });
-  const budget = h("input", { type: "number", min: "30", max: "4294967295", step: "1", placeholder: "Optional" });
-  const budgetField = field("Session credit budget", budget, "Copilot reports credits used when it exits normally.");
+  const title = h("input", { type: "text", maxlength: "80", placeholder: t("common.optional") });
+  const budget = h("input", { type: "number", min: "30", max: "4294967295", step: "1", placeholder: t("common.optional") });
+  const budgetField = field(t("thread.budget"), budget, t("thread.budgetHint"));
   const sel = await targetSelect("claude-code");
   // Only coding agents and API targets run in a terminal.
   for (const g of [...sel.querySelectorAll("optgroup")]) {
@@ -210,7 +211,7 @@ async function newThreadDialog(taskKey = null) {
   if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
   let tasks = [];
   try { tasks = await invoke("list_tasks", { projectId: state.project.id }); } catch { /* no tasks */ }
-  const taskSel = h("select", null, h("option", { value: "" }, "Pick up available work automatically"),
+  const taskSel = h("select", null, h("option", { value: "" }, t("thread.autoTask")),
     tasks.map((r) => h("option", { value: r.task.key }, `${r.task.key}  ${r.task.title}`)));
   const active = tasks.find((r) => r.task.status === "in_progress") || tasks.find((r) => r.task.status === "ready");
   if (active) taskSel.value = active.task.key;
@@ -221,8 +222,8 @@ async function newThreadDialog(taskKey = null) {
   const checkDup = () => {
     const harness = (state.targets || []).find((r) => r.target.name === sel.value)?.target.harness || sel.value;
     const hint = {
-      cursor: "Sign in with cursor-agent login if the pane asks you to log in.",
-      copilot: "On first use, Copilot may ask you to confirm folder trust in the pane. Sign in with copilot login if prompted.",
+      cursor: I18N.t("thread.hint.cursor"),
+      copilot: I18N.t("thread.hint.copilot"),
     }[harness];
     setup.textContent = hint || "";
     budgetField.hidden = harness !== "copilot";
@@ -233,31 +234,31 @@ async function newThreadDialog(taskKey = null) {
     const t = onTask || same[0];
     dupNote.append(h("div", { class: "banner warn" },
       h("span", null, onTask
-        ? `${t.title} is already running on ${taskSel.value || "no task"} with this account. Use it instead of starting a second copy.`
-        : `${sel.value} is already running here (${same.map((x) => x.task || "no task").join(", ")}). A second one uses the same account and its limits; start it only for a different task.`),
-      h("button", { class: "btn small", onclick: () => { clear($("#modal-root")); placeThread(t.id); setTab("workspace"); } }, "Show it")));
+        ? I18N.t("thread.dupSame", { title: t.title, task: taskSel.value || I18N.t("thread.noTask") })
+        : I18N.t("thread.dupOther", { target: sel.value, tasks: same.map((x) => x.task || I18N.t("thread.noTask")).join(", ") })),
+      h("button", { class: "btn small", onclick: () => { clear($("#modal-root")); placeThread(t.id); setTab("workspace"); } }, I18N.t("thread.showIt"))));
   };
   const planBox = h("input", { type: "checkbox", id: "plan-first" });
   const planField = h("label", { class: "check", for: "plan-first" }, planBox,
-    h("span", null, "Plan first: the AI proposes a plan and waits for your approval before it edits. Claude Code and Codex start read-only."));
+    h("span", null, t("thread.planFirst")));
   const showPlan = () => { planField.hidden = !taskSel.value; if (!taskSel.value) planBox.checked = false; };
   sel.addEventListener("change", checkDup);
   taskSel.addEventListener("change", checkDup);
   taskSel.addEventListener("change", showPlan);
   showPlan();
   checkDup();
-  modal("New agent thread", [
-    h("p", { class: "muted small" }, "The agent runs in this window through ", h("code", null, "evyro run"), ", so its session, checkpoints and any waiting handoff are tracked as usual."),
-    field("AI", sel),
+  modal(t("thread.newTitle"), [
+    h("p", { class: "muted small" }, t("thread.newIntro")),
+    field(t("thread.ai"), sel),
     setup,
-    field("Thread name", title),
+    field(t("thread.name"), title),
     budgetField,
-    field("Task", taskSel),
+    field(t("thread.task"), taskSel),
     planField,
     dupNote,
   ], [
-    { label: "Open in Terminal instead", run: () => openInTerminal(sel.value, taskSel.value || null) },
-    { label: "Start", primary: true, run: () => {
+    { label: t("thread.openTerminal"), run: () => openInTerminal(sel.value, taskSel.value || null) },
+    { label: t("common.start"), primary: true, run: () => {
       if (!sel.value || (!budgetField.hidden && !budget.reportValidity())) return false;
       const creditBudget = !budgetField.hidden && budget.value !== "" ? budget.valueAsNumber : null;
       return startThread({ kind: "agent", target: sel.value, task: taskSel.value || null, title: title.value.trim() || null, creditBudget, planFirst: planBox.checked });
@@ -267,17 +268,17 @@ async function newThreadDialog(taskKey = null) {
 
 function threadStatus(t) {
   if (t.kind === "chat") {
-    if (t.archived) return pill("", "saved chat");
-    if (t.state === "failed") return pill("bad", "failed");
-    if (!t.running) return pill("", "ended");
-    if (t.state === "starting") return pill("warn", "starting");
+    if (t.archived) return pill("", I18N.t("thread.st.saved"));
+    if (t.state === "failed") return pill("bad", I18N.t("thread.st.failed"));
+    if (!t.running) return pill("", I18N.t("thread.st.ended"));
+    if (t.state === "starting") return pill("warn", I18N.t("thread.st.starting"));
     const asking = (CHATS.get(t.id)?.log || []).some((it) => it.t === "permission") && chatBlocks(CHATS.get(t.id).log).some((b) => b.k === "perm" && b.answer === undefined);
-    if (asking) return pill("warn", "needs you");
-    return t.busy ? pill("running", "working") : pill("ok", "your turn");
+    if (asking) return pill("warn", I18N.t("thread.st.needsYou"));
+    return t.busy ? pill("running", I18N.t("thread.st.working")) : pill("ok", I18N.t("thread.st.yourTurn"));
   }
-  if (t.running) return t.limit_hit ? pill("warn", "limit hit?") : t.stuck ? pill("warn", "stuck?") : pill("running");
-  if (t.stopped_by_app) return pill("", "stopped with app");
-  return pill(t.exit_code === 0 ? "" : "bad", t.exit_code == null ? "ended" : `exit ${t.exit_code}`);
+  if (t.running) return t.limit_hit ? pill("warn", I18N.t("thread.st.limit")) : t.stuck ? pill("warn", I18N.t("thread.st.stuck")) : pill("running");
+  if (t.stopped_by_app) return pill("", I18N.t("thread.st.stoppedApp"));
+  return pill(t.exit_code === 0 ? "" : "bad", t.exit_code == null ? I18N.t("thread.st.ended") : I18N.t("thread.st.exit", { code: t.exit_code }));
 }
 
 const agoSecs = (s) => ago(new Date(s * 1000).toISOString());
