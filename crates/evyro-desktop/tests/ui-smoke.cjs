@@ -104,6 +104,11 @@ const FIX = {
 (async () => {
   const browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
   const page = await browser.newPage({ viewport: { width: 1300, height: 860 } });
+  // SMOKE_THROTTLE=6 runs the page six times slower, to reproduce what a slow CI machine shows.
+  if (process.env.SMOKE_THROTTLE) {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.SMOKE_THROTTLE) });
+  }
   const errors = [];
   const calls = [];
   page.on("pageerror", (e) => errors.push("page error: " + e.message));
@@ -364,7 +369,19 @@ const FIX = {
 
   const step = async (name, fn) => {
     try { await fn(); console.log("PASS  " + name); }
-    catch (e) { errors.push(`${name}: ${e.message.split("\n").slice(0, process.env.SMOKE_DEBUG ? 18 : 1).join(" / ")}`); console.log("FAIL  " + name); }
+    catch (e) {
+      errors.push(`${name}: ${e.message.split("\n").slice(0, process.env.SMOKE_DEBUG ? 18 : 1).join(" / ")}`); console.log("FAIL  " + name);
+      // What was on screen, so a failure on a machine we cannot see is still explainable.
+      try {
+        const seen = await page.evaluate(() => ({
+          modals: [...document.querySelectorAll("#modal-root .modal, #palette-root .modal")].map((m) => (m.getAttribute("aria-label") || m.querySelector("h2")?.textContent || "modal").slice(0, 60)),
+          focus: document.activeElement ? `${document.activeElement.tagName}.${String(document.activeElement.className).slice(0, 40)}` : null,
+          tab: document.querySelector(".tab.active")?.dataset.view, toasts: [...document.querySelectorAll("#toast, .toast")].map((t) => t.textContent.slice(0, 80)),
+          threads: (window.state?.threads || []).map((t) => `${t.id}:${t.running ? "run" : "end"}`).join(","),
+        }));
+        console.log("  screen: " + JSON.stringify(seen));
+      } catch { /* the page is gone */ }
+    }
   };
   const tab = (v) => page.click(`.tab[data-view="${v}"]`);
 

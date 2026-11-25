@@ -93,7 +93,8 @@ const pill = (s, label) => h("span", { class: "pill " + (STATUS_PILL[s] ?? "") }
 // ---------- modal ----------
 function modal(title, bodyNodes, actions) {
   const root = $("#modal-root");
-  const close = () => clear(root);
+  // Close only this dialog: a slow action finishing late must not wipe a dialog opened since.
+  const close = () => { if (back.isConnected) back.remove(); };
   const back = h("div", { class: "modal-back", onclick: (e) => { if (e.target === back) close(); } },
     h("div", { class: "modal", role: "dialog", "aria-label": title },
       h("h2", null, title), bodyNodes,

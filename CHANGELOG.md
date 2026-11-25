@@ -35,6 +35,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ### Fixed
 
+- A desktop dialog whose action finished late (sending a prompt to an AI, for instance) no longer closes a newer dialog that was opened in the meantime.
 - Two AIs running `evyro` at the same moment no longer fail with "database is locked": writes that read first now take the write lock when they begin and wait their turn.
 - Clicking anywhere in a terminal pane now focuses it, so Enter reaches prompts such as a workspace-trust question; a pane redraw no longer drops focus.
 - Reopening a thread no longer types stray "3R3R3R" into the running AI: the terminal's replies to replayed output are ignored.
