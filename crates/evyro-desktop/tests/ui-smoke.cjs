@@ -449,6 +449,14 @@ const FIX = {
     await dialog.getByText("1 failing check and 1 open review comment").waitFor();
     await dialog.getByText("FIX-ME-PROMPT").waitFor();
     await dialog.getByRole("button", { name: "Send to codex on T-1" }).click();
+    // It asks first; cancelling sends nothing and brings the dialog back.
+    const sure = page.getByRole("dialog").filter({ hasText: "Send this to codex on T-1?" });
+    await sure.getByText(/may include secrets/).waitFor();
+    await sure.getByRole("button", { name: "Cancel" }).click();
+    await dialog.getByText("FIX-ME-PROMPT").waitFor();
+    if (await page.evaluate(() => window.__lastTermWrite)) throw new Error("sent without confirmation");
+    await dialog.getByRole("button", { name: "Send to codex on T-1" }).click();
+    await page.getByRole("dialog").filter({ hasText: "Send this to codex on T-1?" }).getByRole("button", { name: "Send", exact: true }).click();
     await page.waitForFunction(() => window.__lastTermWrite && window.__lastTermWrite.includes("FIX-ME-PROMPT"));
     await dialog.waitFor({ state: "detached" });
   });

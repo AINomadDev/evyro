@@ -517,6 +517,10 @@ async function prFeedbackDialog(t) {
   let f;
   try { f = await act(() => invoke("pr_feedback", { projectId: state.project.id, task: t.key })); }
   catch { return; }
+  showPrFeedback(t, f);
+}
+
+function showPrFeedback(t, f) {
   const live = (state.threads || []).filter((x) => x.project_id === state.project.id && x.task === t.key && x.running && x.kind !== "shell");
   const summary = !f.pr ? "No pull request for this branch yet."
     : !f.actionable ? f.prompt
@@ -526,6 +530,11 @@ async function prFeedbackDialog(t) {
     buttons.unshift({ label: "Copy prompt", run: () => { copy(f.prompt, "Prompt copied"); return false; } });
     for (const x of live.slice(0, 2)) {
       buttons.unshift({ label: `Send to ${x.title}`, primary: true, run: async () => {
+        // The text was written by other people and logs can hold secrets: ask once more, in words.
+        if (!(await confirmDialog(`Send this to ${x.title}?`, "It includes build log and review comment text written by others, and may include secrets Evyro did not recognise. Send it only if you have read it.", "Send"))) {
+          showPrFeedback(t, f);
+          return false;
+        }
         try { await sendToThread(x.id, f.prompt); toast(`Sent to ${x.title}.`); return true; }
         catch (e) { toast(errMsg(e), true); return false; }
       } });
