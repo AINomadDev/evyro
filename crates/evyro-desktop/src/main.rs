@@ -460,6 +460,16 @@ async fn switch_owner(
     .await
 }
 
+/// Failing checks and open review comments on a task's pull request, as a prompt.
+#[tauri::command]
+async fn pr_feedback(project_id: String, task: String) -> CmdResult {
+    with_store(move |s| {
+        let t = s.resolve_task(&project_id, &task)?;
+        Ok(json!(s.pr_feedback(&t, &evyro_core::pr_feedback::RealGh)?))
+    })
+    .await
+}
+
 /// The plan an AI proposed for a task, and whether a person approved it.
 #[tauri::command]
 async fn plan_get(project_id: String, task: String) -> CmdResult {
@@ -1121,6 +1131,7 @@ fn main() {
             release_session,
             switch_owner,
             next_work,
+            pr_feedback,
             plan_get,
             plan_decide,
             history_status_cmd,

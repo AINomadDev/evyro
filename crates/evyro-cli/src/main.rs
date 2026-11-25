@@ -157,6 +157,12 @@ enum Cmd {
     /// Git worktrees.
     #[command(subcommand)]
     Worktrees(WorktreeCmd),
+    /// The pull request of a task: what is failing and what reviewers asked for, as a prompt
+    /// for the AI that owns the branch. Needs the GitHub CLI (`gh`).
+    Pr {
+        #[command(subcommand)]
+        cmd: PrCmd,
+    },
     /// Plan first: an AI proposes a plan, you approve it, then it builds.
     Plan {
         #[command(subcommand)]
@@ -759,6 +765,19 @@ enum ReviewCmd {
         /// Mark the printed comments as sent.
         #[arg(long)]
         mark_sent: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PrCmd {
+    /// Failing checks (with the end of their log) and unresolved review comments on the
+    /// task's pull request, written as one prompt. Quoted GitHub text is fenced as data.
+    Feedback {
+        /// The task (default: the active task).
+        task: Option<String>,
+        /// Name the failing checks and comments with links, but quote no log or comment text.
+        #[arg(long)]
+        links_only: bool,
     },
 }
 
@@ -1633,6 +1652,27 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
             o.print(&r, || if r.is_empty() { "No stale sessions.".into() } else {
                 r.iter().map(|x| format!("Recovered {} session {}: checkpoint {}; changed since last checkpoint: {}\n  Continue with `evyro handoff --to <agent>`.", x.harness, x.session_id, x.checkpoint_id, if x.changed_since_last_checkpoint.is_empty() { "none".into() } else { x.changed_since_last_checkpoint.join(", ") })).collect::<Vec<_>>().join("\n")
             });
+        }
+        Cmd::Pr { cmd } => {
+            let p = project(&store, &cli.project, &dir)?;
+            match cmd {
+                PrCmd::Feedback { task, links_only } => {
+                    let t = match task {
+                        Some(r) => store.resolve_task(&p.id, &r)?,
+                        None => store.active_task(&p.id)?.ok_or_else(|| {
+                            Error::Invalid(
+                                "no active task; name one: `evyro pr feedback T-1`".into(),
+                            )
+                        })?,
+                    };
+                    let f = store.pr_feedback_with(
+                        &t,
+                        &evyro_core::pr_feedback::RealGh,
+                        !links_only,
+                    )?;
+                    o.print(&f, || f.prompt.clone());
+                }
+            }
         }
         Cmd::Plan { cmd } => {
             let p = project(&store, &cli.project, &dir)?;

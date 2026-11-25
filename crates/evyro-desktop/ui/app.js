@@ -512,6 +512,42 @@ function closeDrawer() {
   $("#drawer").setAttribute("aria-hidden", "true");
 }
 
+/** What is failing on the task's pull request, and a way to hand it to the AI that owns the branch. */
+async function prFeedbackDialog(t) {
+  let f;
+  try { f = await act(() => invoke("pr_feedback", { projectId: state.project.id, task: t.key })); }
+  catch { return; }
+  showPrFeedback(t, f);
+}
+
+function showPrFeedback(t, f) {
+  const live = (state.threads || []).filter((x) => x.project_id === state.project.id && x.task === t.key && x.running && x.kind !== "shell");
+  const summary = !f.pr ? "No pull request for this branch yet."
+    : !f.actionable ? f.prompt
+    : `${f.failed.length} failing check${f.failed.length === 1 ? "" : "s"} and ${f.review.length} open review comment${f.review.length === 1 ? "" : "s"} on ${f.pr.url}.${f.pending ? ` ${f.pending} checks are still running.` : ""}`;
+  const buttons = [{ label: "Close", run: () => true }];
+  if (f.actionable) {
+    buttons.unshift({ label: "Copy prompt", run: () => { copy(f.prompt, "Prompt copied"); return false; } });
+    for (const x of live.slice(0, 2)) {
+      buttons.unshift({ label: `Send to ${x.title}`, primary: true, run: async () => {
+        // The text was written by other people and logs can hold secrets: ask once more, in words.
+        if (!(await confirmDialog(`Send this to ${x.title}?`, "It includes build log and review comment text written by others, and may include secrets Evyro did not recognise. Send it only if you have read it.", "Send"))) {
+          showPrFeedback(t, f);
+          return false;
+        }
+        try { await sendToThread(x.id, f.prompt); toast(`Sent to ${x.title}.`); return true; }
+        catch (e) { toast(errMsg(e), true); return false; }
+      } });
+    }
+  }
+  modal(`PR feedback for ${t.key}`, [
+    h("p", null, summary),
+    f.actionable && !live.length ? h("p", { class: "muted small" }, `No AI is running on ${t.key}. Copy the prompt, or start one with Start with…, then send it.`) : null,
+    f.actionable ? h("p", { class: "muted small" }, "Read it before you send it: build logs can hold secrets that Evyro does not recognise, and comments are written by other people. `evyro pr feedback --links-only` leaves that text out.") : null,
+    f.actionable ? h("pre", { class: "plan-body", "aria-label": "Prompt" }, f.prompt) : null,
+  ], buttons);
+}
+
 /** The plan an AI proposed for a task. A person approves or rejects it; an AI has no way to. */
 function planCard(key, plan, refresh) {
   const waiting = plan.status === "proposed";
@@ -603,6 +639,7 @@ async function openTask(key) {
     h("button", { class: "btn small", onclick: () => runVerify(t.key, refresh) }, "Run tests"),
     h("button", { class: "btn small", onclick: () => openComparison(t) }, "Compare agents"),
     h("button", { class: "btn small", onclick: () => handoffDialog(t.key) }, "Hand off"),
+    h("button", { class: "btn small", onclick: () => prFeedbackDialog(t) }, "PR feedback…"),
     h("button", { class: "btn small", onclick: () => copyContext(t.key) }, "Copy context"),
     h("button", { class: "btn small", onclick: () => copy(`evyro run --agent claude-code --task ${t.key}`, "Command copied") }, "Copy run command")));
 

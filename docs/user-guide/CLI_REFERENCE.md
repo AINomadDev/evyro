@@ -46,6 +46,7 @@ Commands:
   sessions       Agent sessions
   recover        Recover sessions whose process died (quota kill, crash)
   worktrees      Git worktrees
+  pr             The pull request of a task: what is failing and what reviewers asked for, as a prompt for the AI that owns the branch. Needs the GitHub CLI (`gh`)
   plan           Plan first: an AI proposes a plan, you approve it, then it builds
   verify         Run a verification command and record a receipt: `evyro verify -- cargo test`
   decide         Record a decision. Record a decision: `evyro decide "<title>" "<decision>" [--why ...]`
@@ -1108,6 +1109,46 @@ Usage: evyro sessions [OPTIONS]
 Options:
       --active             
       --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro pr
+
+```text
+The pull request of a task: what is failing and what reviewers asked for, as a prompt for the AI that owns the branch. Needs the GitHub CLI (`gh`)
+
+Usage: evyro pr [OPTIONS] <COMMAND>
+
+Commands:
+  feedback  Failing checks (with the end of their log) and unresolved review comments on the task's pull request, written as one prompt. Quoted GitHub text is fenced as data
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro pr feedback
+
+```text
+Failing checks (with the end of their log) and unresolved review comments on the task's pull request, written as one prompt. Quoted GitHub text is fenced as data
+
+Usage: evyro pr feedback [OPTIONS] [TASK]
+
+Arguments:
+  [TASK]  The task (default: the active task)
+
+Options:
+      --json               Machine-readable JSON output
+      --links-only         Name the failing checks and comments with links, but quote no log or comment text
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors
   -C, --dir <DIR>          Run as if started in this directory
