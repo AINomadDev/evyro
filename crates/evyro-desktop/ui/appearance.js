@@ -5,6 +5,7 @@
 
 const APPEARANCE_DEFAULTS = {
   theme: "system", // system | light | dark | midnight | paper | contrast-light | contrast-dark
+  language: "system", // system, or a code from I18N.available()
   motion: "system", // system: follow the operating system; reduce: no animation or smooth scrolling
   accent: "indigo", // a name from ACCENTS, or "custom"
   customAccent: "#0e7490",
@@ -80,6 +81,7 @@ function cleanAppearance(o) {
   const text = (k, re) => { if (typeof o[k] === "string" && re.test(o[k])) out[k] = o[k]; };
   one("theme", THEMES.map((t) => t[0]));
   one("motion", ["system", "reduce"]);
+  one("language", ["system", ...I18N.available()]);
   one("accent", [...Object.keys(ACCENTS), "custom"]);
   text("customAccent", /^#[0-9a-fA-F]{6}$/);
   one("uiFont", [...Object.keys(UI_FONTS), "custom"]);
@@ -131,8 +133,16 @@ function accentColor() {
   return colorScheme() === "dark" ? pair[2] : pair[1];
 }
 
+let shownLanguage = null;
 function applyAppearance() {
   const a = appearance();
+  // A changed language redraws the fixed text and the current screen.
+  if (shownLanguage !== a.language) {
+    const first = shownLanguage === null;
+    shownLanguage = a.language;
+    I18N.use(a.language);
+    if (!first) { I18N.applyStatic(); if (typeof render === "function") render(); }
+  }
   const root = document.documentElement;
   const scheme = colorScheme();
   // "System" follows the operating system's contrast request too.
@@ -225,6 +235,9 @@ function appearanceCard() {
           a.theme.startsWith("contrast") ? h("div", { class: "hint" }, "High-contrast themes use their own accent so every text pair keeps at least 7:1.") : null,
           seg("Density", "density", [["comfortable", "Comfortable"], ["compact", "Compact"]]),
           seg("Motion", "motion", [["system", "Follow system"], ["reduce", "Reduce always"]]),
+          h("div", { class: "ap-row" }, h("label", { class: "ap-label", for: "ap-language" }, t("language.label")),
+            h("select", { id: "ap-language", onchange: (e) => set({ language: e.target.value }) },
+              [["system", t("language.system")], ...I18N.available().map((c) => [c, I18N.names[c]])].map(([v, l]) => h("option", { value: v, selected: a.language === v }, l)))),
           range("Corners", "radius", 0, 16)),
         h("section", null, h("h3", null, "Typography"),
           select("Interface font", "uiFont", [...Object.entries(UI_FONTS).map(([k, [l]]) => [k, l]), ["custom", "Other…"]]),

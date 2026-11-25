@@ -96,6 +96,8 @@ jobs:
         run: |
           git config --global user.email ci@example.com
           git config --global user.name CI
+      - name: translation catalogs and hard-coded text
+        run: node crates/evyro-desktop/tests/i18n-lint.cjs
       - run: cargo build -p evyro-cli
       - name: playwright
         run: npm install --no-save playwright@1.49.1 axe-core@4.10.2 && npx playwright install chromium

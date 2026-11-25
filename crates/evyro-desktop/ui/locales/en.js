@@ -1,0 +1,91 @@
+// English: the source language. Every other language is a copy of this file with the same keys.
+// Placeholders look like {name}; a value of { one, other } is a plural chosen by `count`.
+// Keep sentences whole (never glue pieces together) so they can be translated.
+"use strict";
+I18N.catalogs.en = {
+  // Screens
+  "tab.workspace": "Workspace",
+  "tab.tasks": "Tasks",
+  "tab.changes": "Changes",
+  "tab.history": "History",
+  "tab.knowledge": "Knowledge",
+  "tab.knowledge.title": "Decisions and project memory",
+  "tab.knowledge.long": "Knowledge (decisions and memory)",
+  "tab.skills": "Skills",
+  "tab.agents": "AI targets",
+  "tab.settings": "Settings",
+  "palette.goto": "Go to {screen}",
+
+  // The frame around every screen
+  "frame.projects": "Projects",
+  "frame.addProject": "+ Add project",
+  "frame.noProject": "No project selected",
+  "frame.ctxToggle": "Show or hide the shared context",
+  "frame.searchProject": "Search the project",
+  "frame.palette": "Command palette",
+  "frame.ctxTab.context": "Context",
+  "frame.ctxTab.changes": "Changes",
+  "frame.ctxInspector": "Inspector",
+  "frame.ctxHide": "Hide the shared context",
+  "frame.close": "Close",
+
+  // Keyboard shortcuts
+  "keys.title": "Keyboard shortcuts",
+  "keys.intro": "Everything else is in the command palette ({keys}): type part of what you want to do.",
+  "keys.group.everywhere": "Everywhere",
+  "keys.group.dialog": "In a dialog",
+  "keys.group.palette": "Command palette and search",
+  "keys.group.threads": "Threads",
+  "keys.palette": "Command palette: every action",
+  "keys.screens": "Go to a screen (Workspace, Tasks, Changes, History, Knowledge, Skills, AI targets, Settings)",
+  "keys.file": "Go to file",
+  "keys.text": "Search in code",
+  "keys.symbol": "Go to symbol",
+  "keys.newTask": "New task",
+  "keys.context": "Show or hide the shared context panel",
+  "keys.drawer": "Show or hide the terminal drawer",
+  "keys.sheet": "This list of shortcuts",
+  "keys.escape": "Close the palette, a dialog or the task drawer",
+  "keys.tab": "Next or previous control (it stays inside the dialog)",
+  "keys.enter.dialog": "Press the highlighted button or choose in a list",
+  "keys.arrows": "Move through the results",
+  "keys.enter.palette": "Run the highlighted command",
+  "keys.f6": "Leave a terminal and return to the page",
+  "keys.send": "Send a chat message",
+  "keys.newline": "New line in a message",
+
+  // Welcome screen
+  "welcome.title": "Welcome to Evyro",
+  "welcome.lead": "Start a task with one AI and finish it with another. Evyro keeps the task, the progress, the tests and a signed handoff, so the next AI does not start from scratch.",
+  "welcome.step1.title": "Add a project.",
+  "welcome.step1.body": "Pick a Git repository on this computer, or try a small sample first.",
+  "welcome.step1.add": "Add a project",
+  "welcome.step1.sample": "Try the sample project",
+  "welcome.step2.title": "Check your AIs.",
+  "welcome.step2.body": "See which coding agents, API keys, IDEs and chat apps are ready, and add your own.",
+  "welcome.step2.open": "Open AI targets",
+  "welcome.step3.title": "Plan, work, switch.",
+  "welcome.step3.body": "Create a task with acceptance criteria, start it with one AI, and use Hand off to move it to another.",
+  "welcome.footer": "Press {keys} any time for every action. Projects you set up with {cmd} appear here automatically.",
+
+  // Guided tour
+  "tour.label": "Guided tour",
+  "tour.title": "Try Evyro in five minutes",
+  "tour.titleDone": "You have done the whole loop",
+  "tour.progress": "{n} of {of}",
+  "tour.dismiss": "Dismiss",
+  "tour.step.start": "Start an AI on the first task",
+  "tour.step.start.action": "Start with…",
+  "tour.step.checkpoint": "Let it save progress. It records a checkpoint as it works; ask it to run evyro checkpoint if it has not",
+  "tour.step.verify": "Run the tests and keep the receipt",
+  "tour.step.verify.action": "Run tests",
+  "tour.step.handoff": "Hand the task to a different AI",
+  "tour.step.handoff.action": "Hand off…",
+  "tour.done": "(done)",
+  "tour.closing": "That is the loop on any project: a task, an AI, a checkpoint, a receipt, a handoff. ",
+  "tour.addOwn": "Add your own project",
+
+  // Language
+  "language.label": "Language",
+  "language.system": "Follow system",
+};

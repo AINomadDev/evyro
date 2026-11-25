@@ -14,9 +14,9 @@
         <img src="logo.png" alt="" width="28" height="28">
         <span>Evyro</span>
       </div>
-      <div class="side-label">Projects</div>
-      <nav id="project-list" class="project-list" aria-label="Projects"></nav>
-      <button id="add-project-btn" class="btn ghost small side-add">+ Add project</button>
+      <div class="side-label" data-i18n="frame.projects">Projects</div>
+      <nav id="project-list" class="project-list" aria-label="Projects" data-i18n-aria-label="frame.projects"></nav>
+      <button id="add-project-btn" class="btn ghost small side-add" data-i18n="frame.addProject">+ Add project</button>
       <div id="side-threads" class="side-threads"></div>
       <div class="side-foot" id="side-foot"></div>
     </aside>
@@ -29,19 +29,19 @@
         </div>
         <div class="top-actions">
           <span id="live-badge" class="live-badge" aria-live="polite"></span>
-          <button id="ctx-btn" class="btn small ghost hidden" aria-controls="ctx" title="Show or hide the shared context"></button>
-          <button id="search-btn" class="btn small ghost" title="Search the project"></button>
-          <button id="palette-btn" class="btn small ghost" title="Command palette"></button>
+          <button id="ctx-btn" class="btn small ghost hidden" aria-controls="ctx" title="Show or hide the shared context" data-i18n-title="frame.ctxToggle"></button>
+          <button id="search-btn" class="btn small ghost" title="Search the project" data-i18n-title="frame.searchProject"></button>
+          <button id="palette-btn" class="btn small ghost" title="Command palette" data-i18n-title="frame.palette"></button>
         </div>
         <nav class="tabs" id="tabs">
-          <button data-view="workspace" class="tab active">Workspace</button>
-          <button data-view="tasks" class="tab">Tasks</button>
-          <button data-view="changes" class="tab">Changes</button>
-          <button data-view="history" class="tab">History</button>
-          <button data-view="knowledge" class="tab" title="Decisions and project memory">Knowledge</button>
-          <button data-view="skills" class="tab">Skills</button>
-          <button data-view="agents" class="tab">AI targets</button>
-          <button data-view="settings" class="tab">Settings</button>
+          <button data-view="workspace" class="tab active" data-i18n="tab.workspace">Workspace</button>
+          <button data-view="tasks" class="tab" data-i18n="tab.tasks">Tasks</button>
+          <button data-view="changes" class="tab" data-i18n="tab.changes">Changes</button>
+          <button data-view="history" class="tab" data-i18n="tab.history">History</button>
+          <button data-view="knowledge" class="tab" title="Decisions and project memory" data-i18n-title="tab.knowledge.title" data-i18n="tab.knowledge">Knowledge</button>
+          <button data-view="skills" class="tab" data-i18n="tab.skills">Skills</button>
+          <button data-view="agents" class="tab" data-i18n="tab.agents">AI targets</button>
+          <button data-view="settings" class="tab" data-i18n="tab.settings">Settings</button>
         </nav>
       </header>
       <section id="view" class="view"></section>
@@ -49,12 +49,12 @@
 
     <aside id="ctx" class="ctx hidden" aria-label="Shared context" aria-hidden="true">
       <div class="ctx-tabs">
-        <div role="tablist" aria-label="Inspector" class="row">
-          <button class="ctx-tab active" role="tab" data-pane="context" aria-selected="true" aria-controls="ctx-body">Context</button>
-          <button class="ctx-tab" role="tab" data-pane="changes" aria-selected="false" aria-controls="ctx-body">Changes</button>
+        <div role="tablist" aria-label="Inspector" data-i18n-aria-label="frame.ctxInspector" class="row">
+          <button class="ctx-tab active" role="tab" data-pane="context" aria-selected="true" aria-controls="ctx-body" data-i18n="frame.ctxTab.context">Context</button>
+          <button class="ctx-tab" role="tab" data-pane="changes" aria-selected="false" aria-controls="ctx-body" data-i18n="frame.ctxTab.changes">Changes</button>
         </div>
         <span class="spacer"></span>
-        <button id="ctx-close" class="btn ghost small" aria-label="Hide the shared context">✕</button>
+        <button id="ctx-close" class="btn ghost small" aria-label="Hide the shared context" data-i18n-aria-label="frame.ctxHide">✕</button>
       </div>
       <div id="ctx-body" class="ctx-body" role="tabpanel"></div>
     </aside>
@@ -62,7 +62,7 @@
     <aside id="drawer" class="drawer hidden" aria-hidden="true">
       <div class="drawer-head">
         <div id="drawer-title" class="drawer-title"></div>
-        <button id="drawer-close" class="btn ghost small" aria-label="Close">✕</button>
+        <button id="drawer-close" class="btn ghost small" aria-label="Close" data-i18n-aria-label="frame.close">✕</button>
       </div>
       <div id="drawer-body" class="drawer-body"></div>
     </aside>
@@ -74,6 +74,8 @@
   <div id="toast-root" class="toast-root"></div>
   <script src="vendor/xterm/xterm.js"></script>
   <script src="vendor/xterm/addon-fit.js"></script>
+  <script src="i18n.js"></script>
+  <script src="locales/en.js"></script>
   <script src="app.js"></script>
   <script src="appearance.js"></script>
   <script src="threads.js"></script>
