@@ -1445,6 +1445,82 @@ const FIX = {
     await page.waitForFunction(() => window.__lastTermOpen?.task === "T-3" && window.__lastTermOpen?.target === "claude-code");
     await compare.waitFor({ state: "detached" });
   });
+  await step("keyboard: ? opens the shortcut list, and every shortcut in it does what it says", async () => {
+    await page.evaluate(() => { try { localStorage.setItem("evyro.tour.dismissed", "1"); } catch {} setTab("workspace"); });
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press("?");
+    const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
+    await sheet.waitFor();
+    const rows = await page.evaluate(() => SHORTCUTS.flatMap(([, r]) => r.map((x) => x[1])));
+    for (const keys of rows) if (!(await sheet.locator("kbd", { hasText: keys }).count())) throw new Error("not on the sheet: " + keys);
+    await page.keyboard.press("Escape");
+    await sheet.waitFor({ state: "detached" });
+    // A question mark typed into a field is just a character.
+    await page.keyboard.press("Meta+k");
+    await page.getByRole("dialog", { name: "Command palette" }).waitFor();
+    await page.keyboard.type("?");
+    if (await page.getByRole("dialog", { name: "Keyboard shortcuts" }).count()) throw new Error("? inside a field opened the sheet");
+    await page.keyboard.press("Escape");
+    // Screens by number.
+    const screens = ["workspace", "tasks", "changes", "history", "knowledge", "skills", "agents", "settings"];
+    for (const [i, v] of screens.entries()) {
+      await page.keyboard.press(`Meta+${i + 1}`);
+      await page.waitForFunction((view) => state.view === view, v);
+    }
+    await page.keyboard.press("Meta+2");
+    await page.keyboard.press("Meta+n");
+    await page.getByRole("dialog", { name: /task/i }).waitFor();
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Meta+p");
+    await page.waitForFunction(() => !!document.querySelector("#palette-root > *, #modal-root > *"));
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Meta+Shift+f");
+    await page.waitForFunction(() => !!document.querySelector("#palette-root > *, #modal-root > *"));
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Meta+Shift+o");
+    await page.waitForFunction(() => !!document.querySelector("#palette-root > *, #modal-root > *"));
+    await page.keyboard.press("Escape");
+    const ctx = await page.evaluate(() => state.ctxOpen);
+    await page.keyboard.press("Meta+.");
+    await page.waitForFunction((was) => state.ctxOpen !== was, ctx);
+    await page.keyboard.press("Meta+.");
+    await page.evaluate(() => { try { localStorage.removeItem("evyro.tour.dismissed"); } catch {} });
+  });
+  await step("keyboard: every action is in the command palette", async () => {
+    const labels = await page.evaluate(() => paletteActions().then((a) => a.map((x) => x.label)));
+    const expected = ["Keyboard shortcuts", "Go to Workspace", "Go to Tasks", "Go to Changes", "Go to History", "Go to Skills", "Go to AI targets", "Go to Settings",
+      "Add a project", "Try the sample project", "New task", "New handoff", "New agent thread", "New shell thread", "Go to file", "Search in code", "Go to symbol",
+      "Search saved chats", "Work on the next ready task", "New chat with an AI", "Copy context for an agent", "Layout: one pane", "Toggle terminal drawer",
+      "Focus on one pane", "Next pane", "Previous pane", "Recover sessions", "Settings: appearance", "Add an AI target", "Open task T-1",
+      "Run tests for T-1", "Hand off T-1", "Switch T-1 to another AI", "Compare agents on T-1", "PR feedback for T-1"];
+    const missing = expected.filter((e) => !labels.some((l) => l.includes(e)));
+    if (missing.length) throw new Error("missing from the palette: " + missing.join("; "));
+    // And one of them works from the keyboard alone.
+    await page.keyboard.press("Meta+k");
+    await page.keyboard.type("hand off T-1");
+    await page.keyboard.press("Enter");
+    await page.getByRole("dialog").filter({ hasText: /hand ?off/i }).first().waitFor();
+    await page.keyboard.press("Escape");
+  });
+  await step("keyboard: a dialog keeps Tab inside it and gives focus back when it closes", async () => {
+    await page.evaluate(() => setTab("tasks"));
+    const opener = page.getByRole("button", { name: "+ New task" });
+    await opener.focus();
+    await page.keyboard.press("Enter");
+    const dlg = page.locator("#modal-root .modal");
+    await dlg.waitFor();
+    for (let i = 0; i < 14; i++) {
+      await page.keyboard.press("Tab");
+      if (!(await page.evaluate(() => !!document.activeElement.closest("#modal-root .modal")))) throw new Error(`Tab left the dialog on press ${i + 1}`);
+    }
+    for (let i = 0; i < 14; i++) {
+      await page.keyboard.press("Shift+Tab");
+      if (!(await page.evaluate(() => !!document.activeElement.closest("#modal-root .modal")))) throw new Error(`Shift+Tab left the dialog on press ${i + 1}`);
+    }
+    await page.keyboard.press("Escape");
+    await dlg.waitFor({ state: "detached" });
+    if (!(await page.evaluate(() => document.activeElement?.textContent?.includes("New task")))) throw new Error("focus was not given back to the button that opened the dialog");
+  });
   await step("first-run setup when there are no projects", async () => {
     await page.evaluate(() => { state.projects = []; state.project = null; setTab("overview"); });
     await page.waitForSelector("ol.setup");

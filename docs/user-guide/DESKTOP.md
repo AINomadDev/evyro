@@ -131,9 +131,13 @@ Settings › **Appearance** changes the look at once and keeps it on this comput
 | ⌘P / Ctrl+P | Go to a file by name |
 | ⌘⇧F / Ctrl+Shift+F | Search the code for text or a regex |
 | ⌘⇧O / Ctrl+Shift+O | Go to a function, type or class |
+| ? | Show this list of shortcuts inside the app (not while typing in a field or a terminal) |
 | Esc | Close a dialog, the palette or the task drawer |
+| F6 | Leave a terminal and return to the page |
 
 Inside a terminal, Ctrl keys go to the program (Ctrl+C, Ctrl+K, Ctrl+N work as in any terminal). On macOS the ⌘ shortcuts still work there; on Windows and Linux click **Ctrl K** in the top bar for the palette.
+
+The palette covers every action: screens, new task, handoff, agent thread, shell, chat, search, layout, panes and focus mode, the terminal drawer, recover sessions, AI targets, and (for the task in progress) run tests, hand off, switch to another AI, compare agents and PR feedback, plus **Open task T-n** for each task. A dialog keeps Tab inside it, wraps from the last control to the first, and gives focus back to the button that opened it when it closes.
 
 Everything works from the keyboard alone. Tab reaches every button, row and card, and Enter or Space opens a row. In a terminal, Tab goes to the program (for shell completion), so press **F6** to move focus out to the thread's buttons. The UI smoke test checks this on every screen.
 
