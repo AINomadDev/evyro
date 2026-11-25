@@ -232,6 +232,8 @@ const FIX = {
           if (cmd === "pr_feedback") return { task: args.task, branch: "feat/x", pr: { number: 5, url: "https://github.com/o/r/pull/5", state: "OPEN" }, pending: 0,
             failed: [{ name: "test (ubuntu)", url: null, log_tail: "boom" }], review: [{ author: "reviewer", path: "src/a.rs", line: 12, body: "rename" }], actionable: true,
             prompt: "The pull request for T-1 needs changes. FIX-ME-PROMPT" };
+          if (cmd === "create_sample") { window.__sampleCalls = (window.__sampleCalls || 0) + 1; return { created: true, tasks: ["T-1", "T-2"], project: { id: window.__projectId, name: "Evyro sample", root_path: "/data/samples/evyro-sample" } }; }
+          if (cmd === "tour_status") return window.__tour || { started: false, checkpoint: false, verified: false, handoff: false };
           if (cmd === "plan_get") return JSON.parse(JSON.stringify({ task: args.task, plan: window.__plan || null }));
           if (cmd === "plan_decide") {
             window.__planDecision = args;
@@ -1429,6 +1431,41 @@ const FIX = {
   await step("first-run setup when there are no projects", async () => {
     await page.evaluate(() => { state.projects = []; state.project = null; setTab("overview"); });
     await page.waitForSelector("ol.setup");
+    await page.getByRole("button", { name: "Try the sample project" }).waitFor();
+  });
+  await step("the guided tour ticks each step from what Evyro recorded, and can be dismissed", async () => {
+    await page.evaluate((pid) => {
+      window.__projectId = pid; window.__tour = null;
+      try { localStorage.removeItem("evyro.tour.dismissed"); } catch {}
+      state.projects = [{ id: pid, name: "Evyro sample", root_path: "/data/samples/evyro-sample", alias: null, favorite: false, archived: false }];
+      state.project = state.projects[0];
+      setTab("tasks");
+    }, project.id);
+    const card = page.getByRole("region", { name: "Guided tour" });
+    await card.getByText("0 of 4").waitFor();
+    await card.getByRole("button", { name: "Start with…" }).waitFor();
+    // A recorded checkpoint ticks its step, nothing else.
+    await page.evaluate(() => { window.__tour = { started: true, checkpoint: true, verified: false, handoff: false }; return loadThreads().then(() => setTab("tasks")); });
+    await card.getByText("2 of 4").waitFor();
+    if (await card.getByRole("button", { name: "Start with…" }).count()) throw new Error("a finished step still offers its button");
+    await card.getByRole("button", { name: "Run tests" }).waitFor();
+    // Everything done: the closing message and a way into a real project.
+    await page.evaluate(() => { window.__tour = { started: true, checkpoint: true, verified: true, handoff: true }; return setTab("tasks"); });
+    await card.getByText("You have done the whole loop").waitFor();
+    await card.getByRole("button", { name: "Add your own project" }).waitFor();
+    await card.getByRole("button", { name: "Dismiss" }).click();
+    await card.waitFor({ state: "detached" });
+    await page.evaluate(() => setTab("tasks"));
+    await page.waitForTimeout(300);
+    if (await page.getByRole("region", { name: "Guided tour" }).count()) throw new Error("the tour came back after it was dismissed");
+    // A project that is not the sample never shows it.
+    await page.evaluate(() => { try { localStorage.removeItem("evyro.tour.dismissed"); } catch {} state.project = { ...state.project, name: "My app", root_path: "/work/app" }; setTab("tasks"); });
+    await page.waitForTimeout(300);
+    if (await page.getByRole("region", { name: "Guided tour" }).count()) throw new Error("the tour showed on an ordinary project");
+    // The button on the welcome screen creates the sample and opens it.
+    await page.evaluate(() => { state.projects = []; state.project = null; window.__sampleCalls = 0; setTab("overview"); });
+    await page.getByRole("button", { name: "Try the sample project" }).click();
+    await page.waitForFunction(() => window.__sampleCalls === 1);
   });
 
   await browser.close();

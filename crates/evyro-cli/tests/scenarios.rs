@@ -3235,3 +3235,54 @@ esac
     let text = ask(&["pr", "feedback", "T-1"]);
     assert!(text.starts_with("The pull request for T-1"), "{text}");
 }
+
+/// `evyro sample` makes a small real project, and the whole first-run loop works on it: a task,
+/// a checkpoint, a passing receipt from the sample's own test command, and a handoff.
+#[test]
+fn the_sample_project_supports_the_first_run_loop() {
+    let mut env = Env::new();
+    let work = env.repo("sample-host");
+    let first = env.json(&work, &["sample"]);
+    assert_eq!(first["created"], true);
+    let root = std::path::PathBuf::from(first["project"]["root_path"].as_str().unwrap());
+    assert!(root.join("README.md").exists());
+    // Asking again reopens it.
+    assert_eq!(env.json(&work, &["sample"])["created"], false);
+    assert!(
+        String::from_utf8_lossy(&env.run(&work, &["sample"]).stdout).contains("Tasks: T-1, T-2")
+    );
+
+    env.ok(&root, &["task", "start", "T-1", "--agent", "claude"]);
+    std::fs::write(
+        root.join("README.md"),
+        "# Evyro sample\n\nA tiny project for trying Evyro. It has two notes files.\n",
+    )
+    .unwrap();
+    env.ok(
+        &root,
+        &[
+            "checkpoint",
+            "--done",
+            "Wrote the README",
+            "--next",
+            "Add the notes",
+        ],
+    );
+    // The sample's own test command is the one the receipt records.
+    let out = env.ok(&root, &["verify", "--", "git", "diff", "--check"]);
+    assert!(out.contains("PASS"), "{out}");
+    env.ok(
+        &root,
+        &[
+            "handoff",
+            "--task",
+            "T-1",
+            "--to",
+            "codex",
+            "--next",
+            "Add the notes",
+        ],
+    );
+    let handoffs = env.json(&root, &["handoffs"]);
+    assert_eq!(handoffs.as_array().unwrap().len(), 1);
+}

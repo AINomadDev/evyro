@@ -157,6 +157,9 @@ enum Cmd {
     /// Git worktrees.
     #[command(subcommand)]
     Worktrees(WorktreeCmd),
+    /// Create a small sample project to try Evyro on (inside Evyro's own data folder) with two
+    /// ready tasks and a test command that works anywhere, and print the first steps.
+    Sample,
     /// The pull request of a task: what is failing and what reviewers asked for, as a prompt
     /// for the AI that owns the branch. Needs the GitHub CLI (`gh`).
     Pr {
@@ -1651,6 +1654,19 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
             let r = store.recover_stale_sessions(&p.id, include_unknown)?;
             o.print(&r, || if r.is_empty() { "No stale sessions.".into() } else {
                 r.iter().map(|x| format!("Recovered {} session {}: checkpoint {}; changed since last checkpoint: {}\n  Continue with `evyro handoff --to <agent>`.", x.harness, x.session_id, x.checkpoint_id, if x.changed_since_last_checkpoint.is_empty() { "none".into() } else { x.changed_since_last_checkpoint.join(", ") })).collect::<Vec<_>>().join("\n")
+            });
+        }
+        Cmd::Sample => {
+            let r = store.create_sample_project()?;
+            let root = r.project.root();
+            o.print(&r, || {
+                format!(
+                    "{} sample project at {}\nTasks: {}\n\nTry it, five minutes:\n  cd \"{}\"\n  evyro tasks\n  evyro run --to claude --task T-1     (or codex, gemini ...; any AI you have)\n  evyro verify -- git diff --check     (a recorded test run)\n  evyro handoff --task T-1 --to codex   (move it to another AI)\nOr open it in the desktop app: it is already in your project list.",
+                    if r.created { "Created the" } else { "The" },
+                    root.display(),
+                    r.tasks.join(", "),
+                    root.display()
+                )
             });
         }
         Cmd::Pr { cmd } => {

@@ -267,7 +267,7 @@ function render() {
       h("h1", null, "Welcome to Evyro"),
       h("p", null, "Start a task with one AI and finish it with another. Evyro keeps the task, the progress, the tests and a signed handoff, so the next AI does not start from scratch."),
       h("ol", { class: "setup" },
-        h("li", null, h("strong", null, "Add a project. "), "Pick a Git repository on this computer.", h("div", null, h("button", { class: "btn primary small", onclick: addProjectDialog }, "Add a project"))),
+        h("li", null, h("strong", null, "Add a project. "), "Pick a Git repository on this computer, or try a small sample first.", h("div", { class: "row" }, h("button", { class: "btn primary small", onclick: addProjectDialog }, "Add a project"), h("button", { class: "btn small", onclick: trySample }, "Try the sample project"))),
         h("li", null, h("strong", null, "Check your AIs. "), "See which coding agents, API keys, IDEs and chat apps are ready, and add your own.", h("div", null, h("button", { class: "btn small", onclick: () => setTab("agents") }, "Open AI targets"))),
         h("li", null, h("strong", null, "Plan, work, switch. "), "Create a task with acceptance criteria, start it with one AI, and use Hand off to move it to another.")),
       h("p", { class: "small" }, "Press ", h("kbd", null, MOD + " K"), " any time for every action. Projects you set up with ", h("code", null, "evyro init"), " appear here automatically.")));
@@ -402,6 +402,48 @@ async function workOnNext(button = null) {
   finally { if (button?.isConnected) button.disabled = false; }
 }
 
+// ---------- guided tour: the first task, checkpoint, receipt and handoff on a sample project ----------
+const TOUR_KEY = "evyro.tour.dismissed";
+function tourDismissed() { try { return localStorage.getItem(TOUR_KEY) === "1"; } catch { return false; } }
+function setTourDismissed(v) { try { if (v) localStorage.setItem(TOUR_KEY, "1"); else localStorage.removeItem(TOUR_KEY); } catch { /* remembered until restart */ } }
+const isSample = (p) => !!p && p.name === "Evyro sample" && /[\\/]samples[\\/]evyro-sample$/.test(p.root_path || "");
+
+/** Create (or reopen) the sample project, open it, and show the tour. */
+async function trySample() {
+  let r;
+  try { r = await act(() => invoke("create_sample"), "Sample project ready"); }
+  catch { return; }
+  setTourDismissed(false);
+  await loadProjects(r.project.id);
+  setTab("tasks");
+}
+
+/** The checklist: each step is ticked from what Evyro really recorded, not from clicks. */
+async function drawTour(box, pid, again) {
+  if (!box.isConnected || state.project?.id !== pid) return;
+  if (!isSample(state.project) || tourDismissed()) { clear(box); return; }
+  let st;
+  try { st = await invoke("tour_status", { projectId: pid }); } catch { return; }
+  if (!box.isConnected) return;
+  const first = state.project && (await invoke("list_tasks", { projectId: pid }).catch(() => []))[0]?.task.key || "T-1";
+  const steps = [
+    ["Start an AI on the first task", st.started, h("button", { class: "btn small", onclick: () => newThreadDialog(first) }, "Start with…")],
+    ["Let it save progress. It records a checkpoint as it works; ask it to run evyro checkpoint if it has not", st.checkpoint, null],
+    ["Run the tests and keep the receipt", st.verified, h("button", { class: "btn small", onclick: () => runVerify(first, again) }, "Run tests")],
+    ["Hand the task to a different AI", st.handoff, h("button", { class: "btn small", onclick: () => handoffDialog(first) }, "Hand off…")],
+  ];
+  const done = steps.filter((x) => x[1]).length;
+  clear(box).append(h("section", { class: "card tour", "aria-label": "Guided tour" },
+    h("div", { class: "row" }, h("h3", { style: "margin:0" }, done === steps.length ? "You have done the whole loop" : "Try Evyro in five minutes"),
+      h("span", { class: "spacer" }), h("span", { class: "muted small" }, `${done} of ${steps.length}`),
+      h("button", { class: "btn small", onclick: () => { setTourDismissed(true); clear(box); } }, "Dismiss")),
+    done === steps.length
+      ? h("p", { class: "small" }, "That is the loop on any project: a task, an AI, a checkpoint, a receipt, a handoff. ", h("button", { class: "btn small primary", onclick: addProjectDialog }, "Add your own project"))
+      : h("ol", { class: "tour-steps" }, steps.map(([label, ok, action]) => h("li", { class: ok ? "done" : "" },
+        h("span", { class: "tour-mark", "aria-hidden": "true" }, ok ? "✓" : "○"), h("span", null, label, ok ? h("span", { class: "sr-only" }, " (done)") : null),
+        !ok && action ? action : null)))));
+}
+
 async function viewTasks(v) {
   const pid = state.project.id;
   const head = h("div", { class: "row", style: "margin-bottom:14px" },
@@ -411,6 +453,8 @@ async function viewTasks(v) {
     h("span", { class: "spacer" }),
     h("span", { class: "muted small" }, "Cards show the AIs working on them live. Click a task for criteria, checkpoints and receipts."));
   v.append(head);
+  const tourBox = h("div");
+  v.append(tourBox);
   const board = h("div", { class: "board" });
   v.append(board);
   const canRefresh = () => board.isConnected && state.project?.id === pid && !board.contains(document.activeElement);
@@ -421,6 +465,7 @@ async function viewTasks(v) {
     try { rows = await invoke("list_tasks", { projectId: pid, includeClosed: true }); }
     catch (e) { if (canRefresh()) clear(board).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
     if (!canRefresh()) return;
+    drawTour(tourBox, pid, draw);
     clear(board);
     for (const [st, label] of COLUMNS) {
       const items = rows.filter((r) => r.task.status === st);
@@ -1170,6 +1215,8 @@ const TABS = [["workspace", "Workspace"], ["tasks", "Tasks"], ["changes", "Chang
 async function paletteActions() {
   const acts = TABS.map(([v, l], i) => ({ label: `Go to ${l}`, hint: i < 9 ? `${MOD} ${i + 1}` : "", run: () => setTab(v) }));
   acts.push({ label: "Add a project", run: addProjectDialog });
+  acts.push({ label: "Try the sample project", run: trySample });
+  if (isSample(state.project)) acts.push({ label: "Show the guided tour", run: () => { setTourDismissed(false); setTab("tasks"); } });
   if (state.project) {
     acts.push({ label: "New task", hint: `${MOD} N`, run: () => { setTab("tasks"); newTaskDialog(); } });
     acts.push({ label: "New handoff", run: () => handoffDialog(null) });

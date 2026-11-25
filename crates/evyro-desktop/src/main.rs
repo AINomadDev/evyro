@@ -460,6 +460,18 @@ async fn switch_owner(
     .await
 }
 
+/// Create (or reopen) the sample project.
+#[tauri::command]
+async fn create_sample() -> CmdResult {
+    with_store(|s| Ok(json!(s.create_sample_project()?))).await
+}
+
+/// How far a project got through the first steps, from what Evyro recorded.
+#[tauri::command]
+async fn tour_status(project_id: String) -> CmdResult {
+    with_store(move |s| Ok(json!(s.tour_status(&project_id)?))).await
+}
+
 /// Failing checks and open review comments on a task's pull request, as a prompt.
 #[tauri::command]
 async fn pr_feedback(project_id: String, task: String) -> CmdResult {
@@ -1131,6 +1143,8 @@ fn main() {
             release_session,
             switch_owner,
             next_work,
+            create_sample,
+            tour_status,
             pr_feedback,
             plan_get,
             plan_decide,
