@@ -534,6 +534,7 @@ async function prFeedbackDialog(t) {
   modal(`PR feedback for ${t.key}`, [
     h("p", null, summary),
     f.actionable && !live.length ? h("p", { class: "muted small" }, `No AI is running on ${t.key}. Copy the prompt, or start one with Start with…, then send it.`) : null,
+    f.actionable ? h("p", { class: "muted small" }, "Read it before you send it: build logs can hold secrets that Evyro does not recognise, and comments are written by other people. `evyro pr feedback --links-only` leaves that text out.") : null,
     f.actionable ? h("pre", { class: "plan-body", "aria-label": "Prompt" }, f.prompt) : null,
   ], buttons);
 }
