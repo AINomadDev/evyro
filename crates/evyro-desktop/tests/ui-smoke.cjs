@@ -898,7 +898,7 @@ const FIX = {
     await step("accessibility: no serious WCAG problems on any screen, in every theme", async () => {
       const found = [];
       // System light and dark, then the two extra themes from Appearance settings.
-      for (const scheme of ["light", "dark", "midnight", "paper"]) {
+      for (const scheme of ["light", "dark", "midnight", "paper", "contrast-light", "contrast-dark"]) {
       if (["light", "dark"].includes(scheme)) await page.emulateMedia({ colorScheme: scheme });
       else await page.evaluate((t) => saveAppearance({ theme: t }), scheme);
       for (const v of ["workspace", "tasks", "changes", "history", "knowledge", "skills", "agents", "settings"]) {
@@ -910,6 +910,14 @@ const FIX = {
           return r.violations.map((x) => ({ id: x.id, impact: x.impact, help: x.help, nodes: x.nodes.slice(0, 3).map((n) => { const d = n.any[0] && n.any[0].data; return n.target.join(" ") + (d && d.fgColor ? ` ${d.fgColor} on ${d.bgColor} = ${d.contrastRatio}` : ""); }) }));
         });
         for (const x of res) found.push({ screen: `${v}, ${scheme}`, ...x });
+        if (scheme.startsWith("contrast")) {
+          // The high-contrast themes promise 7:1 (WCAG AAA) for text.
+          const enhanced = await page.evaluate(async () => {
+            const r = await window.axe.run(document, { preload: false, runOnly: { type: "rule", values: ["color-contrast-enhanced"] } });
+            return r.violations.map((x) => ({ id: x.id, impact: x.impact, help: x.help, nodes: x.nodes.slice(0, 3).map((n) => { const d = n.any[0] && n.any[0].data; return n.target.join(" ") + (d && d.fgColor ? ` ${d.fgColor} on ${d.bgColor} = ${d.contrastRatio}` : ""); }) }));
+          });
+          for (const x of enhanced) found.push({ screen: `${v}, ${scheme}`, ...x, impact: "serious" });
+        }
       }
       }
       await page.evaluate(() => saveAppearance({ theme: "system" }));
@@ -921,6 +929,36 @@ const FIX = {
   } else {
     console.log("SKIP  accessibility (axe-core not installed)");
   }
+  await step("high contrast and reduced motion follow the system and the setting", async () => {
+    await page.evaluate(() => saveAppearance({ theme: "system", motion: "system" }));
+    // System: a request for more contrast picks the high-contrast theme of the current scheme.
+    try { await page.emulateMedia({ colorScheme: "dark", contrast: "more" }); }
+    catch { await page.emulateMedia({ colorScheme: "dark" }); }
+    await page.evaluate(() => applyAppearance());
+    const sys = await page.evaluate(() => ({ theme: document.documentElement.dataset.theme, more: matchMedia("(prefers-contrast: more)").matches }));
+    if (sys.more && sys.theme !== "contrast-dark") throw new Error("system contrast request ignored: " + JSON.stringify(sys));
+    await page.emulateMedia({ colorScheme: "light", contrast: "no-preference" }).catch(() => page.emulateMedia({ colorScheme: "light" }));
+    // Motion: a probe that animates is stopped by the system request and by the setting, and runs otherwise.
+    const probe = () => page.evaluate(() => {
+      let el = document.getElementById("motion-probe");
+      if (!el) { el = document.createElement("div"); el.id = "motion-probe"; el.style.cssText = "animation: pulse 1s infinite; transition: opacity 1s"; document.body.append(el); }
+      return { mode: document.documentElement.dataset.motion, animation: getComputedStyle(el).animationName, blink: reducedMotion() };
+    });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.evaluate(() => applyAppearance());
+    const full = await probe();
+    if (full.mode !== "full" || full.animation !== "pulse") throw new Error("motion off without a request: " + JSON.stringify(full));
+    await page.evaluate(() => saveAppearance({ motion: "reduce" }));
+    const setting = await probe();
+    if (setting.mode !== "reduce" || setting.animation !== "none" || !setting.blink) throw new Error("the setting did not stop motion: " + JSON.stringify(setting));
+    await page.evaluate(() => saveAppearance({ motion: "system" }));
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.evaluate(() => applyAppearance());
+    const os = await probe();
+    if (os.mode !== "reduce" || os.animation !== "none") throw new Error("the system request did not stop motion: " + JSON.stringify(os));
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.evaluate(() => { document.getElementById("motion-probe")?.remove(); saveAppearance({ theme: "system", motion: "system" }); });
+  });
   // Keyboard only: on every screen, everything that reacts to a click can be
   // reached with Tab, and whatever Tab reaches shows where the focus is.
   await step("keyboard only: every control reachable with Tab and visibly focused", async () => {
