@@ -48,7 +48,7 @@ impl Store {
     /// A person approves the pieces an AI wrote for `parent`, so workers may start them.
     pub fn approve_pieces(&self, project_id: &str, parent: &str) -> Result<Vec<Task>> {
         let parent = self.resolve_task(project_id, parent)?;
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut approved = Vec::new();
         for t in self.list_tasks(project_id, None, true)? {
             if t.parent_id.as_deref() != Some(parent.id.as_str()) || !t.awaiting_review() {
@@ -189,7 +189,7 @@ impl Store {
                 parent.key
             ));
         }
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let mut created: Vec<Task> = Vec::new();
         for (i, p) in parts.iter().enumerate() {
             let t = self.insert_task(
@@ -394,6 +394,37 @@ mod tests {
             .next_claimable_under(&pid2, "claude-code", Some(&parent2))
             .unwrap()
             .is_some());
+    }
+
+    #[test]
+    fn several_processes_writing_at_once_wait_their_turn_instead_of_failing() {
+        let (_d, store, pid, parent) = setup();
+        let paths = store.paths.clone();
+        let handles: Vec<_> = (0..4)
+            .map(|n| {
+                let paths = paths.clone();
+                let (pid, key) = (pid.clone(), parent.key.clone());
+                std::thread::spawn(move || {
+                    // Each thread has its own connection, like each `evyro` process.
+                    let own = Store::open_at(&paths.db_path(), paths.clone()).unwrap();
+                    for i in 0..15 {
+                        own.create_task(
+                            &pid,
+                            NewTask {
+                                title: format!("w{n}-{i}"),
+                                parent: Some(key.clone()),
+                                ..Default::default()
+                            },
+                        )
+                        .unwrap_or_else(|e| panic!("writer {n} failed on {i}: {e}"));
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(store.list_tasks(&pid, None, true).unwrap().len(), 1 + 60);
     }
 
     #[test]

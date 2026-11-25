@@ -2975,6 +2975,13 @@ fn work_cmd(
         });
         return Ok(0);
     }
+    // Starting an AI spends usage, so an AI does not do it for itself: run this yourself.
+    if std::env::var("EVYRO_SESSION_ID").is_ok_and(|v| !v.is_empty()) {
+        return Err(Error::Invalid(
+            "evyro work starts other AIs and spends their usage, so it is for a person (or your own script), not for an AI inside a session; --dry-run is allowed".into(),
+        )
+        .into());
+    }
     if !o.quiet && !o.json {
         eprintln!("Starting {summary}");
     }

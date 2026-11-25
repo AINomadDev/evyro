@@ -3085,6 +3085,23 @@ fn split_a_task_then_start_its_pieces_one_ai_each() {
         &repo,
         &["work", "--under", "T-1", "--agent", "claude", "--headless"],
     );
+    // Inside an AI's session it may look but not start anyone.
+    let o = env
+        .cmd(&repo, &["work", "--under", "T-1", "--agent", "codex"])
+        .env("EVYRO_SESSION_ID", "ses_any")
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("not for an AI"));
+    let o = env
+        .cmd(
+            &repo,
+            &["work", "--under", "T-1", "--agent", "codex", "--dry-run"],
+        )
+        .env("EVYRO_SESSION_ID", "ses_any")
+        .output()
+        .unwrap();
+    assert!(o.status.success());
     // The second AI gets the other independent piece, never the one that waits.
     let second = env.json(
         &repo,

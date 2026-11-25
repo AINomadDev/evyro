@@ -6,7 +6,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ### Added
 
-- `evyro task split T-1 --file pieces.json` (and the `split_task` MCP tool) splits a task into up to eight pieces, each with the files it changes. Pieces that share files run one after the other, so two AIs never edit the same files at once. `evyro work --under T-1` then starts the next piece on a free AI. Nothing starts by itself: you start the workers. Pieces an AI wrote (the `split_task` tool, or the command run inside an AI's session) also wait for you: `evyro work` skips them until you read them and run `evyro task approve-pieces T-1` at a terminal.
+- `evyro task split T-1 --file pieces.json` (and the `split_task` MCP tool) splits a task into up to eight pieces, each with the files it changes. Pieces that share files run one after the other, so two AIs never edit the same files at once. `evyro work --under T-1` then starts the next piece on a free AI; it refuses to run inside an AI's session, since starting an AI spends usage. Nothing starts by itself: you start the workers. Pieces an AI wrote (the `split_task` tool, or the command run inside an AI's session) also wait for you: `evyro work` skips them until you read them and run `evyro task approve-pieces T-1` at a terminal.
 - Plan first: `evyro run --plan-first` (and **Plan first** in New agent thread) has an AI propose a plan for a task and wait. You read it with `evyro plan show`, approve or reject it with `evyro plan approve` / `reject` or on the task in the desktop, and the AI that builds gets the approved plan in its context. Claude Code and Codex start read-only; other AIs are asked. Approving needs a person: the command wants a real terminal and the task key typed, so an AI or script is refused, the desktop has a button, and the MCP tools (`propose_plan`, `get_plan`) cannot approve. This is a strong speed bump, not a lock against a program running as you.
 - A running AI thread that prints nothing for ten minutes, or repeats the same line 30 times in a row, is marked "stuck?" and shows a banner with **Switch to <AI>…** and **Stop**. Nothing is stopped for you, since a long silent step can be real work.
 - Sessions Evyro cannot watch as a process (a hand-started task, for instance) now count as live while they report in and as gone after 30 minutes of silence. Any checkpoint or event counts, and `evyro heartbeat` is there for a long quiet stretch. `evyro recover` and the task checkout no longer need a confirmation or wait on a session that went silent.
@@ -32,6 +32,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ### Fixed
 
+- Two AIs running `evyro` at the same moment no longer fail with "database is locked": writes that read first now take the write lock when they begin and wait their turn.
 - Clicking anywhere in a terminal pane now focuses it, so Enter reaches prompts such as a workspace-trust question; a pane redraw no longer drops focus.
 - Reopening a thread no longer types stray "3R3R3R" into the running AI: the terminal's replies to replayed output are ignored.
 - Saved and replayed terminal output no longer starts in the middle of an escape sequence.

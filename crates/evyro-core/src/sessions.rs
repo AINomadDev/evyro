@@ -581,7 +581,7 @@ impl Store {
                 "session {session_id} is not running in this project"
             )));
         }
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         self.check_claim(project_id, task_id, &ses.harness, Some(&ses.id))?;
         let now = util::now();
         self.conn.execute(

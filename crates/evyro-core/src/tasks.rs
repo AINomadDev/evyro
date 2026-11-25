@@ -250,7 +250,7 @@ impl Task {
 
 impl Store {
     pub fn create_task(&self, project_id: &str, t: NewTask) -> Result<Task> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let task = self.insert_task(project_id, t, None)?;
         tx.commit()?;
         Ok(task)
