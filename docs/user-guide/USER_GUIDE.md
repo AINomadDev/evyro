@@ -327,7 +327,7 @@ evyro task split T-1 --file pieces.json   # up to 8 pieces; an AI uses the split
 evyro work --under T-1                    # starts the next piece on a free AI
 ```
 
-Pieces that share files (`src/api` and `src/api/tests` here) wait for each other, and `after` names earlier pieces by number, so two AIs never edit the same files at once. Pieces inherit the task's priority and constraints. You start the workers: an AI cannot spend other AIs' usage on its own, and a piece that needs a person is not split. A piece's title is kept to one line, and its description is stored fenced as data (it was written by an AI and the next AI reads it). The pieces' own progress shows on the board; the parent stays yours to move to review when they are done.
+Pieces that share files (`src/api` and `src/api/tests` here) wait for each other, and `after` names earlier pieces by number, so two AIs never edit the same files at once. Pieces inherit the task's priority and constraints. You start the workers: an AI cannot spend other AIs' usage on its own, and a piece that needs a person is not split. A piece's title is kept to one line, and its description (at most 2000 characters) is stored fenced as data (it was written by an AI and the next AI reads it). Fencing lowers the risk; it cannot stop an AI that chooses to follow what it reads, so review pieces from an AI you do not trust before you start them. A task keeps at most 16 unfinished pieces. The pieces' own progress shows on the board; the parent stays yours to move to review when they are done.
 
 ### 4.6a Plan first, then build
 

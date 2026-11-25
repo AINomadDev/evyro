@@ -12,6 +12,10 @@ use serde::{Deserialize, Serialize};
 
 /// The most pieces one split may create.
 pub const MAX_PARTS: usize = 8;
+/// The most unfinished pieces one task may have, however many splits made them.
+pub const MAX_OPEN_PIECES: usize = 16;
+/// The longest piece description, in characters.
+pub const MAX_DESCRIPTION_CHARS: usize = 2000;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SplitPart {
@@ -82,7 +86,24 @@ impl Store {
                 parts.len()
             )));
         }
+        let open = self
+            .list_tasks(project_id, None, false)?
+            .into_iter()
+            .filter(|t| t.parent_id.as_deref() == Some(parent.id.as_str()))
+            .count();
+        if open + parts.len() > MAX_OPEN_PIECES {
+            return Err(Error::Invalid(format!(
+                "{} already has {open} unfinished pieces; at most {MAX_OPEN_PIECES} at once. Finish or cancel some first",
+                parent.key
+            )));
+        }
         for (i, p) in parts.iter().enumerate() {
+            if p.description.chars().count() > MAX_DESCRIPTION_CHARS {
+                return Err(Error::Invalid(format!(
+                    "piece {} has a description over {MAX_DESCRIPTION_CHARS} characters; keep it to what the worker must know",
+                    i + 1
+                )));
+            }
             if p.title.trim().is_empty() {
                 return Err(Error::Invalid(format!("piece {} has no title", i + 1)));
             }
@@ -269,6 +290,29 @@ mod tests {
             .split_task(&pid, &parent.key, &[part("plain", &[], &[])])
             .unwrap();
         assert_eq!(r.created[0].description, "");
+    }
+
+    #[test]
+    fn a_task_cannot_collect_more_than_the_open_piece_limit() {
+        let (_d, store, pid, parent) = setup();
+        let two = |n: usize| -> Vec<SplitPart> {
+            (0..n).map(|i| part(&format!("p{i}"), &[], &[])).collect()
+        };
+        store
+            .split_task(&pid, &parent.key, &two(MAX_PARTS))
+            .unwrap();
+        store
+            .split_task(&pid, &parent.key, &two(MAX_PARTS))
+            .unwrap();
+        let err = store.split_task(&pid, &parent.key, &two(1)).unwrap_err();
+        assert!(err.to_string().contains("unfinished pieces"), "{err}");
+        let long = SplitPart {
+            title: "x".into(),
+            description: "y".repeat(MAX_DESCRIPTION_CHARS + 1),
+            ..Default::default()
+        };
+        let (_d2, store2, pid2, parent2) = setup();
+        assert!(store2.split_task(&pid2, &parent2.key, &[long]).is_err());
     }
 
     #[test]
