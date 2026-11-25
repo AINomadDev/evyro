@@ -2,6 +2,8 @@
 
 Inspected on 2026-11-22 by shallow-cloning each repository at its default branch. Commit hashes are the HEAD that was read. "Inspected" means the source tree, license file and README were read; for T3 Code, px0, relay and OpenCode specific source files were read as noted. Nothing here is a benchmark of those projects: their performance claims are recorded as claims.
 
+A watch list of newer projects, with gaps found in them, is in [REFERENCE_PROJECTS.md](REFERENCE_PROJECTS.md).
+
 ## Summary table
 
 | Project | Commit (date) | License | Main language | Status on 2026-11-22 | Relevance to Evyro |
