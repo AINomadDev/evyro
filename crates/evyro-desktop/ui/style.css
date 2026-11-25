@@ -608,3 +608,5 @@ label.check.ap-row { display: flex; }
 .ks { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; margin: 0; }
 .ks dt { margin: 0; }
 .ks dd { margin: 0; text-align: right; white-space: nowrap; }
+.card-files { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-wait { margin-top: 6px; }

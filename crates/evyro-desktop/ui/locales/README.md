@@ -14,3 +14,9 @@ The desktop app reads its words from `locales/<code>.js`. `en.js` is the source.
 
 Not everything is in a catalog yet: the lint prints how many literal strings each file still holds, and
 that number may only go down.
+
+## A variable named `t`
+
+Many functions hold a task in a variable called `t`, which hides the translation function. Inside
+one, write `I18N.t("key")` instead of `t("key")`. The lint counts both. A screen that shows
+"t is not a function" is this mistake.

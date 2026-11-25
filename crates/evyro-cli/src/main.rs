@@ -798,6 +798,12 @@ enum PlanCmd {
         #[arg(long)]
         file: Option<PathBuf>,
     },
+    /// Show the files the plan names that exist in the checkout: what approving it would declare
+    /// for the task. Changes nothing.
+    Files {
+        /// The task whose plan to read.
+        task: String,
+    },
     /// Approve the plan that is waiting. A person has to run it at a terminal and type the task
     /// key; it refuses when run by an AI or from a script.
     Approve {
@@ -1265,6 +1271,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                     all,
                 )?
             };
+            let views = store.file_views(&p.id)?;
             o.print(&ts, || {
                 if ts.is_empty() {
                     return "No tasks. Add one: evyro task add \"<title>\"".into();
@@ -1272,7 +1279,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 ts.iter()
                     .map(|t| {
                         format!(
-                            "{:<6} {:<12} P{} {:<8} {}{}{}",
+                            "{:<6} {:<12} P{} {:<8} {}{}{}{}",
                             t.key,
                             t.status,
                             t.priority,
@@ -1288,6 +1295,13 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                                 "  (awaiting review)"
                             } else {
                                 ""
+                            },
+                            match views.get(&t.id).and_then(|v| v.blocked_by.as_ref()) {
+                                Some(b) => format!(
+                                    "  (waits for {} held by {}: {})",
+                                    b.task, b.owner, b.file
+                                ),
+                                None => String::new(),
                             }
                         )
                     })
@@ -1703,6 +1717,25 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                         }),
                     }
                 }
+                PlanCmd::Files { task } => {
+                    let t = store.resolve_task(&p.id, &task)?;
+                    let plan = store
+                        .plan(&t.id)?
+                        .ok_or_else(|| Error::Invalid(format!("{} has no plan yet", t.key)))?;
+                    let files =
+                        evyro_core::ownership::plan_files(&plan.body, &store.task_root(&t)?);
+                    o.print(
+                        &json!({"task": t.key, "files": files, "declared": t.files}),
+                        || {
+                            if files.is_empty() {
+                                "The plan names no file or folder that exists in the checkout."
+                                    .to_owned()
+                            } else {
+                                format!("Approving would declare: {}", files.join(", "))
+                            }
+                        },
+                    );
+                }
                 PlanCmd::Set { task, text, file } => {
                     use std::io::Read;
                     let t = store.resolve_task(&p.id, &task)?;
@@ -1740,9 +1773,17 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                     let t = store.resolve_task(&p.id, &task)?;
                     confirm_person(&t.key, "approve", in_session.is_some())?;
                     let plan = store.decide_plan(&t, true, note.as_deref())?;
-                    o.print(&plan, || {
+                    let declared = store.declare_plan_files(&t)?;
+                    let mut out = json!(plan);
+                    out["declared_files"] = json!(declared);
+                    o.print(&out, || {
+                        let files = if declared.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" Files declared from the plan: {}.", declared.join(", "))
+                        };
                         format!(
-                            "Plan for {} approved. Start it with `evyro run --to <ai> --task {}`.",
+                            "Plan for {} approved.{files} Start it with `evyro run --to <ai> --task {}`.",
                             t.key, t.key
                         )
                     });

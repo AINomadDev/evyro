@@ -85,6 +85,17 @@ I18N.catalogs.en = {
   "tour.closing": "That is the loop on any project: a task, an AI, a checkpoint, a receipt, a handoff. ",
   "tour.addOwn": "Add your own project",
 
+  // Task board: who owns which files
+  "board.files": "Files: {files}",
+  "board.filesMore": "{files} and {n} more",
+  "board.waits": "Waits for {task} ({owner})",
+  "board.waits.title": "Both change {file}. Only one AI works on a set of files at a time, so this task starts when {task} is done or switched.",
+  "board.overlaps": "Shares files with {tasks}",
+  "board.overlaps.title": "These tasks declare overlapping files, so they take turns instead of running side by side.",
+  "drawer.files": "Files this task changes",
+  "drawer.files.none": "None declared. Approving a plan that names files declares them; until then two AIs could edit the same ones.",
+  "plan.declared": "Files declared from the plan: {files}.",
+
   // Language
   "language.label": "Language",
   "language.system": "Follow system",

@@ -332,6 +332,14 @@ In the desktop, open the task and choose **PR feedback…**: it shows how many c
 
 The prompt holds each failing check with the last 60 lines of its log, and each unresolved, current review comment with its file and line. Secrets in logs are redacted by pattern, which is best effort: a log can still hold a secret Evyro does not recognise, so read the prompt before you send it, or use `--links-only`. Everything quoted from GitHub is fenced as data with a line telling the AI not to follow instructions inside it. Evyro never sends it by itself and never changes the pull request. It needs the GitHub CLI (`gh`) signed in; at most 10 failing checks and 10 comments are quoted, with a count of the rest, and a comment is cut at 2000 characters and a log at 6000. Add `--links-only` to name the failing checks and comments with links and quote no log or comment text at all. The desktop shows the whole prompt, and asks once more in words before it sends anything, so you read what an AI will be given; fencing lowers the risk but cannot stop an AI that chooses to follow what a comment says.
 
+### 4.6d Who owns which files
+
+A task declares the files or folders it changes (`evyro task add ... --file src/api`, a split piece's `files`, or an approved plan). Two tasks that declare overlapping files never run side by side. The task board and `evyro tasks` show it:
+
+- **Waits for T-3 (codex)**: a live AI holds a task whose files overlap this one's, so this task starts when that one is done or switched (`evyro tasks` prints `waits for T-3 held by codex: src/api`).
+- **Shares files with T-4**: another open task declares overlapping files, so they will take turns.
+- Each card lists its first files, and the task drawer lists all of them. A task that declares no files is never blocked, which also means two AIs could edit the same files, so declare files on work that runs in parallel.
+
 ### 4.6b Split a big task between several AIs
 
 One AI (or you) describes the pieces; Evyro creates them as ready subtasks and starts nothing.
@@ -367,6 +375,7 @@ In the desktop app, tick **Plan first** when you start a thread on a task. The p
 What is and is not enforced:
 
 - **Claude Code and Codex start read-only** in plan mode (Claude Code's `plan` permission mode, Codex's `read-only` sandbox). For every other AI the instruction is a request, not a lock, and Evyro says so when it starts.
+- **Approving declares the files.** Evyro reads the plan for file and folder names, keeps those that exist in the checkout, and declares them as the task's files (`evyro plan files T-4` previews them; the approve message lists them). Declared files are how Evyro keeps two AIs off the same files: see below.
 - **Only a person approves.** `evyro plan approve` needs a real terminal and makes you type the task key, so it refuses when an AI or a script runs it. The desktop's **Approve plan** button is the other route, and the MCP server has `propose_plan` and `get_plan` but no way to approve. A new plan after an approval needs its own approval.
 - **This is a strong speed bump, not a lock.** A program running as you could still open a terminal of its own or edit Evyro's database. If you do not trust the AI with that, use the desktop button and a sandboxed or read-only AI.
 - **The plan is text from an AI**, so the next AI reads it fenced as data, like every note carried between AIs. Secrets in it are redacted.

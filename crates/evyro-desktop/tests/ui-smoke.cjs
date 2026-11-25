@@ -1327,6 +1327,22 @@ const FIX = {
       state.threads = state.threads.filter((x) => x.id !== "term_limit");
     });
   });
+  await step("the board shows a task's files, the AI that blocks it, and tasks it shares files with", async () => {
+    const r = await page.evaluate(() => {
+      const base = { criteria_total: 0, criteria_met: 0, owner: null, blocked_by: [] };
+      const text = (row) => taskCard(row).textContent;
+      const task = (files) => ({ key: "T-7", title: "Tidy", kind: "task", priority: 2, status: "ready", files });
+      return {
+        blocked: text({ ...base, task: task(["src/a", "src/b", "src/c"]), file_blocked_by: { task: "T-3", owner: "codex", file: "src/a" }, file_overlaps: ["T-3"] }),
+        overlap: text({ ...base, task: task(["src/a"]), file_blocked_by: null, file_overlaps: ["T-4", "T-5"] }),
+        plain: text({ ...base, task: task([]), file_blocked_by: null, file_overlaps: [] }),
+      };
+    });
+    if (!/Files: src\/a, src\/b and 1 more/.test(r.blocked) || !/Waits for T-3 \(codex\)/.test(r.blocked)) throw new Error("blocked card: " + r.blocked);
+    if (/Shares files/.test(r.blocked)) throw new Error("a blocked card also lists overlaps");
+    if (!/Shares files with T-4, T-5/.test(r.overlap) || /Waits for/.test(r.overlap)) throw new Error("overlap card: " + r.overlap);
+    if (/Files:|Waits for|Shares files/.test(r.plain)) throw new Error("a task with no files shows file notes: " + r.plain);
+  });
   await step("Plan first is offered for a task, and a waiting plan can be approved by a person", async () => {
     await page.evaluate(() => { window.__plan = null; window.__lastTermOpen = null; setTab("workspace"); newThreadDialog("T-1"); });
     const dialog = page.getByRole("dialog", { name: "New agent thread" });

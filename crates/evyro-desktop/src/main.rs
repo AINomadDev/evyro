@@ -149,8 +149,10 @@ async fn overview(project_id: String) -> CmdResult {
 async fn list_tasks(project_id: String, include_closed: Option<bool>) -> CmdResult {
     with_store(move |s| {
         let ts = s.list_tasks(&project_id, None, include_closed.unwrap_or(true))?;
+        let views = s.file_views(&project_id)?;
         let mut out = Vec::new();
         for t in ts {
+            let view = views.get(&t.id).cloned().unwrap_or_default();
             let criteria = s.criteria(&t)?;
             let met = criteria.iter().filter(|c| c.satisfied()).count();
             let owner = s.active_session_for_task(&t.id)?;
@@ -161,6 +163,8 @@ async fn list_tasks(project_id: String, include_closed: Option<bool>) -> CmdResu
                 "criteria_total": criteria.len(),
                 "owner": owner.map(|o| o.harness),
                 "blocked_by": blockers.iter().map(|b| b.key.clone()).collect::<Vec<_>>(),
+                "file_blocked_by": view.blocked_by,
+                "file_overlaps": view.overlaps,
             }));
         }
         Ok(json!(out))
@@ -502,7 +506,16 @@ async fn plan_decide(
 ) -> CmdResult {
     with_store(move |s| {
         let t = s.resolve_task(&project_id, &task)?;
-        Ok(json!(s.decide_plan(&t, approve, note.as_deref())?))
+        let plan = s.decide_plan(&t, approve, note.as_deref())?;
+        // An approved plan declares the files it names, so the board can show who owns what.
+        let declared = if approve {
+            s.declare_plan_files(&t)?
+        } else {
+            vec![]
+        };
+        let mut out = json!(plan);
+        out["declared_files"] = json!(declared);
+        Ok(out)
     })
     .await
 }
