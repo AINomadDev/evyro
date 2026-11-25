@@ -83,6 +83,7 @@ Status as of 2026-11-23 (v0.1.0). Everything not listed under "Works" is pending
 
 - The contract HMAC key is per install, so contracts moved to another machine verify by content hash only.
 - Redaction is pattern-based and can miss unusual secret formats.
+- Usage-limit detection reads what an AI prints, against a list of wordings (Claude Code, Codex, Gemini-style quota errors and general phrasing). The wordings were written from documentation and memory, not captured from each AI's current release, so a new or reworded message is missed until a line is added in `crates/evyro-term/src/watchdog.rs`. It can also fire on an AI that merely prints such a sentence while working on code about limits; it only offers the switch, which still needs a person's confirmation.
 - The Linux desktop build pulls in `glib` 0.18 through Tauri's GTK libraries, which has a medium advisory (GHSA-wrw7-89jp-8q8g, unsound `VariantStrIter`). Evyro never uses that iterator, and the fix needs Tauri to move to gtk-rs 0.20 or later.
 - Checkpoint progress fields are agent-reported; Evyro verifies Git state and receipts, not prose.
 - A found login file does not prove the account can run (plan, usage limit, forced migration); that shows only when the tool runs.

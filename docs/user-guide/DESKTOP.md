@@ -92,6 +92,8 @@ When an AI's usage is low or out, the banner offers **Switch to <AI>…**. Pick 
 
 **Plan first.** In **New agent thread**, pick a task and tick **Plan first**. The AI proposes a plan and waits; Claude Code and Codex start read-only, and for other AIs it is a request, not a lock. The plan shows on the task with **Approve plan** and **Reject** (add a note the AI will read). Only you can approve: an AI has no such tool, and the command-line route needs a real terminal and the task key typed. The next AI to work on the task gets the approved plan in its context.
 
+**An AI that says it hit its usage limit.** When a running agent prints a usage-limit message ("You've hit your limit", "5-hour limit reached ∙ resets 2pm", a quota or credit error), its pane shows **limit hit?**, a note appears, and the pane's banner quotes what it said with **Switch to <AI>…**. Nothing is stopped, and the switch still waits for you to confirm that the usage is spent. This needs no usage reading, so it also works for AIs whose usage Evyro cannot read. Evyro recognises common wordings; if an AI words it differently, the switch is still in the pane's menu and the task's **Switch AI** button.
+
 **A thread that looks stuck.** A running agent thread that prints nothing for ten minutes, or repeats the same line 30 times in a row, shows **stuck?** in the sidebar and a banner with **Switch to <AI>…** and **Stop**. Evyro stops nothing by itself: a long silent step such as a big test run can be real work. The check reads plain terminal output only, so a program that redraws its screen in place rather than printing new lines is judged by silence alone; chats are not checked yet. See [Developing Evyro with Evyro](../DEVELOPING_EVYRO_WITH_EVYRO.md).
 
 ## Away-from-home access

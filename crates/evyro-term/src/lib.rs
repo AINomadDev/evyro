@@ -77,6 +77,9 @@ pub struct TermInfo {
     /// Worked out when the thread is listed; never saved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stuck: Option<String>,
+    /// The line in which a running AI said it hit a usage limit. Worked out when listed; never saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_hit: Option<String>,
 }
 
 /// Saved threads kept on disk; older ones are removed.
@@ -381,6 +384,7 @@ impl Terminals {
             credit_budget,
             provider_session,
             stuck: None,
+            limit_hit: None,
         };
         let term = Arc::new(Term {
             info: Mutex::new(info.clone()),
@@ -580,11 +584,9 @@ impl Terminals {
                 0 => QUIET_LIMIT_SECS,
                 n => n,
             };
-            info.stuck = t
-                .watch
-                .lock()
-                .unwrap()
-                .verdict(Instant::now(), Duration::from_secs(secs));
+            let watch = t.watch.lock().unwrap();
+            info.stuck = watch.verdict(Instant::now(), Duration::from_secs(secs));
+            info.limit_hit = watch.limit().map(str::to_owned);
         }
         info
     }
@@ -1103,6 +1105,40 @@ mod tests {
         terms.stop(&quiet.id).unwrap();
         std::thread::sleep(Duration::from_millis(500));
         assert!(terms.info(&quiet.id).unwrap().stuck.is_none());
+        terms.close_all();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_running_thread_that_prints_its_usage_limit_is_flagged_and_an_ended_one_is_not() {
+        let terms = Terminals::new();
+        let (o, e, _, _rx) = collect();
+        let info = terms
+            .open(
+                spec(
+                    "/bin/sh",
+                    &[
+                        "-c",
+                        "echo 'working'; echo \"You've hit your limit - resets 5pm\"; sleep 30",
+                    ],
+                ),
+                o,
+                e,
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut seen = None;
+        while Instant::now() < deadline && seen.is_none() {
+            std::thread::sleep(Duration::from_millis(100));
+            seen = terms.info(&info.id).unwrap().limit_hit;
+        }
+        assert!(
+            seen.unwrap_or_default().contains("hit your limit"),
+            "limit not flagged"
+        );
+        terms.stop(&info.id).unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        assert!(terms.info(&info.id).unwrap().limit_hit.is_none());
         terms.close_all();
     }
 
