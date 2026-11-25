@@ -140,7 +140,7 @@ impl Store {
 
     /// Record delivery of the open comments included in a particular prompt.
     pub fn mark_review_sent(&self, project_id: &str, ids: &[String], actor: &str) -> Result<()> {
-        let tx = self.conn.unchecked_transaction()?;
+        let tx = self.write_tx()?;
         let delivered: std::collections::HashSet<_> = ids.iter().map(String::as_str).collect();
         for comment in self.list_review_comments(project_id, &["open"])? {
             if delivered.contains(comment.id.as_str()) {

@@ -140,7 +140,7 @@ impl Store {
                 }
                 result?;
             }
-            let tx = self.conn.unchecked_transaction()?;
+            let tx = self.write_tx()?;
             let make = |index: usize| -> Result<Candidate> {
                 let (path, branch) = &created[index];
                 let worktree = util::canonical(path)?.to_string_lossy().into_owned();

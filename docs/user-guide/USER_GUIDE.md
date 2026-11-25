@@ -310,6 +310,25 @@ evyro review resolve 4f9a02c1    # by the short id shown in the list
 
 Comments that are not resolved are part of every context packet and handoff context, so the next AI sees them even if you switch. Agents connected over MCP read them with `get_review_comments` and close them with `resolve_review_comment`. Snippets are redacted like everything else Evyro stores.
 
+### 4.6b Split a big task between several AIs
+
+One AI (or you) describes the pieces; Evyro creates them as ready subtasks and starts nothing.
+
+```bash
+cat > pieces.json <<'JSON'
+[
+  {"title": "API", "files": ["src/api"]},
+  {"title": "UI", "files": ["src/ui"]},
+  {"title": "API tests", "files": ["src/api/tests"]},
+  {"title": "Docs", "files": ["docs"], "after": [1, 2]}
+]
+JSON
+evyro task split T-1 --file pieces.json   # up to 8 pieces; an AI uses the split_task tool
+evyro work --under T-1                    # starts the next piece on a free AI
+```
+
+Pieces that share files (`src/api` and `src/api/tests` here) wait for each other, and `after` names earlier pieces by number, so two AIs never edit the same files at once. Pieces inherit the task's priority and constraints. You start the workers: an AI cannot spend other AIs' usage on its own, and a piece that needs a person is not split. A piece's title is kept to one line, and its description (at most 2000 characters) is stored fenced as data (it was written by an AI and the next AI reads it). Fencing lowers the risk; it cannot stop an AI that chooses to follow what it reads. So pieces an AI wrote are held: `evyro work` skips them until you read them (`evyro tasks`, `evyro task show T-3`) and run `evyro task approve-pieces T-1` at a terminal, typing the task key. Pieces you split yourself start at once. A task keeps at most 16 unfinished pieces. The pieces' own progress shows on the board; the parent stays yours to move to review when they are done.
+
 ### 4.6a Plan first, then build
 
 For a risky or unclear task, make the AI show its plan before it edits anything.
@@ -326,7 +345,8 @@ In the desktop app, tick **Plan first** when you start a thread on a task. The p
 What is and is not enforced:
 
 - **Claude Code and Codex start read-only** in plan mode (Claude Code's `plan` permission mode, Codex's `read-only` sandbox). For every other AI the instruction is a request, not a lock, and Evyro says so when it starts.
-- **Only a person approves.** `evyro plan approve` refuses inside an AI's session, and the MCP server has `propose_plan` and `get_plan` but no way to approve. A new plan after an approval needs its own approval.
+- **Only a person approves.** `evyro plan approve` needs a real terminal and makes you type the task key, so it refuses when an AI or a script runs it. The desktop's **Approve plan** button is the other route, and the MCP server has `propose_plan` and `get_plan` but no way to approve. A new plan after an approval needs its own approval.
+- **This is a strong speed bump, not a lock.** A program running as you could still open a terminal of its own or edit Evyro's database. If you do not trust the AI with that, use the desktop button and a sandboxed or read-only AI.
 - **The plan is text from an AI**, so the next AI reads it fenced as data, like every note carried between AIs. Secrets in it are redacted.
 - Nothing stops an AI that ignores the request from editing. Review the diff as usual.
 

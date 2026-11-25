@@ -210,7 +210,7 @@ pub fn import_project(
             bundle.project_id
         )));
     }
-    let tx = store.conn.unchecked_transaction()?;
+    let tx = store.write_tx()?;
     tx.execute_batch("PRAGMA defer_foreign_keys = ON;")?;
     let mut counts = Vec::new();
     let mut root_path = String::new();

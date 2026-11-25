@@ -293,6 +293,22 @@ struct InitArgs {
 
 #[derive(Subcommand)]
 enum TaskCmd {
+    /// Split a task into pieces other AIs can take. Reads a JSON list of pieces
+    /// (`title`, optional `description`, `files`, `acceptance`, `after`) from a file or `-`.
+    /// Pieces that share files run one after the other. Nothing is started.
+    Split {
+        /// The task to split.
+        task: String,
+        /// The pieces as JSON, from a file or `-` for standard input.
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Approve the pieces an AI wrote for a task, so workers may start them. A person has to
+    /// run it at a terminal and type the task key.
+    ApprovePieces {
+        /// The task whose pieces to approve.
+        task: String,
+    },
     /// Add a task.
     Add {
         title: String,
@@ -448,6 +464,9 @@ struct WorkArgs {
     /// The task to start (default: the most important ready task).
     #[arg(long)]
     task: Option<String>,
+    /// Pick only among the ready pieces of this task (see `evyro task split`).
+    #[arg(long, conflicts_with = "task")]
+    under: Option<String>,
     /// Launch in headless (non-interactive) mode.
     #[arg(long)]
     headless: bool,
@@ -757,7 +776,8 @@ enum PlanCmd {
         #[arg(long)]
         file: Option<PathBuf>,
     },
-    /// Approve the plan that is waiting. Run it yourself: it refuses inside an AI's session.
+    /// Approve the plan that is waiting. A person has to run it at a terminal and type the task
+    /// key; it refuses when run by an AI or from a script.
     Approve {
         task: String,
         #[arg(long)]
@@ -866,7 +886,20 @@ fn quiet_on_broken_pipe() {
     }));
 }
 
+/// Windows gives the main thread 1 MB, which the command tree and the large `run` function
+/// outgrow in debug builds (even `--help` crashed). Run on a thread with room to spare.
 fn main() {
+    let worker = std::thread::Builder::new()
+        .name("evyro".into())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(real_main)
+        .expect("start the command thread");
+    if worker.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
+fn real_main() {
     evyro_core::crash::install_panic_hook("evyro");
     quiet_on_broken_pipe();
     let cli = Cli::parse();
@@ -925,6 +958,28 @@ fn project(
 }
 
 /// Session to attribute an action to: $EVYRO_SESSION_ID (set by `evyro run`) or the task's owner.
+/// Make sure a person is deciding. The commands an AI runs have no terminal, so this asks for
+/// one and has the person type the task key. It is a strong speed bump, not a lock: a program
+/// running as the same user could still open a terminal of its own or write the database, so
+/// the desktop app's button is the stronger route and the docs say so.
+fn confirm_person(key: &str, verb: &str, in_ai_session: bool) -> anyhow::Result<()> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if in_ai_session || !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        return Err(Error::Invalid(format!(
+            "to {verb} a plan, a person has to do it at a terminal (or with the button in the desktop app); this command was not run from one"
+        ))
+        .into());
+    }
+    eprint!("Type {key} to {verb} its plan: ");
+    std::io::stderr().flush()?;
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line)?;
+    if line.trim() != key {
+        return Err(Error::Invalid(format!("not {verb}d: you did not type {key}")).into());
+    }
+    Ok(())
+}
+
 fn render_plan(key: &str, plan: &evyro_core::plans::TaskPlan) -> String {
     let mut out = format!(
         "Plan for {key}: {} (by {})\n\n{}",
@@ -1207,6 +1262,8 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                                 .unwrap_or_default(),
                             if t.needs_person().is_some() {
                                 "  (needs a person)"
+                            } else if t.awaiting_review() {
+                                "  (awaiting review)"
                             } else {
                                 ""
                             }
@@ -1623,17 +1680,9 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                         )
                     });
                 }
-                PlanCmd::Approve { task, note } | PlanCmd::Reject { task, note }
-                    if in_session.is_some() =>
-                {
-                    let _ = (task, note);
-                    return Err(Error::Invalid(
-                        "approving or rejecting a plan is for a person: run it in your own terminal or in the desktop app, not inside an AI's session".into(),
-                    )
-                    .into());
-                }
                 PlanCmd::Approve { task, note } => {
                     let t = store.resolve_task(&p.id, &task)?;
+                    confirm_person(&t.key, "approve", in_session.is_some())?;
                     let plan = store.decide_plan(&t, true, note.as_deref())?;
                     o.print(&plan, || {
                         format!(
@@ -1644,6 +1693,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 }
                 PlanCmd::Reject { task, note } => {
                     let t = store.resolve_task(&p.id, &task)?;
+                    confirm_person(&t.key, "reject", in_session.is_some())?;
                     let plan = store.decide_plan(&t, false, note.as_deref())?;
                     o.print(&plan, || format!("Plan for {} rejected. The AI reads your note with `evyro plan show {}`.", t.key, t.key));
                 }
@@ -2680,6 +2730,65 @@ fn task_cmd(
                 )
             });
         }
+        TaskCmd::ApprovePieces { task } => {
+            let t = store.resolve_task(&p.id, &task)?;
+            confirm_person(
+                &t.key,
+                "approve the pieces of",
+                std::env::var("EVYRO_SESSION_ID").is_ok_and(|v| !v.is_empty()),
+            )?;
+            let approved = store.approve_pieces(&p.id, &t.key)?;
+            o.print(&approved, || {
+                format!(
+                    "Approved {} pieces of {}. Start them with `evyro work --under {}`.",
+                    approved.len(),
+                    t.key,
+                    t.key
+                )
+            });
+        }
+        TaskCmd::Split { task, file } => {
+            use std::io::Read;
+            let text = if file.as_os_str() == "-" {
+                let mut b = String::new();
+                std::io::stdin().take(1 << 20).read_to_string(&mut b)?;
+                b
+            } else {
+                std::fs::read_to_string(&file)?
+            };
+            let parts: Vec<evyro_core::split::SplitPart> = serde_json::from_str(&text)
+                .map_err(|e| Error::Invalid(format!("the pieces are not valid JSON: {e}")))?;
+            let by_ai = std::env::var("EVYRO_SESSION_ID").is_ok_and(|v| !v.is_empty());
+            let r = store.split_task_as(&p.id, &task, &parts, by_ai)?;
+            o.print(&r, || {
+                let mut out = format!("Split {} into {} pieces:\n", r.parent, r.created.len());
+                for t in &r.created {
+                    let waits = store
+                        .open_blockers(&t.id)
+                        .map(|b| b.into_iter().map(|x| x.key).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                    out.push_str(&format!(
+                        "  {}  {}{}\n",
+                        t.key,
+                        t.title,
+                        if waits.is_empty() {
+                            String::new()
+                        } else {
+                            format!("  (after {})", waits.join(", "))
+                        }
+                    ));
+                }
+                out.push_str(&if by_ai {
+                    format!(
+                        "An AI wrote these, so they wait for you: read them, then `evyro task approve-pieces {}`.",
+                        r.parent
+                    )
+                } else {
+                    format!("Start them with `evyro work --under {}` (one AI each).", r.parent)
+                });
+                out
+            });
+        }
         TaskCmd::Start {
             task,
             agent,
@@ -2849,7 +2958,12 @@ fn work_cmd(
     o: &Out,
 ) -> anyhow::Result<i32> {
     let p = project(store, cli_project, dir)?;
-    let next = store.next_work(&p.id, a.agent.as_deref(), a.task.as_deref())?;
+    let next = store.next_work(
+        &p.id,
+        a.agent.as_deref(),
+        a.task.as_deref(),
+        a.under.as_deref(),
+    )?;
     let (task, agent) = (next.task, next.agent);
     let summary = format!(
         "{} (P{}) {} with {agent}",
@@ -2860,6 +2974,13 @@ fn work_cmd(
             format!("Would start {summary}")
         });
         return Ok(0);
+    }
+    // Starting an AI spends usage, so an AI does not do it for itself: run this yourself.
+    if std::env::var("EVYRO_SESSION_ID").is_ok_and(|v| !v.is_empty()) {
+        return Err(Error::Invalid(
+            "evyro work starts other AIs and spends their usage, so it is for a person (or your own script), not for an AI inside a session; --dry-run is allowed".into(),
+        )
+        .into());
     }
     if !o.quiet && !o.json {
         eprintln!("Starting {summary}");

@@ -147,6 +147,16 @@ impl Store {
         )?)
     }
 
+    /// A transaction that takes the write lock when it begins. A deferred transaction that reads
+    /// and then writes fails at once with "database is locked" when another process (another AI
+    /// running `evyro`) commits in between, ignoring the busy timeout; this one waits its turn.
+    pub(crate) fn write_tx(&self) -> Result<rusqlite::Transaction<'_>> {
+        Ok(rusqlite::Transaction::new_unchecked(
+            &self.conn,
+            rusqlite::TransactionBehavior::Immediate,
+        )?)
+    }
+
     /// `PRAGMA integrity_check` + foreign key check. Returns problems found.
     pub fn integrity_check(&self) -> Result<Vec<String>> {
         let mut out = Vec::new();

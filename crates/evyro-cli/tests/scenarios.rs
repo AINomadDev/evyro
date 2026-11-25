@@ -1298,6 +1298,7 @@ fn mcp_round_trip() {
         .map(|t| t["name"].as_str().unwrap().to_owned())
         .collect();
     assert!(names.contains(&"propose_plan".to_owned()) && names.contains(&"get_plan".to_owned()));
+    assert!(names.contains(&"split_task".to_owned()));
     assert!(
         !names
             .iter()
@@ -2941,40 +2942,228 @@ fn plan_first_then_approve_then_build() {
     let plan = env.json(&repo, &["plan", "show", "T-1"]);
     assert_eq!(plan["status"], "proposed");
 
-    // Inside an AI's session the approval is refused.
-    let o = env
-        .cmd(&repo, &["plan", "approve", "T-1"])
-        .env("EVYRO_SESSION_ID", "ses_any")
-        .output()
-        .unwrap();
-    assert!(!o.status.success());
-    assert!(String::from_utf8_lossy(&o.stderr).contains("for a person"));
+    // Nothing but a person at a terminal can decide: a script, a pipe or an AI's session is refused.
+    for session in [None, Some("ses_any")] {
+        let mut cmd = env.cmd(&repo, &["plan", "approve", "T-1"]);
+        if let Some(s) = session {
+            cmd.env("EVYRO_SESSION_ID", s);
+        }
+        let o = cmd.output().unwrap();
+        assert!(!o.status.success());
+        assert!(String::from_utf8_lossy(&o.stderr).contains("a person has to do it"));
+    }
     assert_eq!(
         env.json(&repo, &["plan", "show", "T-1"])["status"],
         "proposed"
     );
 
-    // A person approves; the builder gets the plan as fenced data.
-    env.ok(&repo, &["plan", "approve", "T-1", "--note", "go"]);
-    assert_eq!(
-        env.json(&repo, &["plan", "show", "T-1"])["status"],
-        "approved"
+    // At a real terminal: the wrong text decides nothing; the task key approves.
+    #[cfg(unix)]
+    {
+        let (code, _) = on_terminal(&env, &repo, &["plan", "approve", "T-1"], "yes");
+        assert_ne!(code, 0);
+        assert_eq!(
+            env.json(&repo, &["plan", "show", "T-1"])["status"],
+            "proposed"
+        );
+        let (code, out) = on_terminal(
+            &env,
+            &repo,
+            &["plan", "approve", "T-1", "--note", "go"],
+            "T-1",
+        );
+        assert_eq!(code, 0, "{out}");
+        assert_eq!(
+            env.json(&repo, &["plan", "show", "T-1"])["status"],
+            "approved"
+        );
+        let ctx = env.ok(&repo, &["context", "--task", "T-1", "--budget", "large"]);
+        assert!(ctx.contains("approved by a person"), "{ctx}");
+        assert!(ctx.contains("add the flag"), "{ctx}");
+        env.ok(
+            &repo,
+            &["run", "--to", "claude", "--task", "T-1", "--headless"],
+        );
+        let args = read(&repo.join(".agent-claude-args"));
+        assert!(!args.contains("PLAN FIRST"), "{args}");
+        assert!(
+            args.contains("acceptEdits"),
+            "building is not read-only: {args}"
+        );
+        // A second approval is refused: it cannot be replayed onto a newer plan.
+        let (code, _) = on_terminal(&env, &repo, &["plan", "approve", "T-1"], "T-1");
+        assert_ne!(code, 0);
+    }
+}
+
+/// Run `evyro` attached to a pseudo-terminal, type `typed` when it asks, and return its exit
+/// code and output.
+#[cfg(unix)]
+fn on_terminal(env: &Env, dir: &Path, args: &[&str], typed: &str) -> (i32, String) {
+    const SCRIPT: &str = r#"
+import os, pty, signal, sys
+signal.alarm(30)
+argv = sys.argv[1:]
+typed = os.environ.pop("EVYRO_TEST_TYPED", "")
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv(argv[0], argv)
+out, sent = b"", False
+while True:
+    try:
+        data = os.read(fd, 4096)
+    except OSError:
+        break
+    if not data:
+        break
+    out += data
+    if not sent and b"Type " in out:
+        os.write(fd, (typed + "\n").encode())
+        sent = True
+_, status = os.waitpid(pid, 0)
+sys.stdout.write(out.decode(errors="replace"))
+sys.exit(os.waitstatus_to_exitcode(status))
+"#;
+    let inner = env.cmd(dir, args);
+    let mut c = Command::new(python());
+    c.args(["-c", SCRIPT, env!("CARGO_BIN_EXE_evyro")])
+        .args(args)
+        .current_dir(dir);
+    for (k, v) in inner.get_envs() {
+        match v {
+            Some(v) => c.env(k, v),
+            None => c.env_remove(k),
+        };
+    }
+    c.env("EVYRO_TEST_TYPED", typed);
+    let o = c.output().unwrap();
+    (
+        o.status.code().unwrap_or(-1),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&o.stdout),
+            String::from_utf8_lossy(&o.stderr)
+        ),
+    )
+}
+
+/// An AI splits a task; pieces that share files wait for each other, and `evyro work --under`
+/// starts only the pieces that can run now, one AI each.
+#[test]
+fn split_a_task_then_start_its_pieces_one_ai_each() {
+    let mut env = Env::new();
+    let repo = env.repo("split");
+    env.init(&repo);
+    env.agent("claude", "2.1.0", "exit 0");
+    env.agent("codex", "0.130.0", "exit 0");
+    env.ok(&repo, &["task", "add", "Big job", "--kind", "epic"]);
+    env.ok(&repo, &["task", "add", "Unrelated", "--priority", "0"]);
+    let pieces = repo.join("pieces.json");
+    std::fs::write(
+        &pieces,
+        r#"[
+          {"title": "api", "files": ["src/api"]},
+          {"title": "ui", "files": ["src/ui"]},
+          {"title": "api tests", "files": ["src/api/tests"]},
+          {"title": "docs", "files": ["docs"], "after": [1, 2]}
+        ]"#,
+    )
+    .unwrap();
+    let out = env.ok(
+        &repo,
+        &["task", "split", "T-1", "--file", pieces.to_str().unwrap()],
     );
-    let ctx = env.ok(&repo, &["context", "--task", "T-1", "--budget", "large"]);
-    assert!(ctx.contains("approved by a person"), "{ctx}");
-    assert!(ctx.contains("add the flag"), "{ctx}");
+    assert!(out.contains("T-4") && out.contains("(after T-3)"), "{out}");
+
+    // The unrelated P0 task is not picked: only pieces of T-1 are.
+    let first = env.json(
+        &repo,
+        &["work", "--under", "T-1", "--agent", "claude", "--dry-run"],
+    );
+    assert_eq!(first["task"], "T-3");
     env.ok(
         &repo,
-        &["run", "--to", "claude", "--task", "T-1", "--headless"],
+        &["work", "--under", "T-1", "--agent", "claude", "--headless"],
     );
-    let args = read(&repo.join(".agent-claude-args"));
-    assert!(!args.contains("PLAN FIRST"), "{args}");
-    assert!(
-        args.contains("acceptEdits"),
-        "building is not read-only: {args}"
-    );
-
-    // A second approval is refused: it cannot be replayed onto a newer plan.
-    let o = env.run(&repo, &["plan", "approve", "T-1"]);
+    // Inside an AI's session it may look but not start anyone.
+    let o = env
+        .cmd(&repo, &["work", "--under", "T-1", "--agent", "codex"])
+        .env("EVYRO_SESSION_ID", "ses_any")
+        .output()
+        .unwrap();
     assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("not for an AI"));
+    let o = env
+        .cmd(
+            &repo,
+            &["work", "--under", "T-1", "--agent", "codex", "--dry-run"],
+        )
+        .env("EVYRO_SESSION_ID", "ses_any")
+        .output()
+        .unwrap();
+    assert!(o.status.success());
+    // The second AI gets the other independent piece, never the one that waits.
+    let second = env.json(
+        &repo,
+        &["work", "--under", "T-1", "--agent", "codex", "--dry-run"],
+    );
+    assert_eq!(second["task"], "T-4");
+    // Bad input is refused and creates nothing.
+    std::fs::write(&pieces, r#"[{"title": "x", "after": [3]}]"#).unwrap();
+    let o = env.run(
+        &repo,
+        &["task", "split", "T-1", "--file", pieces.to_str().unwrap()],
+    );
+    assert!(!o.status.success());
+    assert!(
+        !String::from_utf8_lossy(&env.run(&repo, &["tasks", "--all"]).stdout).contains("T-8"),
+        "nothing was created"
+    );
+}
+
+/// Pieces an AI wrote do not start until a person approves them at a terminal.
+#[test]
+fn pieces_an_ai_wrote_wait_for_a_person_to_approve_them() {
+    let mut env = Env::new();
+    let repo = env.repo("split-review");
+    env.init(&repo);
+    env.agent("claude", "2.1.0", "exit 0");
+    env.ok(&repo, &["task", "add", "Big job", "--kind", "epic"]);
+    let pieces = repo.join("pieces.json");
+    std::fs::write(
+        &pieces,
+        r#"[{"title": "api", "files": ["src/api"]}, {"title": "ui", "files": ["src/ui"]}]"#,
+    )
+    .unwrap();
+    // Run from inside an AI's session, the split is accepted but gated.
+    let o = env
+        .cmd(
+            &repo,
+            &["task", "split", "T-1", "--file", pieces.to_str().unwrap()],
+        )
+        .env("EVYRO_SESSION_ID", "ses_any")
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("approve-pieces"));
+    let o = env.run(
+        &repo,
+        &["work", "--under", "T-1", "--agent", "claude", "--dry-run"],
+    );
+    assert!(!o.status.success(), "an unapproved piece must not start");
+    // A script cannot approve.
+    let o = env.run(&repo, &["task", "approve-pieces", "T-1"]);
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("a person has to do it"));
+    // A person at a terminal can.
+    #[cfg(unix)]
+    {
+        let (code, out) = on_terminal(&env, &repo, &["task", "approve-pieces", "T-1"], "T-1");
+        assert_eq!(code, 0, "{out}");
+        let next = env.json(
+            &repo,
+            &["work", "--under", "T-1", "--agent", "claude", "--dry-run"],
+        );
+        assert_eq!(next["task"], "T-2");
+    }
 }
