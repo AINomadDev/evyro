@@ -179,7 +179,7 @@ mod tests {
         assert_eq!(r.project.commands.test, [["git", "diff", "--check"]]);
         let root = r.project.root();
         assert!(
-            root.starts_with(store.paths.data_dir.canonicalize().unwrap()),
+            root.starts_with(util::canonical(&store.paths.data_dir).unwrap()),
             "{root:?}"
         );
         let t1 = store.resolve_task(&r.project.id, "T-1").unwrap();
