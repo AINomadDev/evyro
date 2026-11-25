@@ -27,6 +27,7 @@ pub mod health;
 pub mod init;
 pub mod memory;
 pub mod paths;
+pub mod plans;
 pub mod projects;
 pub mod quota;
 pub mod redact;

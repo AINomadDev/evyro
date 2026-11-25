@@ -157,6 +157,11 @@ enum Cmd {
     /// Git worktrees.
     #[command(subcommand)]
     Worktrees(WorktreeCmd),
+    /// Plan first: an AI proposes a plan, you approve it, then it builds.
+    Plan {
+        #[command(subcommand)]
+        cmd: PlanCmd,
+    },
     /// Run a verification command and record a receipt: `evyro verify -- cargo test`.
     Verify {
         #[arg(long)]
@@ -498,6 +503,10 @@ struct RunArgs {
     /// Continue this handoff, even one prepared for a different AI.
     #[arg(long)]
     handoff: Option<String>,
+    /// Plan first: the AI proposes a plan for the task and waits for you to approve it
+    /// (`evyro plan approve`). Claude Code and Codex start read-only; other AIs are asked.
+    #[arg(long)]
+    plan_first: bool,
 }
 
 #[derive(Args)]
@@ -735,6 +744,34 @@ enum ReviewCmd {
 }
 
 #[derive(Subcommand)]
+enum PlanCmd {
+    /// Show the plan for a task and whether it is approved.
+    Show { task: String },
+    /// Propose a plan for a task. An AI in plan mode does this; the plan then waits for you.
+    Set {
+        task: String,
+        /// The plan text.
+        #[arg(long, conflicts_with = "file")]
+        text: Option<String>,
+        /// Read the plan from a file, or from standard input with `-`.
+        #[arg(long)]
+        file: Option<PathBuf>,
+    },
+    /// Approve the plan that is waiting. Run it yourself: it refuses inside an AI's session.
+    Approve {
+        task: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Reject the plan that is waiting, with the reason the AI should read.
+    Reject {
+        task: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum WorktreeCmd {
     List,
     /// Create a worktree + branch for a task.
@@ -888,6 +925,17 @@ fn project(
 }
 
 /// Session to attribute an action to: $EVYRO_SESSION_ID (set by `evyro run`) or the task's owner.
+fn render_plan(key: &str, plan: &evyro_core::plans::TaskPlan) -> String {
+    let mut out = format!(
+        "Plan for {key}: {} (by {})\n\n{}",
+        plan.status, plan.proposed_by, plan.body
+    );
+    if let Some(n) = &plan.note {
+        out.push_str(&format!("\n\nNote: {n}"));
+    }
+    out
+}
+
 fn attribute_session(store: &Store, task_id: Option<&str>) -> Option<String> {
     if let Ok(sid) = std::env::var("EVYRO_SESSION_ID") {
         if let Ok(s) = store.get_session(&sid) {
@@ -1298,6 +1346,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                     model: a.model.as_deref(),
                     accept_drift: a.accept_drift,
                     no_open: a.no_open,
+                    plan_first: a.plan_first,
                 },
                 o,
             );
@@ -1527,6 +1576,78 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
             o.print(&r, || if r.is_empty() { "No stale sessions.".into() } else {
                 r.iter().map(|x| format!("Recovered {} session {}: checkpoint {}; changed since last checkpoint: {}\n  Continue with `evyro handoff --to <agent>`.", x.harness, x.session_id, x.checkpoint_id, if x.changed_since_last_checkpoint.is_empty() { "none".into() } else { x.changed_since_last_checkpoint.join(", ") })).collect::<Vec<_>>().join("\n")
             });
+        }
+        Cmd::Plan { cmd } => {
+            let p = project(&store, &cli.project, &dir)?;
+            let in_session = std::env::var("EVYRO_SESSION_ID").ok();
+            match cmd {
+                PlanCmd::Show { task } => {
+                    let t = store.resolve_task(&p.id, &task)?;
+                    match store.plan(&t.id)? {
+                        Some(plan) => o.print(&plan, || render_plan(&t.key, &plan)),
+                        None => o.print(&json!({"task": t.key, "plan": null}), || {
+                            format!("{} has no plan yet.", t.key)
+                        }),
+                    }
+                }
+                PlanCmd::Set { task, text, file } => {
+                    use std::io::Read;
+                    let t = store.resolve_task(&p.id, &task)?;
+                    let body = match (text, file) {
+                        (Some(text), _) => text,
+                        (None, Some(f)) if f.as_os_str() == "-" => {
+                            let mut b = String::new();
+                            std::io::stdin().take(1 << 20).read_to_string(&mut b)?;
+                            b
+                        }
+                        (None, Some(f)) => std::fs::read_to_string(f)?,
+                        (None, None) => {
+                            return Err(Error::Invalid(
+                                "give the plan with --text or --file".into(),
+                            )
+                            .into())
+                        }
+                    };
+                    let by = match in_session
+                        .as_deref()
+                        .and_then(|s| store.get_session(s).ok())
+                    {
+                        Some(s) => format!("agent:{}", s.harness),
+                        None => "human".to_owned(),
+                    };
+                    let plan = store.propose_plan(&t, &body, &by)?;
+                    o.print(&plan, || {
+                        format!(
+                            "Plan for {} saved. It waits for a person: `evyro plan approve {}`.",
+                            t.key, t.key
+                        )
+                    });
+                }
+                PlanCmd::Approve { task, note } | PlanCmd::Reject { task, note }
+                    if in_session.is_some() =>
+                {
+                    let _ = (task, note);
+                    return Err(Error::Invalid(
+                        "approving or rejecting a plan is for a person: run it in your own terminal or in the desktop app, not inside an AI's session".into(),
+                    )
+                    .into());
+                }
+                PlanCmd::Approve { task, note } => {
+                    let t = store.resolve_task(&p.id, &task)?;
+                    let plan = store.decide_plan(&t, true, note.as_deref())?;
+                    o.print(&plan, || {
+                        format!(
+                            "Plan for {} approved. Start it with `evyro run --to <ai> --task {}`.",
+                            t.key, t.key
+                        )
+                    });
+                }
+                PlanCmd::Reject { task, note } => {
+                    let t = store.resolve_task(&p.id, &task)?;
+                    let plan = store.decide_plan(&t, false, note.as_deref())?;
+                    o.print(&plan, || format!("Plan for {} rejected. The AI reads your note with `evyro plan show {}`.", t.key, t.key));
+                }
+            }
         }
         Cmd::Worktrees(w) => {
             let p = project(&store, &cli.project, &dir)?;
@@ -2755,6 +2876,7 @@ fn work_cmd(
             model: None,
             accept_drift: false,
             no_open: false,
+            plan_first: false,
         },
         o,
     )
@@ -2861,6 +2983,7 @@ fn switch_cmd(
             model: a.model.as_deref(),
             accept_drift: false,
             no_open: a.no_open,
+            plan_first: false,
         },
         o,
     )
@@ -2918,6 +3041,7 @@ fn handoff_cmd(
             model: a.model.as_deref(),
             accept_drift: false,
             no_open: a.no_open,
+            plan_first: false,
         },
         o,
     )

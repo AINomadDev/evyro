@@ -93,6 +93,7 @@ pub async fn term_open(
     title: Option<String>,
     resume_id: Option<String>,
     credit_budget: Option<u32>,
+    plan_first: Option<bool>,
     cols: Option<u16>,
     rows: Option<u16>,
 ) -> CmdResult {
@@ -136,6 +137,12 @@ pub async fn term_open(
             model.as_deref(),
             cfg!(windows),
         );
+        if plan_first == Some(true) {
+            if task.as_deref().filter(|t| !t.is_empty()).is_none() {
+                return Err(bad("Plan first needs a task."));
+            }
+            line.push_str(" --plan-first");
+        }
         line.push_str(&format!(" --prompt {}", quote("", cfg!(windows))));
         let (p, a) = shell_command(Some(&line));
         let title = match task.as_deref().filter(|k| !k.is_empty()) {

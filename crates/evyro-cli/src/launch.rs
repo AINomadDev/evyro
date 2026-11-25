@@ -10,6 +10,7 @@ use evyro_core::adapters::{self, LaunchMode};
 use evyro_core::checkpoints::NewCheckpoint;
 use evyro_core::handoff::resume_prompt;
 use evyro_core::handover::Claim;
+use evyro_core::plans;
 use evyro_core::projects::Project;
 use evyro_core::sessions::SessionStatus;
 use evyro_core::targets::{self, Target, TargetKind};
@@ -37,6 +38,8 @@ pub struct RunOpts<'a> {
     pub accept_drift: bool,
     /// IDE/chat targets: prepare everything but do not open apps or touch the clipboard.
     pub no_open: bool,
+    /// Start in plan mode: the AI proposes a plan and waits for a person to approve it.
+    pub plan_first: bool,
 }
 
 pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::Result<i32> {
@@ -130,12 +133,27 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
             return Ok(Error::Drift(String::new()).exit_code());
         }
     };
-    let mut argv = spec.launch_argv(
-        &bin.to_string_lossy(),
-        mode,
-        &opts.prompt.clone().unwrap_or(default_prompt),
-        plan.model.as_deref(),
-    )?;
+    // Plan first: tell the AI to propose a plan and stop. (An approved plan reaches the AI
+    // through `evyro context`, which every prompt tells it to load.)
+    let mut prompt = opts.prompt.clone().unwrap_or(default_prompt);
+    if opts.plan_first {
+        let task = match &session.task_id {
+            Some(t) => store.get_task(t)?,
+            None => return Err(Error::Invalid("--plan-first needs a task".into()).into()),
+        };
+        prompt = format!("{}\n\n{prompt}", plans::plan_first_prompt(&task.key));
+    }
+    let mut argv =
+        spec.launch_argv(&bin.to_string_lossy(), mode, &prompt, plan.model.as_deref())?;
+    if opts.plan_first {
+        let locked = plans::apply_read_only(spec.id, &mut argv);
+        if !locked && !o.quiet && !o.json {
+            eprintln!(
+                "[{}] {} has no read-only mode Evyro can set, so plan first is a request to it, not a lock.",
+                brand::CLI_NAME, spec.display_name
+            );
+        }
+    }
     for (i, a) in plan.extra_args.iter().enumerate() {
         argv.insert(1 + i, a.clone());
     }

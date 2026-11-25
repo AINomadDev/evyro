@@ -229,6 +229,12 @@ const FIX = {
             }
             return JSON.parse(JSON.stringify({ ...hs, removed }));
           }
+          if (cmd === "plan_get") return JSON.parse(JSON.stringify({ task: args.task, plan: window.__plan || null }));
+          if (cmd === "plan_decide") {
+            window.__planDecision = args;
+            window.__plan = { ...window.__plan, status: args.approve ? "approved" : "rejected", note: args.note };
+            return JSON.parse(JSON.stringify(window.__plan));
+          }
           if (cmd === "next_work") return { task: { key: "T-9", title: "Next ready task", priority: 0 }, agent: "codex" };
           if (cmd === "term_stop") { (window.__stopped ||= []).push(args.id); const t = terms.find((x) => x.id === args.id); if (t) t.running = false; return null; }
           if (cmd === "switch_owner") { window.__switch = args; return { handoff: { record: { id: "hnd_switch" } }, from: { harness: "claude-code" }, stopped: true }; }
@@ -1210,6 +1216,31 @@ const FIX = {
     if (r.pill !== "stuck?") throw new Error("pill: " + r.pill);
     if (!r.buttons.includes("Stop") || !r.buttons.some((b) => /^Switch/.test(b))) throw new Error("buttons: " + r.buttons);
     if (!r.cleared) throw new Error("banner stayed after output resumed");
+  });
+  await step("Plan first is offered for a task, and a waiting plan can be approved by a person", async () => {
+    await page.evaluate(() => { window.__plan = null; window.__lastTermOpen = null; setTab("workspace"); newThreadDialog("T-1"); });
+    const dialog = page.getByRole("dialog", { name: "New agent thread" });
+    const box = dialog.getByLabel(/Plan first/);
+    await box.check();
+    await dialog.getByRole("button", { name: "Start", exact: true }).click();
+    await page.waitForFunction(() => window.__lastTermOpen);
+    if ((await page.evaluate(() => window.__lastTermOpen.planFirst)) !== true) throw new Error("plan first was not sent");
+    // A task with no plan shows no card; a proposed plan shows one with Approve and Reject.
+    await page.evaluate(() => { setTab("tasks"); openTask("T-1"); });
+    await page.locator("#drawer").getByRole("heading", { name: "Acceptance criteria" }).waitFor({ timeout: 6000 }).catch(() => {});
+    if (await page.locator("#drawer .plan-card").count()) throw new Error("plan card shown without a plan");
+    await page.evaluate(() => { window.__plan = { task_id: "t", status: "proposed", body: "1. add the flag\n2. test it", note: null, proposed_by: "agent:codex", created_at: "now", decided_at: null }; openTask("T-1"); });
+    const card = page.locator("#drawer").getByRole("group", { name: "Plan for T-1" });
+    await card.getByText("1. add the flag").waitFor();
+    await card.getByText("waiting for you").waitFor();
+    await card.getByLabel("Note for the AI").fill("go ahead");
+    await card.getByRole("button", { name: "Approve plan" }).click();
+    await page.waitForFunction(() => window.__planDecision);
+    const d = await page.evaluate(() => window.__planDecision);
+    if (d.approve !== true || d.note !== "go ahead" || d.task !== "T-1") throw new Error("decision: " + JSON.stringify(d));
+    await card.getByText("approved", { exact: true }).waitFor();
+    if (await card.getByRole("button", { name: "Approve plan" }).count()) throw new Error("a decided plan still offers Approve");
+    await page.evaluate(() => { window.__plan = null; window.__planDecision = null; });
   });
   await step("Settings can limit and clear saved history, asking before deleting", async () => {
     await page.evaluate(() => { window.__history = null; window.__historyCalls = []; setTab("settings"); });

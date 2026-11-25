@@ -512,6 +512,26 @@ function closeDrawer() {
   $("#drawer").setAttribute("aria-hidden", "true");
 }
 
+/** The plan an AI proposed for a task. A person approves or rejects it; an AI has no way to. */
+function planCard(key, plan, refresh) {
+  const waiting = plan.status === "proposed";
+  const note = h("input", { type: "text", placeholder: "Optional note for the AI", "aria-label": "Note for the AI" });
+  const decide = (approve) => async () => {
+    try {
+      await act(() => invoke("plan_decide", { projectId: state.project.id, task: key, approve, note: note.value.trim() || null }), approve ? `Plan for ${key} approved.` : `Plan for ${key} rejected.`);
+      refresh();
+    } catch { refresh(); }
+  };
+  return h("div", { class: "card plan-card", role: "group", "aria-label": `Plan for ${key}` },
+    h("div", { class: "row" }, h("h3", { style: "margin:0" }, "Plan"), pill(waiting ? "warn" : plan.status === "approved" ? "ok" : "bad", waiting ? "waiting for you" : plan.status),
+      h("span", { class: "spacer" }), h("span", { class: "muted small" }, `by ${plan.proposed_by}`)),
+    h("pre", { class: "plan-body" }, plan.body),
+    plan.note ? h("div", { class: "muted small" }, `Note: ${plan.note}`) : null,
+    waiting ? h("div", { class: "row", style: "margin-top:8px" }, note,
+      h("button", { class: "btn small primary", onclick: decide(true) }, "Approve plan"),
+      h("button", { class: "btn small", onclick: decide(false) }, "Reject")) : null);
+}
+
 async function openTask(key) {
   state.drawerTask = key;
   const dr = $("#drawer");
@@ -548,6 +568,12 @@ async function openTask(key) {
   if (d.blocked_by.length) body.append(h("div", { class: "banner warn", style: "margin-top:10px" }, "Blocked by unfinished tasks: " + d.blocked_by.join(", ")));
   if (d.pending_handoff) body.append(h("div", { class: "banner info", style: "margin-top:10px" }, `Open handoff for ${d.pending_handoff.to_harness}.`, h("span", { class: "spacer" }), h("button", { class: "btn small", onclick: () => openHandoff(d.pending_handoff.id) }, "Review")));
   if (t.description) body.append(h("p", { style: "white-space:pre-wrap" }, t.description));
+
+  // Plan: what an AI proposed before editing. Only a person approves.
+  let planInfo = null;
+  try { planInfo = (await invoke("plan_get", { projectId: state.project.id, task: t.key })).plan; } catch { /* no plan section */ }
+  if (state.drawerTask !== key) return;
+  if (planInfo) body.append(planCard(t.key, planInfo, refresh));
 
   // Criteria
   const met = d.criteria.filter((c) => c.met && c.counts).length;

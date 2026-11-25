@@ -1290,6 +1290,20 @@ fn mcp_round_trip() {
         "unknown version falls back to latest supported"
     );
     assert!(r[1]["result"]["tools"].as_array().unwrap().len() >= 15);
+    // An AI can propose and read a plan; no tool lets it approve one.
+    let names: Vec<String> = r[1]["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(names.contains(&"propose_plan".to_owned()) && names.contains(&"get_plan".to_owned()));
+    assert!(
+        !names
+            .iter()
+            .any(|n| n.contains("approve") || n.contains("decide_plan")),
+        "{names:?}"
+    );
     assert_eq!(
         r[2]["result"]["structuredContent"]["result"]["session"]["harness"],
         "claude-code"
@@ -2864,5 +2878,103 @@ fn heartbeat_keeps_a_session_without_a_process_alive() {
     // With nothing running there is nobody to report for.
     env.ok(&repo, &["task", "update", "T-1", "--status", "in_review"]);
     let o = env.run(&repo, &["heartbeat", "--task", "T-1"]);
+    assert!(!o.status.success());
+}
+
+/// Plan first: the AI is told to propose a plan and stop, Claude Code and Codex start read-only,
+/// only a person can approve, and the approved plan reaches the AI that builds.
+#[test]
+fn plan_first_then_approve_then_build() {
+    let mut env = Env::new();
+    let repo = env.repo("plan");
+    env.init(&repo);
+    env.agent("claude", "2.1.0", "exit 0");
+    env.agent("gemini", "0.20.0", "exit 0");
+    env.ok(&repo, &["task", "add", "Add a flag", "--accept", "done"]);
+
+    // Plan mode: told to plan, and Claude Code is switched to its plan permission mode.
+    env.ok(
+        &repo,
+        &[
+            "run",
+            "--to",
+            "claude",
+            "--task",
+            "T-1",
+            "--headless",
+            "--plan-first",
+        ],
+    );
+    let args = read(&repo.join(".agent-claude-args"));
+    assert!(args.contains("PLAN FIRST"), "{args}");
+    assert!(args.contains("--permission-mode plan"), "{args}");
+    assert!(!args.contains("acceptEdits"), "{args}");
+
+    // An AI with no read-only mode is asked, and the person is told it is not a lock.
+    let o = env.run(
+        &repo,
+        &[
+            "run",
+            "--to",
+            "gemini",
+            "--task",
+            "T-1",
+            "--headless",
+            "--plan-first",
+        ],
+    );
+    assert!(o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("not a lock"));
+    assert!(read(&repo.join(".agent-gemini-args")).contains("PLAN FIRST"));
+
+    // The AI proposes a plan; nothing is approved yet.
+    env.ok(
+        &repo,
+        &[
+            "plan",
+            "set",
+            "T-1",
+            "--text",
+            "1. add the flag\n2. test it",
+        ],
+    );
+    let plan = env.json(&repo, &["plan", "show", "T-1"]);
+    assert_eq!(plan["status"], "proposed");
+
+    // Inside an AI's session the approval is refused.
+    let o = env
+        .cmd(&repo, &["plan", "approve", "T-1"])
+        .env("EVYRO_SESSION_ID", "ses_any")
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    assert!(String::from_utf8_lossy(&o.stderr).contains("for a person"));
+    assert_eq!(
+        env.json(&repo, &["plan", "show", "T-1"])["status"],
+        "proposed"
+    );
+
+    // A person approves; the builder gets the plan as fenced data.
+    env.ok(&repo, &["plan", "approve", "T-1", "--note", "go"]);
+    assert_eq!(
+        env.json(&repo, &["plan", "show", "T-1"])["status"],
+        "approved"
+    );
+    let ctx = env.ok(&repo, &["context", "--task", "T-1", "--budget", "large"]);
+    assert!(ctx.contains("approved by a person"), "{ctx}");
+    assert!(ctx.contains("add the flag"), "{ctx}");
+    env.ok(
+        &repo,
+        &["run", "--to", "claude", "--task", "T-1", "--headless"],
+    );
+    let args = read(&repo.join(".agent-claude-args"));
+    assert!(!args.contains("PLAN FIRST"), "{args}");
+    assert!(
+        args.contains("acceptEdits"),
+        "building is not read-only: {args}"
+    );
+
+    // A second approval is refused: it cannot be replayed onto a newer plan.
+    let o = env.run(&repo, &["plan", "approve", "T-1"]);
     assert!(!o.status.success());
 }

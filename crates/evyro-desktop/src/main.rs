@@ -460,6 +460,31 @@ async fn switch_owner(
     .await
 }
 
+/// The plan an AI proposed for a task, and whether a person approved it.
+#[tauri::command]
+async fn plan_get(project_id: String, task: String) -> CmdResult {
+    with_store(move |s| {
+        let t = s.resolve_task(&project_id, &task)?;
+        Ok(json!({"task": t.key, "plan": s.plan(&t.id)?}))
+    })
+    .await
+}
+
+/// A person approves or rejects the waiting plan. There is no equivalent for an AI.
+#[tauri::command]
+async fn plan_decide(
+    project_id: String,
+    task: String,
+    approve: bool,
+    note: Option<String>,
+) -> CmdResult {
+    with_store(move |s| {
+        let t = s.resolve_task(&project_id, &task)?;
+        Ok(json!(s.decide_plan(&t, approve, note.as_deref())?))
+    })
+    .await
+}
+
 /// The next ready task and a free AI to start it, chosen by Evyro.
 #[tauri::command]
 async fn next_work(project_id: String) -> CmdResult {
@@ -1096,6 +1121,8 @@ fn main() {
             release_session,
             switch_owner,
             next_work,
+            plan_get,
+            plan_decide,
             history_status_cmd,
             history_set,
             history_clear,

@@ -64,6 +64,10 @@ fn tools() -> Vec<ToolDef> {
             schema: s(json!({"id": {"type": "string"}}), &[]) },
         ToolDef { name: "record_decision", mutating: true, description: "Record an architecture/implementation decision with rationale.",
             schema: s(json!({"title": {"type": "string"}, "decision": {"type": "string"}, "rationale": {"type": "string"}, "task": {"type": "string"}}), &["title", "decision"]) },
+        ToolDef { name: "propose_plan", mutating: true, description: "Propose a plan for a task before you edit anything: the steps, the files you expect to change, how you will check it, and the risks. A person approves or rejects it; there is no tool to approve. Stop after proposing and wait.",
+            schema: s(json!({"task": {"type": "string"}, "plan": {"type": "string", "description": "The plan, at most 20000 characters"}}), &["plan"]) },
+        ToolDef { name: "get_plan", mutating: false, description: "The plan for a task and whether a person approved or rejected it, with their note.",
+            schema: s(json!({"task": {"type": "string"}}), &[]) },
         ToolDef { name: "get_review_comments", mutating: false, description: "Review comments the person left on your changes that are not resolved yet (file, line, comment, the commented line). Address each one, then call resolve_review_comment.",
             schema: s(json!({}), &[]) },
         ToolDef { name: "resolve_review_comment", mutating: true, description: "Mark a review comment as addressed, by its id or short id.",
@@ -375,6 +379,22 @@ impl Server {
                 }
                 let c = evyro_core::contract::load(std::path::Path::new(&h.contract_path))?;
                 json!({"record": h, "markdown": c.to_markdown(), "contract": c})
+            }
+            "propose_plan" => {
+                let t = self
+                    .task(args)?
+                    .ok_or_else(|| Error::Invalid("no task given and none is active".into()))?;
+                json!(s.propose_plan(
+                    &t,
+                    arg_str(args, "plan").unwrap_or(""),
+                    &format!("agent:{}", self.agent(args))
+                )?)
+            }
+            "get_plan" => {
+                let t = self
+                    .task(args)?
+                    .ok_or_else(|| Error::Invalid("no task given and none is active".into()))?;
+                json!({"task": t.key, "plan": s.plan(&t.id)?})
             }
             "get_review_comments" => {
                 let cs = s.pending_review_comments(&pid)?;

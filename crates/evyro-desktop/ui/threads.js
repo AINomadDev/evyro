@@ -46,12 +46,12 @@ async function refreshStuck() {
 setInterval(refreshStuck, 30000);
 
 /** Start an agent or shell thread for the current project and show it. */
-async function startThread({ kind, target = null, task = null, handoffId = null, model = null, title = null, resumeId = null, creditBudget = null }) {
+async function startThread({ kind, target = null, task = null, handoffId = null, model = null, title = null, resumeId = null, creditBudget = null, planFirst = false }) {
   // Start at the size the pane will have, so the program does not redraw at once.
   const v = $("#view");
   const size = state.termSize || { cols: Math.max(40, Math.floor((v.clientWidth - 320) / 8.1)), rows: Math.max(10, Math.floor((v.clientHeight - 140) / 17)) };
   const projectId = state.project.id;
-  const info = await act(() => invoke("term_open", { projectId, kind, target, task, handoffId, model, title, resumeId, creditBudget, ...size }));
+  const info = await act(() => invoke("term_open", { projectId, kind, target, task, handoffId, model, title, resumeId, creditBudget, planFirst, ...size }));
   if (resumeId) {
     XTERMS.get(info.id)?.term.dispose();
     XTERMS.delete(info.id);
@@ -232,8 +232,14 @@ async function newThreadDialog(taskKey = null) {
         : `${sel.value} is already running here (${same.map((x) => x.task || "no task").join(", ")}). A second one uses the same account and its limits; start it only for a different task.`),
       h("button", { class: "btn small", onclick: () => { clear($("#modal-root")); placeThread(t.id); setTab("workspace"); } }, "Show it")));
   };
+  const planBox = h("input", { type: "checkbox", id: "plan-first" });
+  const planField = h("label", { class: "check", for: "plan-first" }, planBox,
+    h("span", null, "Plan first: the AI proposes a plan and waits for your approval before it edits. Claude Code and Codex start read-only."));
+  const showPlan = () => { planField.hidden = !taskSel.value; if (!taskSel.value) planBox.checked = false; };
   sel.addEventListener("change", checkDup);
   taskSel.addEventListener("change", checkDup);
+  taskSel.addEventListener("change", showPlan);
+  showPlan();
   checkDup();
   modal("New agent thread", [
     h("p", { class: "muted small" }, "The agent runs in this window through ", h("code", null, "evyro run"), ", so its session, checkpoints and any waiting handoff are tracked as usual."),
@@ -242,13 +248,14 @@ async function newThreadDialog(taskKey = null) {
     field("Thread name", title),
     budgetField,
     field("Task", taskSel),
+    planField,
     dupNote,
   ], [
     { label: "Open in Terminal instead", run: () => openInTerminal(sel.value, taskSel.value || null) },
     { label: "Start", primary: true, run: () => {
       if (!sel.value || (!budgetField.hidden && !budget.reportValidity())) return false;
       const creditBudget = !budgetField.hidden && budget.value !== "" ? budget.valueAsNumber : null;
-      return startThread({ kind: "agent", target: sel.value, task: taskSel.value || null, title: title.value.trim() || null, creditBudget });
+      return startThread({ kind: "agent", target: sel.value, task: taskSel.value || null, title: title.value.trim() || null, creditBudget, planFirst: planBox.checked });
     } },
   ]);
 }
