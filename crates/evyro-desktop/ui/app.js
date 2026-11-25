@@ -282,16 +282,19 @@ function setTab(view) {
 function render() {
   clearInterval(state.timer);
   const v = clear($("#view"));
+  if (!state.project) $("#project-title").textContent = t("frame.noProject");
   if (!state.project && !["agents", "settings"].includes(state.view)) {
+    const footer = t("welcome.footer", { keys: "\u0000", cmd: "\u0001" }).split(/(\u0000|\u0001)/).map((part) =>
+      part === "\u0000" ? h("kbd", null, MOD + " K") : part === "\u0001" ? h("code", null, "evyro init") : part);
     v.append(h("div", { class: "welcome" },
       h("img", { src: "logo.png", alt: "" }),
-      h("h1", null, "Welcome to Evyro"),
-      h("p", null, "Start a task with one AI and finish it with another. Evyro keeps the task, the progress, the tests and a signed handoff, so the next AI does not start from scratch."),
+      h("h1", null, t("welcome.title")),
+      h("p", null, t("welcome.lead")),
       h("ol", { class: "setup" },
-        h("li", null, h("strong", null, "Add a project. "), "Pick a Git repository on this computer, or try a small sample first.", h("div", { class: "row" }, h("button", { class: "btn primary small", onclick: addProjectDialog }, "Add a project"), h("button", { class: "btn small", onclick: trySample }, "Try the sample project"))),
-        h("li", null, h("strong", null, "Check your AIs. "), "See which coding agents, API keys, IDEs and chat apps are ready, and add your own.", h("div", null, h("button", { class: "btn small", onclick: () => setTab("agents") }, "Open AI targets"))),
-        h("li", null, h("strong", null, "Plan, work, switch. "), "Create a task with acceptance criteria, start it with one AI, and use Hand off to move it to another.")),
-      h("p", { class: "small" }, "Press ", h("kbd", null, MOD + " K"), " any time for every action. Projects you set up with ", h("code", null, "evyro init"), " appear here automatically.")));
+        h("li", null, h("strong", null, t("welcome.step1.title") + " "), t("welcome.step1.body"), h("div", { class: "row" }, h("button", { class: "btn primary small", onclick: addProjectDialog }, t("welcome.step1.add")), h("button", { class: "btn small", onclick: trySample }, t("welcome.step1.sample")))),
+        h("li", null, h("strong", null, t("welcome.step2.title") + " "), t("welcome.step2.body"), h("div", null, h("button", { class: "btn small", onclick: () => setTab("agents") }, t("welcome.step2.open")))),
+        h("li", null, h("strong", null, t("welcome.step3.title") + " "), t("welcome.step3.body"))),
+      h("p", { class: "small" }, ...footer)));
     return;
   }
   const views = { workspace: viewWorkspace, tasks: viewTasks, changes: viewChanges, history: viewHistory, knowledge: viewKnowledge, skills: viewSkills, agents: viewAgents, settings: viewSettings };
@@ -448,20 +451,20 @@ async function drawTour(box, pid, again) {
   if (!box.isConnected) return;
   const first = state.project && (await invoke("list_tasks", { projectId: pid }).catch(() => []))[0]?.task.key || "T-1";
   const steps = [
-    ["Start an AI on the first task", st.started, h("button", { class: "btn small", onclick: () => newThreadDialog(first) }, "Start with…")],
-    ["Let it save progress. It records a checkpoint as it works; ask it to run evyro checkpoint if it has not", st.checkpoint, null],
-    ["Run the tests and keep the receipt", st.verified, h("button", { class: "btn small", onclick: () => runVerify(first, again) }, "Run tests")],
-    ["Hand the task to a different AI", st.handoff, h("button", { class: "btn small", onclick: () => handoffDialog(first) }, "Hand off…")],
+    [t("tour.step.start"), st.started, h("button", { class: "btn small", onclick: () => newThreadDialog(first) }, t("tour.step.start.action"))],
+    [t("tour.step.checkpoint"), st.checkpoint, null],
+    [t("tour.step.verify"), st.verified, h("button", { class: "btn small", onclick: () => runVerify(first, again) }, t("tour.step.verify.action"))],
+    [t("tour.step.handoff"), st.handoff, h("button", { class: "btn small", onclick: () => handoffDialog(first) }, t("tour.step.handoff.action"))],
   ];
   const done = steps.filter((x) => x[1]).length;
-  clear(box).append(h("section", { class: "card tour", "aria-label": "Guided tour" },
-    h("div", { class: "row" }, h("h3", { style: "margin:0" }, done === steps.length ? "You have done the whole loop" : "Try Evyro in five minutes"),
-      h("span", { class: "spacer" }), h("span", { class: "muted small" }, `${done} of ${steps.length}`),
-      h("button", { class: "btn small", onclick: () => { setTourDismissed(true); clear(box); } }, "Dismiss")),
+  clear(box).append(h("section", { class: "card tour", "aria-label": t("tour.label") },
+    h("div", { class: "row" }, h("h3", { style: "margin:0" }, done === steps.length ? t("tour.titleDone") : t("tour.title")),
+      h("span", { class: "spacer" }), h("span", { class: "muted small" }, t("tour.progress", { n: done, of: steps.length })),
+      h("button", { class: "btn small", onclick: () => { setTourDismissed(true); clear(box); } }, t("tour.dismiss"))),
     done === steps.length
-      ? h("p", { class: "small" }, "That is the loop on any project: a task, an AI, a checkpoint, a receipt, a handoff. ", h("button", { class: "btn small primary", onclick: addProjectDialog }, "Add your own project"))
+      ? h("p", { class: "small" }, t("tour.closing"), h("button", { class: "btn small primary", onclick: addProjectDialog }, t("tour.addOwn")))
       : h("ol", { class: "tour-steps" }, steps.map(([label, ok, action]) => h("li", { class: ok ? "done" : "" },
-        h("span", { class: "tour-mark", "aria-hidden": "true" }, ok ? "✓" : "○"), h("span", null, label, ok ? h("span", { class: "sr-only" }, " (done)") : null),
+        h("span", { class: "tour-mark", "aria-hidden": "true" }, ok ? "✓" : "○"), h("span", null, label, ok ? h("span", { class: "sr-only" }, " " + t("tour.done")) : null),
         !ok && action ? action : null)))));
 }
 
@@ -1233,46 +1236,47 @@ async function updateLiveBadge() {
 // ---------- command palette ----------
 const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";
 /** Every keyboard shortcut, in one place: the sheet shows this list and the smoke test presses each one. */
-const SHORTCUTS = [
-  ["Everywhere", [
-    ["Command palette: every action", `${MOD} K`],
-    ["Go to a screen (Workspace, Tasks, Changes, History, Knowledge, Skills, AI targets, Settings)", `${MOD} 1 … 8`],
-    ["Go to file", `${MOD} P`],
-    ["Search in code", `${MOD} ⇧ F`],
-    ["Go to symbol", `${MOD} ⇧ O`],
-    ["New task", `${MOD} N`],
-    ["Show or hide the shared context panel", `${MOD} .`],
-    ["Show or hide the terminal drawer", "Ctrl `"],
-    ["This list of shortcuts", "?"],
-    ["Close the palette, a dialog or the task drawer", "Esc"],
+const shortcutList = () => [
+  [t("keys.group.everywhere"), [
+    [t("keys.palette"), `${MOD} K`],
+    [t("keys.screens"), `${MOD} 1 … 8`],
+    [t("keys.file"), `${MOD} P`],
+    [t("keys.text"), `${MOD} ⇧ F`],
+    [t("keys.symbol"), `${MOD} ⇧ O`],
+    [t("keys.newTask"), `${MOD} N`],
+    [t("keys.context"), `${MOD} .`],
+    [t("keys.drawer"), "Ctrl `"],
+    [t("keys.sheet"), "?"],
+    [t("keys.escape"), "Esc"],
   ]],
-  ["In a dialog", [
-    ["Next or previous control (it stays inside the dialog)", "Tab / ⇧ Tab"],
-    ["Press the highlighted button or choose in a list", "Enter"],
+  [t("keys.group.dialog"), [
+    [t("keys.tab"), "Tab / ⇧ Tab"],
+    [t("keys.enter.dialog"), "Enter"],
   ]],
-  ["Command palette and search", [
-    ["Move through the results", "↑ ↓"],
-    ["Run the highlighted command", "Enter"],
+  [t("keys.group.palette"), [
+    [t("keys.arrows"), "↑ ↓"],
+    [t("keys.enter.palette"), "Enter"],
   ]],
-  ["Threads", [
-    ["Leave a terminal and return to the page", "F6"],
-    ["Send a chat message", "Enter"],
-    ["New line in a message", "⇧ Enter"],
+  [t("keys.group.threads"), [
+    [t("keys.f6"), "F6"],
+    [t("keys.send"), "Enter"],
+    [t("keys.newline"), "⇧ Enter"],
   ]],
 ];
 
 function shortcutSheet() {
-  modal("Keyboard shortcuts", [
-    h("p", { class: "muted small" }, "Everything else is in the command palette (", h("kbd", null, `${MOD} K`), "): type part of what you want to do."),
-    ...SHORTCUTS.map(([group, rows]) => h("section", { "aria-label": group },
+  const [before, after] = t("keys.intro", { keys: "\u0000" }).split("\u0000");
+  modal(t("keys.title"), [
+    h("p", { class: "muted small" }, before, h("kbd", null, `${MOD} K`), after),
+    ...shortcutList().map(([group, rows]) => h("section", { "aria-label": group },
       h("h3", { class: "ks-head" }, group),
       h("dl", { class: "ks" }, rows.flatMap(([what, keys]) => [h("dt", null, what), h("dd", null, h("kbd", null, keys))])))),
   ], []);
 }
-const TABS = [["workspace", "Workspace"], ["tasks", "Tasks"], ["changes", "Changes"], ["history", "History"], ["knowledge", "Knowledge (decisions and memory)"], ["skills", "Skills"], ["agents", "AI targets"], ["settings", "Settings"]];
+const tabList = () => [["workspace", t("tab.workspace")], ["tasks", t("tab.tasks")], ["changes", t("tab.changes")], ["history", t("tab.history")], ["knowledge", t("tab.knowledge.long")], ["skills", t("tab.skills")], ["agents", t("tab.agents")], ["settings", t("tab.settings")]];
 async function paletteActions() {
-  const acts = TABS.map(([v, l], i) => ({ label: `Go to ${l}`, hint: i < 9 ? `${MOD} ${i + 1}` : "", run: () => setTab(v) }));
-  acts.push({ label: "Keyboard shortcuts", hint: "?", run: shortcutSheet });
+  const acts = tabList().map(([v, l], i) => ({ label: t("palette.goto", { screen: l }), hint: i < 9 ? `${MOD} ${i + 1}` : "", run: () => setTab(v) }));
+  acts.push({ label: t("keys.title"), hint: "?", run: shortcutSheet });
   acts.push({ label: "Add a project", run: addProjectDialog });
   acts.push({ label: "Try the sample project", run: trySample });
   if (isSample(state.project)) acts.push({ label: "Show the guided tour", run: () => { setTourDismissed(false); setTab("tasks"); } });
@@ -1365,6 +1369,7 @@ async function openPalette() {
 
 // ---------- boot ----------
 document.addEventListener("DOMContentLoaded", () => {
+  I18N.applyStatic();
   for (const b of document.querySelectorAll(".tab")) b.addEventListener("click", () => setTab(b.dataset.view));
   $("#add-project-btn").addEventListener("click", addProjectDialog);
   $("#drawer-close").addEventListener("click", closeDrawer);
@@ -1377,7 +1382,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (mod && state.project && (e.key.toLowerCase() === "p" && !e.shiftKey)) { e.preventDefault(); openSearch("files"); return; }
     if (mod && state.project && e.shiftKey && e.key.toLowerCase() === "f") { e.preventDefault(); openSearch("text"); return; }
     if (mod && state.project && e.shiftKey && e.key.toLowerCase() === "o") { e.preventDefault(); openSearch("symbols"); return; }
-    if (mod && /^[1-9]$/.test(e.key) && TABS[Number(e.key) - 1]) { e.preventDefault(); setTab(TABS[Number(e.key) - 1][0]); return; }
+    if (mod && /^[1-9]$/.test(e.key) && tabList()[Number(e.key) - 1]) { e.preventDefault(); setTab(tabList()[Number(e.key) - 1][0]); return; }
     if (mod && e.key === "." && state.project) { e.preventDefault(); setCtxOpen(!state.ctxOpen); return; }
     if (e.ctrlKey && e.key === "`" && state.project) { e.preventDefault(); toggleTermDrawer(); return; }
     if (mod && e.key.toLowerCase() === "n" && state.project) { e.preventDefault(); setTab("tasks"); newTaskDialog(); return; }

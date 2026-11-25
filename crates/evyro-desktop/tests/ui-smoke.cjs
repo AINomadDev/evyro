@@ -1484,7 +1484,7 @@ const FIX = {
     await page.keyboard.press("?");
     const sheet = page.getByRole("dialog", { name: "Keyboard shortcuts" });
     await sheet.waitFor();
-    const rows = await page.evaluate(() => SHORTCUTS.flatMap(([, r]) => r.map((x) => x[1])));
+    const rows = await page.evaluate(() => shortcutList().flatMap(([, r]) => r.map((x) => x[1])));
     for (const keys of rows) if (!(await sheet.locator("kbd", { hasText: keys }).count())) throw new Error("not on the sheet: " + keys);
     await page.keyboard.press("Escape");
     await sheet.waitFor({ state: "detached" });
@@ -1553,6 +1553,42 @@ const FIX = {
     await page.keyboard.press("Escape");
     await dlg.waitFor({ state: "detached" });
     if (!(await page.evaluate(() => document.activeElement?.textContent?.includes("New task")))) throw new Error("focus was not given back to the button that opened the dialog");
+  });
+  await step("language: the pseudo-language shows every moved string came from the catalog, and English returns", async () => {
+    try {
+    await page.evaluate(() => saveAppearance({ language: "pseudo" }));
+    const tabs = await page.evaluate(() => [...document.querySelectorAll(".tab")].map((b) => b.textContent));
+    for (const tx of tabs) if (!/^⟦.*⟧$/.test(tx)) throw new Error("a tab is still plain text: " + tx);
+    const side = await page.evaluate(() => [document.querySelector("#add-project-btn").textContent, document.querySelector("#palette-btn").title, document.querySelector(".side-label").textContent]);
+    for (const tx of side) if (!/^⟦.*⟧$/.test(tx)) throw new Error("fixed text is still plain: " + tx);
+    // Palette entries, the shortcut sheet and the language row.
+    const labels = await page.evaluate(() => paletteActions().then((a) => a.filter((x) => /Go to|Keyboard|⟦/.test(x.label)).map((x) => x.label)));
+    if (!labels.some((l) => /^⟦G.*⟧$/.test(l)) || labels.some((l) => /^Go to (Workspace|Tasks|Changes|History|Knowledge|Skills|AI targets|Settings)/.test(l))) throw new Error("palette: " + labels.join(" | "));
+    await page.evaluate(() => shortcutSheet());
+    const sheet = await page.locator("#modal-root .modal").innerText();
+    if (!/⟦Kéýbóárd/.test(sheet)) throw new Error("sheet title: " + sheet.slice(0, 80));
+    if (/Command palette: every action/.test(sheet)) throw new Error("the sheet still has English rows");
+    await page.keyboard.press("Escape");
+    // The welcome screen (no project) and the guided tour card.
+    await page.evaluate(() => { window.__keepProject = state.project; window.__keepProjects = state.projects; state.projects = []; state.project = null; render(); });
+    const welcome = await page.locator(".welcome").innerText();
+    if (!/⟦Wélçómé/.test(welcome) || /Add a project/.test(welcome)) throw new Error("welcome: " + welcome.slice(0, 120));
+    await page.evaluate(() => { state.projects = window.__keepProjects; state.project = window.__keepProject; });
+    // Back to English: nothing pseudo is left.
+    await page.evaluate(() => saveAppearance({ language: "system" }));
+    const back = await page.evaluate(() => [...document.querySelectorAll(".tab")].map((b) => b.textContent).join(","));
+    if (back !== "Workspace,Tasks,Changes,History,Knowledge,Skills,AI targets,Settings") throw new Error("English did not return: " + back);
+    if (await page.evaluate(() => document.documentElement.lang) !== "en") throw new Error("lang attribute");
+    // A missing key shows the key (and never blank text).
+    if (await page.evaluate(() => t("no.such.key")) !== "no.such.key") throw new Error("a missing key did not show itself");
+    // Plurals and placeholders use the language's own rules.
+    const plural = await page.evaluate(() => { I18N.catalogs.en["test.n"] = { one: "{count} item", other: "{count} items" }; return [t("test.n", { count: 1 }), t("test.n", { count: 2 })]; });
+    if (plural.join("|") !== "1 item|2 items") throw new Error("plural: " + plural);
+    await page.evaluate(() => { delete I18N.catalogs.en["test.n"]; render(); });
+    } finally {
+      // A failure above must not leave every later step in the test language.
+      await page.evaluate(() => { saveAppearance({ language: "system" }); delete I18N.catalogs.en["test.n"]; });
+    }
   });
   await step("first-run setup when there are no projects", async () => {
     await page.evaluate(() => { state.projects = []; state.project = null; setTab("overview"); });
