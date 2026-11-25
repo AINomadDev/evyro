@@ -879,7 +879,20 @@ fn quiet_on_broken_pipe() {
     }));
 }
 
+/// Windows gives the main thread 1 MB, which the command tree and the large `run` function
+/// outgrow in debug builds (even `--help` crashed). Run on a thread with room to spare.
 fn main() {
+    let worker = std::thread::Builder::new()
+        .name("evyro".into())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(real_main)
+        .expect("start the command thread");
+    if worker.join().is_err() {
+        std::process::exit(101);
+    }
+}
+
+fn real_main() {
     evyro_core::crash::install_panic_hook("evyro");
     quiet_on_broken_pipe();
     let cli = Cli::parse();
