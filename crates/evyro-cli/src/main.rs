@@ -770,7 +770,8 @@ enum PlanCmd {
         #[arg(long)]
         file: Option<PathBuf>,
     },
-    /// Approve the plan that is waiting. Run it yourself: it refuses inside an AI's session.
+    /// Approve the plan that is waiting. A person has to run it at a terminal and type the task
+    /// key; it refuses when run by an AI or from a script.
     Approve {
         task: String,
         #[arg(long)]
@@ -951,6 +952,28 @@ fn project(
 }
 
 /// Session to attribute an action to: $EVYRO_SESSION_ID (set by `evyro run`) or the task's owner.
+/// Make sure a person is deciding. The commands an AI runs have no terminal, so this asks for
+/// one and has the person type the task key. It is a strong speed bump, not a lock: a program
+/// running as the same user could still open a terminal of its own or write the database, so
+/// the desktop app's button is the stronger route and the docs say so.
+fn confirm_person(key: &str, verb: &str, in_ai_session: bool) -> anyhow::Result<()> {
+    use std::io::{BufRead, IsTerminal, Write};
+    if in_ai_session || !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        return Err(Error::Invalid(format!(
+            "to {verb} a plan, a person has to do it at a terminal (or with the button in the desktop app); this command was not run from one"
+        ))
+        .into());
+    }
+    eprint!("Type {key} to {verb} its plan: ");
+    std::io::stderr().flush()?;
+    let mut line = String::new();
+    std::io::stdin().lock().read_line(&mut line)?;
+    if line.trim() != key {
+        return Err(Error::Invalid(format!("not {verb}d: you did not type {key}")).into());
+    }
+    Ok(())
+}
+
 fn render_plan(key: &str, plan: &evyro_core::plans::TaskPlan) -> String {
     let mut out = format!(
         "Plan for {key}: {} (by {})\n\n{}",
@@ -1649,17 +1672,9 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                         )
                     });
                 }
-                PlanCmd::Approve { task, note } | PlanCmd::Reject { task, note }
-                    if in_session.is_some() =>
-                {
-                    let _ = (task, note);
-                    return Err(Error::Invalid(
-                        "approving or rejecting a plan is for a person: run it in your own terminal or in the desktop app, not inside an AI's session".into(),
-                    )
-                    .into());
-                }
                 PlanCmd::Approve { task, note } => {
                     let t = store.resolve_task(&p.id, &task)?;
+                    confirm_person(&t.key, "approve", in_session.is_some())?;
                     let plan = store.decide_plan(&t, true, note.as_deref())?;
                     o.print(&plan, || {
                         format!(
@@ -1670,6 +1685,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 }
                 PlanCmd::Reject { task, note } => {
                     let t = store.resolve_task(&p.id, &task)?;
+                    confirm_person(&t.key, "reject", in_session.is_some())?;
                     let plan = store.decide_plan(&t, false, note.as_deref())?;
                     o.print(&plan, || format!("Plan for {} rejected. The AI reads your note with `evyro plan show {}`.", t.key, t.key));
                 }
