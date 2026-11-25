@@ -514,6 +514,9 @@ function taskCard(r) {
   return h("div", { class: "task-card" + (live.length ? " live" : ""), ...opens(() => openTask(t.key)), "aria-label": `${t.key} ${t.title}` },
     h("div", { class: "meta" }, h("span", { class: "key" }, t.key), h("span", { class: "pill" }, t.kind), h("span", { class: "pill" }, "P" + t.priority)),
     h("div", { class: "t" }, t.title),
+    t.files && t.files.length ? h("div", { class: "muted small mono card-files", title: t.files.join(", ") }, I18N.t("board.files", { files: t.files.length > 2 ? I18N.t("board.filesMore", { files: t.files.slice(0, 2).join(", "), n: t.files.length - 2 }) : t.files.join(", ") })) : null,
+    r.file_blocked_by ? h("div", { class: "card-wait" }, h("span", { class: "pill warn", title: I18N.t("board.waits.title", { file: r.file_blocked_by.file, task: r.file_blocked_by.task }) }, I18N.t("board.waits", { task: r.file_blocked_by.task, owner: r.file_blocked_by.owner })))
+      : r.file_overlaps && r.file_overlaps.length ? h("div", { class: "muted small", title: I18N.t("board.overlaps.title") }, I18N.t("board.overlaps", { tasks: r.file_overlaps.join(", ") })) : null,
     r.criteria_total ? [h("div", { class: "progress", title: `${r.criteria_met}/${r.criteria_total} criteria met` }, h("span", { style: `width:${pct}%` })),
       h("div", { class: "muted small" }, `${r.criteria_met}/${r.criteria_total} criteria met`)] : h("div", { class: "muted small" }, "No acceptance criteria"),
     live.map((x) => h("div", { class: "card-ai" },
@@ -617,13 +620,20 @@ function showPrFeedback(t, f) {
   ], buttons);
 }
 
+function t_files(task) {
+  return task.files && task.files.length
+    ? h("ul", { class: "list" }, task.files.map((f) => h("li", null, h("code", null, f))))
+    : h("div", { class: "muted small" }, t("drawer.files.none"));
+}
+
 /** The plan an AI proposed for a task. A person approves or rejects it; an AI has no way to. */
 function planCard(key, plan, refresh) {
   const waiting = plan.status === "proposed";
   const note = h("input", { type: "text", placeholder: "Optional note for the AI", "aria-label": "Note for the AI" });
   const decide = (approve) => async () => {
     try {
-      await act(() => invoke("plan_decide", { projectId: state.project.id, task: key, approve, note: note.value.trim() || null }), approve ? `Plan for ${key} approved.` : `Plan for ${key} rejected.`);
+      const out = await act(() => invoke("plan_decide", { projectId: state.project.id, task: key, approve, note: note.value.trim() || null }), approve ? `Plan for ${key} approved.` : `Plan for ${key} rejected.`);
+      if (out && out.declared_files && out.declared_files.length) toast(t("plan.declared", { files: out.declared_files.join(", ") }));
       refresh();
     } catch { refresh(); }
   };
@@ -679,6 +689,10 @@ async function openTask(key) {
   try { planInfo = (await invoke("plan_get", { projectId: state.project.id, task: t.key })).plan; } catch { /* no plan section */ }
   if (state.drawerTask !== key) return;
   if (planInfo) body.append(planCard(t.key, planInfo, refresh));
+
+  // Files: what this task changes, so the board can keep two AIs off the same ones.
+  body.append(h("h3", null, I18N.t("drawer.files")));
+  body.append(t_files(d.task));
 
   // Criteria
   const met = d.criteria.filter((c) => c.met && c.counts).length;

@@ -148,6 +148,16 @@ impl Session {
     }
 }
 
+/// A live AI holding a task whose files overlap another task's.
+#[derive(Debug, Clone)]
+pub struct FileHolder {
+    /// The file or folder of the asking task that overlaps.
+    pub file: String,
+    pub task: crate::tasks::Task,
+    pub session_id: String,
+    pub harness: String,
+}
+
 /// A task and the AI chosen to start it.
 #[derive(Debug, Clone, Serialize)]
 pub struct NextWork {
@@ -259,7 +269,7 @@ fn parse_etime(s: &str) -> Option<i64> {
 /// its start time was recorded, started at that time. A pid reused by an
 /// unrelated process after the agent exited does not count.
 /// Whether two declared task paths are the same or one contains the other.
-fn paths_overlap(a: &str, b: &str) -> bool {
+pub(crate) fn paths_overlap(a: &str, b: &str) -> bool {
     let norm = |p: &str| p.trim_start_matches("./").trim_end_matches('/').to_owned();
     let (a, b) = (norm(a), norm(b));
     a == b || a.starts_with(&format!("{b}/")) || b.starts_with(&format!("{a}/"))
@@ -437,8 +447,23 @@ impl Store {
     /// One AI at a time on a set of files: refuse a task whose declared files overlap a task
     /// that another live session holds in the same checkout.
     fn check_file_overlap(&self, t: &crate::tasks::Task, by_session: Option<&str>) -> Result<()> {
+        if let Some(h) = self.file_holder(t, by_session)? {
+            return Err(Error::Conflict(format!(
+                "{} and {} both change {}, and {} is held by session {} ({}). Only one AI works on a set of files at a time: finish or switch that task first",
+                t.key, h.task.key, h.file, h.task.key, h.session_id, h.harness
+            )));
+        }
+        Ok(())
+    }
+
+    /// The task, held by a live AI in the same checkout, whose declared files overlap `t`'s.
+    pub fn file_holder(
+        &self,
+        t: &crate::tasks::Task,
+        by_session: Option<&str>,
+    ) -> Result<Option<FileHolder>> {
         if t.files.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let mut st = self
             .conn
@@ -460,13 +485,15 @@ impl Store {
                 .iter()
                 .find(|a| other.files.iter().any(|b| paths_overlap(a, b)))
             {
-                return Err(Error::Conflict(format!(
-                    "{} and {} both change {file}, and {} is held by session {} ({}). Only one AI works on a set of files at a time: finish or switch that task first",
-                    t.key, other.key, other.key, holder.id, holder.harness
-                )));
+                return Ok(Some(FileHolder {
+                    file: file.clone(),
+                    task: other,
+                    session_id: holder.id,
+                    harness: holder.harness,
+                }));
             }
         }
-        Ok(())
+        Ok(None)
     }
 
     /// What to start next with nothing named: an installed AI that is not working on anything

@@ -26,6 +26,7 @@ pub mod handover;
 pub mod health;
 pub mod init;
 pub mod memory;
+pub mod ownership;
 pub mod paths;
 pub mod plans;
 pub mod pr_feedback;

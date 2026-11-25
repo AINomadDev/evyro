@@ -3286,3 +3286,66 @@ fn the_sample_project_supports_the_first_run_loop() {
     let handoffs = env.json(&root, &["handoffs"]);
     assert_eq!(handoffs.as_array().unwrap().len(), 1);
 }
+
+/// The task list names the AI that blocks a task through overlapping files, and an approved plan
+/// declares the files it names.
+#[test]
+fn the_board_names_who_owns_the_files_and_a_plan_declares_its_files() {
+    let mut env = Env::new();
+    let repo = env.repo("ownership");
+    env.init(&repo);
+    std::fs::create_dir_all(repo.join("src/api")).unwrap();
+    std::fs::write(repo.join("src/api/mod.rs"), "x\n").unwrap();
+    std::fs::write(repo.join("src/ui.rs"), "x\n").unwrap();
+    env.ok(&repo, &["task", "add", "API", "--file", "src/api"]);
+    env.ok(
+        &repo,
+        &["task", "add", "API tests", "--file", "src/api/mod.rs"],
+    );
+    env.ok(&repo, &["task", "add", "UI"]);
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "claude"]);
+    let list = env.ok(&repo, &["tasks"]);
+    let line = list.lines().find(|l| l.starts_with("T-2")).unwrap();
+    assert!(
+        line.contains("waits for T-1 held by claude-code: src/api/mod.rs"),
+        "{line}"
+    );
+    assert!(
+        !list
+            .lines()
+            .find(|l| l.starts_with("T-3"))
+            .unwrap()
+            .contains("waits for"),
+        "a task with no files is never blocked"
+    );
+    // A plan that names files: the preview lists those that exist, and approving declares them.
+    env.ok(
+        &repo,
+        &[
+            "plan",
+            "set",
+            "T-3",
+            "--text",
+            "Change src/ui.rs, add src/brand_new.rs, and read /etc/hosts or https://x.test/a.html",
+        ],
+    );
+    let files = env.json(&repo, &["plan", "files", "T-3"]);
+    assert_eq!(files["files"], serde_json::json!(["src/ui.rs"]));
+    assert_eq!(
+        env.json(&repo, &["task", "show", "T-3"])["task"]["files"],
+        serde_json::json!([])
+    );
+    #[cfg(unix)]
+    {
+        let (code, out) = on_terminal(&env, &repo, &["plan", "approve", "T-3"], "T-3");
+        assert_eq!(code, 0, "{out}");
+        assert!(
+            out.contains("Files declared from the plan: src/ui.rs"),
+            "{out}"
+        );
+        assert_eq!(
+            env.json(&repo, &["task", "show", "T-3"])["task"]["files"],
+            serde_json::json!(["src/ui.rs"])
+        );
+    }
+}

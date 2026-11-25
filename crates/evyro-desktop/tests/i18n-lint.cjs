@@ -48,7 +48,8 @@ const used = new Set();
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`\\])\/\/[^\n]*/g, "$1");
 for (const f of files) {
   const src = stripComments(fs.readFileSync(path.join(ui, f), "utf8"));
-  for (const m of src.matchAll(/(?<![\w.$])t\(\s*(["'`])([^"'`]*)\1/g)) used.add(m[2]);
+  // t("key"), or I18N.t("key") where a local variable named t hides the function.
+  for (const m of src.matchAll(/(?:(?<![\w.$])|I18N\.)t\(\s*(["'`])([^"'`]*)\1/g)) used.add(m[2]);
   for (const m of src.matchAll(/(?<![\w.$])t\(\s*(?!["'`])/g)) problems.push(`${f}: t() needs a literal key, not an expression`);
 }
 for (const m of html.matchAll(/data-i18n(?:-[\w-]+)?="([^"]+)"/g)) used.add(m[1]);
