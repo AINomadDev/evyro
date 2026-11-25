@@ -182,6 +182,12 @@ impl Store {
             add("decisions", 3, s);
         }
 
+        if let Some(t) = task {
+            if let Some(plan) = self.plan(&t.id)? {
+                add("plan", 1, crate::plans::context_section(&plan));
+            }
+        }
+
         let review = self.pending_review_comments(&project.id)?;
         if !review.is_empty() {
             add("review", 2, crate::review::context_section(&review));

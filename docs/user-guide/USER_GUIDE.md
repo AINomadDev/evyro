@@ -310,6 +310,26 @@ evyro review resolve 4f9a02c1    # by the short id shown in the list
 
 Comments that are not resolved are part of every context packet and handoff context, so the next AI sees them even if you switch. Agents connected over MCP read them with `get_review_comments` and close them with `resolve_review_comment`. Snippets are redacted like everything else Evyro stores.
 
+### 4.6a Plan first, then build
+
+For a risky or unclear task, make the AI show its plan before it edits anything.
+
+```bash
+evyro run --to claude --task T-4 --plan-first   # the AI plans and stops
+evyro plan show T-4                            # read it
+evyro plan approve T-4 --note "go"             # or: evyro plan reject T-4 --note "too big"
+evyro run --to claude --task T-4               # builds, with the approved plan in its context
+```
+
+In the desktop app, tick **Plan first** when you start a thread on a task. The plan appears on the task, with **Approve plan** and **Reject**.
+
+What is and is not enforced:
+
+- **Claude Code and Codex start read-only** in plan mode (Claude Code's `plan` permission mode, Codex's `read-only` sandbox). For every other AI the instruction is a request, not a lock, and Evyro says so when it starts.
+- **Only a person approves.** `evyro plan approve` refuses inside an AI's session, and the MCP server has `propose_plan` and `get_plan` but no way to approve. A new plan after an approval needs its own approval.
+- **The plan is text from an AI**, so the next AI reads it fenced as data, like every note carried between AIs. Secrets in it are redacted.
+- Nothing stops an AI that ignores the request from editing. Review the diff as usual.
+
 ### 4.7 Connect agents over MCP (optional but useful)
 
 | Agent | Command |

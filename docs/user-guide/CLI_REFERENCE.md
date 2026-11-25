@@ -46,6 +46,7 @@ Commands:
   sessions       Agent sessions
   recover        Recover sessions whose process died (quota kill, crash)
   worktrees      Git worktrees
+  plan           Plan first: an AI proposes a plan, you approve it, then it builds
   verify         Run a verification command and record a receipt: `evyro verify -- cargo test`
   decide         Record a decision. Record a decision: `evyro decide "<title>" "<decision>" [--why ...]`
   decisions      Decisions for the project
@@ -329,6 +330,7 @@ Options:
       --accept-drift       
       --no-open            IDE/chat targets: prepare the hand-over without opening apps or the clipboard
       --handoff <HANDOFF>  Continue this handoff, even one prepared for a different AI
+      --plan-first         Plan first: the AI proposes a plan for the task and waits for you to approve it (`evyro plan approve`). Claude Code and Codex start read-only; other AIs are asked
   -h, --help               Print help
 ```
 
@@ -1066,6 +1068,29 @@ Usage: evyro sessions [OPTIONS]
 
 Options:
       --active             
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro plan
+
+```text
+Plan first: an AI proposes a plan, you approve it, then it builds
+
+Usage: evyro plan [OPTIONS] <COMMAND>
+
+Commands:
+  show     Show the plan for a task and whether it is approved
+  set      Propose a plan for a task. An AI in plan mode does this; the plan then waits for you
+  approve  Approve the plan that is waiting. Run it yourself: it refuses inside an AI's session
+  reject   Reject the plan that is waiting, with the reason the AI should read
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
       --json               Machine-readable JSON output
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors

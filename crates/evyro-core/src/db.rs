@@ -32,6 +32,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0006_session_pid_started",
         include_str!("../migrations/0006_session_pid_started.sql"),
     ),
+    (
+        "0007_task_plans",
+        include_str!("../migrations/0007_task_plans.sql"),
+    ),
 ];
 
 /// How many pre-upgrade copies of the database to keep.
@@ -196,7 +200,7 @@ mod upgrade_tests {
         // Turn it back into the schema before the newest migration.
         s.conn
             .execute_batch(&format!(
-                "ALTER TABLE sessions DROP COLUMN pid_started;
+                "DROP TABLE task_plans;
                  DELETE FROM schema_migrations WHERE version = {SCHEMA_VERSION};"
             ))
             .unwrap();
