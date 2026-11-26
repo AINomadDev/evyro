@@ -59,3 +59,25 @@ Quota telemetry: not available from any agent today; Evyro never shows invented 
 | OpenCode, Aider | no (key or local only) | every provider in the registry |
 
 `app_login` removes every known API-key variable (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` and others) from that run's environment, so the tool falls back to its signed-in account. Login detection checks only that a credential file or Keychain item exists, never its contents.
+
+## Custom agents
+
+An agent CLI Evyro does not know can be added with one TOML file, in `agents/` under Evyro's config directory (shown by `evyro doctor`; `$EVYRO_HOME/config/agents/` when `EVYRO_HOME` is set) or in a project's `.evyro/agents/`. `evyro agents` lists it next to the built-in agents, and `evyro doctor` reports files it could not read and runs each agent's login check.
+
+```toml
+name = "my-agent"                     # letters, digits, - _ . ; not a built-in agent's name
+display_name = "My Agent"             # optional
+command = "my-agent"                  # on PATH, or a full path
+args = ["run", "--cwd", "{cwd}", "{prompt}"]  # headless launch; must contain {prompt}
+interactive_args = ["{prompt}"]       # optional; defaults to args
+model_args = ["--model", "{model}"]   # optional; put right after the command when a model is chosen
+instruction_file = "AGENTS.md"        # optional; the file the agent reads from the repository root
+login_check = ["my-agent", "auth", "status"]  # optional; exit status 0 means signed in
+
+[env]                                 # optional; set for the login check (and for runs, once supported)
+MY_AGENT_TELEMETRY = "0"
+```
+
+Placeholders are `{prompt}`, `{cwd}` and `{model}` (only in `model_args`). No shell is used: each list item is one argument and a placeholder's value is inserted as-is, so prompt text cannot add arguments or commands. Unknown fields, unknown placeholders and a missing `{prompt}` are errors that name the file. Login checks in a project's `.evyro/agents/` are repository text, so `evyro doctor` shows them instead of running them.
+
+Custom agents are listed and checked today; starting them with `evyro run` and showing them in the desktop app are not done yet.
