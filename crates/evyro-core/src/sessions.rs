@@ -380,6 +380,7 @@ impl Store {
         let id = util::new_id("ses");
         let now = util::now();
         if let Some(tid) = &s.task_id {
+            self.free_stale_lease(project_id, tid)?;
             self.check_claim(project_id, tid, &s.harness, None)?;
         }
         // The session, its lease and its event land together or not at all.
@@ -438,7 +439,11 @@ impl Store {
         }
         if let Some(l) = self.lease(task_id)? {
             let holder = self.get_session(&l.session_id)?;
-            if !holder.status.is_ended() && Some(holder.id.as_str()) != by_session {
+            // A holder whose agent is gone does not block: starting the task frees it first.
+            if !holder.status.is_ended()
+                && holder.is_live()
+                && Some(holder.id.as_str()) != by_session
+            {
                 return Err(Error::Conflict(format!(
                     "{} is owned by session {} ({}); if its AI is out of usage, switch the task with `evyro switch --task {} --to {} --yes`, otherwise hand off or end that session first",
                     t.key, holder.id, holder.harness, t.key, harness
@@ -612,6 +617,7 @@ impl Store {
                 "session {session_id} is not running in this project"
             )));
         }
+        self.free_stale_lease(project_id, task_id)?;
         let tx = self.write_tx()?;
         self.check_claim(project_id, task_id, &ses.harness, Some(&ses.id))?;
         let now = util::now();
@@ -700,8 +706,25 @@ impl Store {
                 rusqlite::params![to.as_str(), ended, reason, s.id],
             )?;
             if to.is_ended() {
+                // Free its tasks for other AIs, and log each one so it can be undone.
+                let held: Vec<(String, String)> = {
+                    let mut st = self.conn.prepare(
+                        "SELECT task_id, acquired_at FROM leases WHERE session_id = ?1",
+                    )?;
+                    let rows = st.query_map([&s.id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                    rows.collect::<std::result::Result<_, _>>()?
+                };
                 self.conn
                     .execute("DELETE FROM leases WHERE session_id = ?1", [&s.id])?;
+                for (task_id, acquired_at) in held {
+                    self.emit(
+                        Some(&s.project_id),
+                        Some(&task_id),
+                        Some(&s.id),
+                        crate::leases::RELEASED,
+                        serde_json::json!({"harness": s.harness, "acquired_at": acquired_at, "session_status": to, "reason": reason}),
+                    )?;
+                }
             }
             self.emit(
                 Some(&s.project_id),

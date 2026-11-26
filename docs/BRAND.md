@@ -29,7 +29,7 @@ Rules:
 
 ## Colour
 
-The palette comes from the logo's gradient and the desktop app's tokens in [`ui/style.css`](../crates/evyro-desktop/ui/style.css).
+The palette comes from the logo's gradient and the desktop app's tokens in [`ui/tokens.css`](../crates/evyro-desktop/ui/tokens.css).
 
 ### Brand
 
