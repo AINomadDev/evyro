@@ -130,7 +130,7 @@ function layoutControls() {
     saveWorkspaceLayout({ count, columns, ...patch });
     render();
   };
-  const paneCount = h("input", { type: "number", "aria-label": "Panes", "data-layout-control": "count", min: "1", max: String(MAX_PANES), step: "1", value: count,
+  const paneCount = h("input", { type: "number", "aria-label": I18N.t("ws.panes"), "data-layout-control": "count", min: "1", max: String(MAX_PANES), step: "1", value: count,
     onchange: (e) => {
       const value = layoutValue(e.target.valueAsNumber, 1, MAX_PANES, count);
       if (value === count) e.target.value = count;
@@ -141,18 +141,18 @@ function layoutControls() {
     disabled: count + delta < 1 || count + delta > MAX_PANES,
     onclick: () => set({ count: count + delta }, control),
   }, h("span", { "aria-hidden": "true" }, symbol));
-  const cols = h("select", { "aria-label": "Columns", "data-layout-control": "columns", onchange: (e) => {
+  const cols = h("select", { "aria-label": I18N.t("ws.columns"), "data-layout-control": "columns", onchange: (e) => {
     const value = e.target.value;
     set({ columns: value === SIDE_BY_SIDE ? value : Number(value) }, "columns");
   } },
-    h("option", { value: "0" }, "Auto"),
-    h("option", { value: SIDE_BY_SIDE }, "Side by side"),
+    h("option", { value: "0" }, I18N.t("ws.auto")),
+    h("option", { value: SIDE_BY_SIDE }, I18N.t("ws.sideBySide")),
     Array.from({ length: MAX_COLUMNS }, (_, i) => h("option", { value: String(i + 1) }, String(i + 1))));
   cols.value = String(columns);
-  return h("div", { class: "ws-layout", role: "group", "aria-label": "Pane layout" },
-    h("div", { class: "ws-layout-count" }, h("span", { class: "ws-layout-label", "aria-hidden": "true" }, "Panes"),
-      h("div", { class: "ws-layout-stepper" }, step(-1, "Remove pane", "−", "remove"), paneCount, step(1, "Add pane", "+", "add"))),
-    h("label", { class: "ws-layout-columns" }, h("span", { class: "ws-layout-label" }, "Columns"), h("span", { class: "ws-layout-select" }, cols)));
+  return h("div", { class: "ws-layout", role: "group", "aria-label": I18N.t("ws.layout") },
+    h("div", { class: "ws-layout-count" }, h("span", { class: "ws-layout-label", "aria-hidden": "true" }, I18N.t("ws.panes")),
+      h("div", { class: "ws-layout-stepper" }, step(-1, I18N.t("ws.removePane"), "−", "remove"), paneCount, step(1, I18N.t("ws.addPane"), "+", "add"))),
+    h("label", { class: "ws-layout-columns" }, h("span", { class: "ws-layout-label" }, I18N.t("ws.columns")), h("span", { class: "ws-layout-select" }, cols)));
 }
 
 function toggleFocusMode() {
@@ -179,35 +179,35 @@ function drawThreadList() {
   const mine = projThreads();
   const shown = new Set(panes().filter(Boolean));
   const yourTurn = (t) => t.kind === "chat" && t.running && !t.busy && t.state === "ready" && !needsYou(t);
-  const groups = appearance().grouping === "time" ? [["All threads", mine.slice().sort((a, b) => b.started_at - a.started_at)]] : [
-    ["Needs you", mine.filter((t) => needsYou(t))],
-    ["Working", mine.filter((t) => t.running && !needsYou(t) && !yourTurn(t))],
-    ["Your turn", mine.filter(yourTurn)],
-    ["Ended", mine.filter((t) => !t.running)],
+  const groups = appearance().grouping === "time" ? [[I18N.t("ws.group.all"), mine.slice().sort((a, b) => b.started_at - a.started_at)]] : [
+    [I18N.t("ws.group.needs"), mine.filter((t) => needsYou(t))],
+    [I18N.t("ws.group.working"), mine.filter((t) => t.running && !needsYou(t) && !yourTurn(t))],
+    [I18N.t("ws.group.turn"), mine.filter(yourTurn)],
+    [I18N.t("ws.group.ended"), mine.filter((t) => !t.running)],
   ];
-  box.append(h("div", { class: "side-label side-threads-head" }, h("span", null, "AI threads"), mine.length ? h("span", null, String(mine.length)) : null));
+  box.append(h("div", { class: "side-label side-threads-head" }, h("span", null, I18N.t("ws.threads")), mine.length ? h("span", null, String(mine.length)) : null));
   for (const [label, list] of groups) {
     if (!list.length) continue;
     box.append(h("div", { class: "side-group" }, h("span", null, label), h("span", null, String(list.length))),
       h("nav", { class: "thread-list", "aria-label": label }, list.map((t) => h("button", {
         class: "thread-item" + (t.id === state.thread ? " active" : "") + (shown.has(t.id) ? " shown" : ""),
-        title: shown.has(t.id) ? "In a pane" : "Click to show in the workspace",
+        title: shown.has(t.id) ? I18N.t("ws.inPane") : I18N.t("ws.clickShow"),
         onclick: () => { placeThread(t.id); if (state.view === "workspace") render(); else setTab("workspace"); },
       }, agentBadge(t),
       h("span", { class: "thread-text" },
         h("span", { class: "thread-row" }, h("span", { class: "thread-title" }, t.title), threadStatus(t)),
         h("span", { class: "muted small thread-sub" }, threadSub(t)))))));
   }
-  if (!mine.length) box.append(h("div", { class: "muted small empty-threads" }, "No AI threads yet. Start one to work with it here."));
+  if (!mine.length) box.append(h("div", { class: "muted small empty-threads" }, I18N.t("ws.noThreads")));
   box.append(h("div", { class: "row side-new" },
-    h("button", { class: "btn primary small", onclick: newThreadDialog, title: "Run a coding agent in a terminal" }, "+ Agent"),
-    h("button", { class: "btn small", onclick: newChatDialog, title: "Chat with an agent over ACP" }, "+ Chat"),
-    h("button", { class: "btn small", onclick: () => startThread({ kind: "shell" }), title: "A shell in this project" }, "+ Shell")));
+    h("button", { class: "btn primary small", onclick: newThreadDialog, title: I18N.t("ws.agent.title") }, I18N.t("ws.agent")),
+    h("button", { class: "btn small", onclick: newChatDialog, title: I18N.t("ws.chat.title") }, I18N.t("ws.chat")),
+    h("button", { class: "btn small", onclick: () => startThread({ kind: "shell" }), title: I18N.t("ws.shell.title") }, I18N.t("ws.shell"))));
   drawStatusBar();
 }
 function threadSub(t) {
-  const kind = t.kind === "chat" ? "chat" : t.kind === "agent" ? "terminal" : "shell";
-  return [kind, t.kind === "shell" ? null : taskLabel(t), agoSecs(t.started_at), t.restored ? "earlier run" : null].filter(Boolean).join(" · ");
+  const kind = t.kind === "chat" ? I18N.t("review.kind.chat") : t.kind === "agent" ? I18N.t("review.kind.terminal") : I18N.t("ws.kind.shell");
+  return [kind, t.kind === "shell" ? null : taskLabel(t), agoSecs(t.started_at), t.restored ? I18N.t("ws.earlier") : null].filter(Boolean).join(" · ");
 }
 /** The tasks a thread is on: the one it was started with, else the in-progress tasks its agent claimed itself. */
 function threadTasks(t) {
@@ -218,7 +218,7 @@ function threadTasks(t) {
 }
 function taskLabel(t) {
   const ks = threadTasks(t);
-  return ks.length ? `${ks.length === 1 ? "task" : "tasks"} ${ks.join(", ")}` : "no task";
+  return ks.length ? I18N.t("ws.tasksLabel", { count: ks.length, keys: ks.join(", ") }) : I18N.t("thread.noTask");
 }
 
 // ---------- workspace view ----------
@@ -231,13 +231,13 @@ async function viewWorkspace(v) {
   if (!projThreads().length) {
     // Nothing running yet: how to start, then the project overview.
     v.append(h("div", { class: "thread-empty ws-hero" },
-      h("h2", null, "Work with an AI right here"),
-      h("p", { class: "muted" }, "Start Claude Code, Codex, Gemini or any coding agent in a thread, and run several side by side. They all share this project's task, decisions, memory, review notes and handoffs, shown on the right."),
+      h("h2", null, I18N.t("ws.hero.title")),
+      h("p", { class: "muted" }, I18N.t("ws.hero.body")),
       h("div", { class: "row" },
-        h("button", { class: "btn primary", onclick: () => workOnNext() }, "Work on next task"),
-        h("button", { class: "btn", onclick: newThreadDialog }, "New agent thread"),
-        h("button", { class: "btn", onclick: newChatDialog }, "New chat"),
-        h("button", { class: "btn", onclick: () => startThread({ kind: "shell" }) }, "New shell"))));
+        h("button", { class: "btn primary", onclick: () => workOnNext() }, I18N.t("ws.workNext")),
+        h("button", { class: "btn", onclick: newThreadDialog }, I18N.t("thread.newTitle")),
+        h("button", { class: "btn", onclick: newChatDialog }, I18N.t("chat.newTitle")),
+        h("button", { class: "btn", onclick: () => startThread({ kind: "shell" }) }, I18N.t("ws.newShell")))));
     const ov = h("div", { class: "ws-overview" });
     v.append(ov);
     await viewOverview(ov);
@@ -246,7 +246,7 @@ async function viewWorkspace(v) {
   const { columns } = workspaceLayout();
   const gridColumns = columns === SIDE_BY_SIDE ? p.length : columns;
   const grid = h("div", { class: `ws-grid${state.focusMode ? " zoomed" : ""}`, style: gridColumns ? `--pane-columns:${gridColumns}` : null });
-  const switcher = h("select", { "aria-label": "Focus thread", onchange: (e) => { if (e.target.value) { placeThread(e.target.value); render(); } } },
+  const switcher = h("select", { "aria-label": I18N.t("ws.focusThread"), onchange: (e) => { if (e.target.value) { placeThread(e.target.value); render(); } } },
     projThreads().map((t) => h("option", { value: t.id }, t.title)));
   switcher.value = state.thread || "";
   v.classList.add("ws-view");
@@ -254,13 +254,13 @@ async function viewWorkspace(v) {
     h("div", { class: "ws-bar" },
       state.focusMode ? switcher : layoutControls(),
       h("span", { class: "spacer" }),
-      h("button", { class: "btn small", "aria-pressed": String(state.focusMode), onclick: toggleFocusMode }, state.focusMode ? "Exit focus" : "Focus pane"),
-      h("button", { class: "btn small", onclick: () => setTab("changes"), title: "Open the diff and review comments" }, "Review changes"),
-      h("button", { class: "btn small" + (state.termDrawer ? " on" : ""), "aria-pressed": String(state.termDrawer), onclick: toggleTermDrawer, title: "Terminal drawer (Ctrl+`)" }, "Terminal")),
+      h("button", { class: "btn small", "aria-pressed": String(state.focusMode), onclick: toggleFocusMode }, state.focusMode ? I18N.t("ws.exitFocus") : I18N.t("ws.focusPane")),
+      h("button", { class: "btn small", onclick: () => setTab("changes"), title: I18N.t("ws.review.title") }, I18N.t("ws.review")),
+      h("button", { class: "btn small" + (state.termDrawer ? " on" : ""), "aria-pressed": String(state.termDrawer), onclick: toggleTermDrawer, title: I18N.t("ws.drawer.title") }, I18N.t("ws.drawer"))),
     !state.focusMode && p.length >= 3 && !pref("hintFocus", false) ? h("div", { class: "ws-hint small" },
-      h("span", null, "Tip: with several panes open, terminals get narrow. Use Focus pane for the AI you are working with; the others keep running."),
-      h("button", { class: "btn small", onclick: toggleFocusMode }, "Use focus mode"),
-      h("button", { class: "btn small ghost", "aria-label": "Dismiss tip", onclick: (e) => { setPref("hintFocus", true); e.currentTarget.parentElement.remove(); } }, "×")) : null,
+      h("span", null, I18N.t("ws.tip")),
+      h("button", { class: "btn small", onclick: toggleFocusMode }, I18N.t("ws.tip.use")),
+      h("button", { class: "btn small ghost", "aria-label": I18N.t("ws.tip.dismiss"), onclick: (e) => { setPref("hintFocus", true); e.currentTarget.parentElement.remove(); } }, "×")) : null,
     grid,
     composer(),
     state.termDrawer ? termDrawer() : null));
@@ -314,17 +314,17 @@ function drawPaneAt(i, takeFocus) {
   const x = ensureXterm(t.id);
   const banner = limitBanner(t) || quotaBanner(t) || stuckBanner(t);
   const restart = t.running ? null : restartTerminalButton(t);
-  const subtitle = t.running ? ([t.target, t.task].filter(Boolean).join(" · ") || "Project shell") : "Saved output · read-only";
+  const subtitle = t.running ? ([t.target, t.task].filter(Boolean).join(" · ") || I18N.t("ws.projectShell")) : I18N.t("chat.saved");
   el.append(h("div", { class: "thread-head" },
     h("div", { class: "pane-title" }, agentBadge(t),
       h("div", null, h("div", { class: "thread-name" }, h("span", { class: "thread-title", title: t.title }, t.title), threadStatus(t)),
-        h("div", { class: "muted small mono", title: `${t.command} · F6 leaves the terminal` }, subtitle))),
+        h("div", { class: "muted small mono", title: I18N.t("ws.f6", { command: t.command }) }, subtitle))),
     h("div", { class: "row" },
-      t.running && t.kind === "agent" ? h("button", { class: "btn small", onclick: () => sendContext(t), title: "Paste the shared context packet into this AI" }, "Send context") : null,
-      t.running && terminalDrafts.has(t.id) ? h("button", { class: "btn small", onclick: () => loadThreadDraft(t, terminalDrafts.get(t.id)) }, "Load draft") : null,
+      t.running && t.kind === "agent" ? h("button", { class: "btn small", onclick: () => sendContext(t), title: I18N.t("ws.sendCtx.title") }, I18N.t("chat.sendContext")) : null,
+      t.running && terminalDrafts.has(t.id) ? h("button", { class: "btn small", onclick: () => loadThreadDraft(t, terminalDrafts.get(t.id)) }, I18N.t("ws.loadDraft")) : null,
       t.kind === "agent" ? continueButton(t) : null,
       restart,
-      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, t.running ? "Stop" : "Close"),
+      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, t.running ? I18N.t("ws.stop") : I18N.t("ws.closeBtn")),
       paneRemoveBtn(t.id))),
   ...(banner ? [banner] : []), x.el, seesStrip(t));
   if (t.kind === "agent" && !t.running) offerRelease(el, t);
@@ -346,7 +346,7 @@ function checkpointPrompt(t) {
   const quota = accountQuota.get(quotaKey(agentKey(t), t.project_id));
   const left = quotaLeft(quota);
   if (quota?.stale || !(left > 0 && left <= 10)) return null;
-  return `Use Evyro to save a checkpoint for ${t.task} with what is complete, what remains, and the next action. Then wait for my next message.`;
+  return I18N.t("ws.checkpointPrompt", { task: t.task });
 }
 
 function stageCheckpointDraft(t, manual = false) {
@@ -383,18 +383,18 @@ async function switchOwnerDialog(task, { from = null, to = null, thread = null, 
     if (![KIND_LABEL.harness, KIND_LABEL.api].includes(g.label)) g.remove();
   }
   if (state.project?.id !== projectId) return;
-  const model = h("input", { type: "text", placeholder: "Optional, for example a smaller model", spellcheck: "false" });
+  const model = h("input", { type: "text", placeholder: I18N.t("ws.switch.modelPh"), spellcheck: "false" });
   const sure = h("input", { type: "checkbox", id: "switch-sure" });
-  const who = from || "the current AI";
-  modal(`Switch ${task} to another AI`, [
-    evidence ? h("p", { class: "banner warn", role: "status" }, `${who} printed: “${evidence}”`) : null,
-    h("p", { class: "hint" }, `Only one AI works on ${task} at a time. Evyro stops ${who}, saves its checkpoint and starts the next AI from it. Anything ${who} did since its last checkpoint is kept in the files but not described.`),
-    field("Switch to", sel, "Pick the same AI with a different model to stay on it."),
-    field("Model", model),
-    h("label", { class: "check", for: "switch-sure" }, sure, ` ${who}'s usage has run out or is about to. Stop it and switch.`),
+  const who = from || I18N.t("ws.switch.current");
+  modal(I18N.t("ws.switch.title", { task }), [
+    evidence ? h("p", { class: "banner warn", role: "status" }, I18N.t("ws.switch.printed", { who, evidence })) : null,
+    h("p", { class: "hint" }, I18N.t("ws.switch.body", { task, who })),
+    field(I18N.t("ws.switch.to"), sel, I18N.t("ws.switch.toHint")),
+    field(I18N.t("ws.switch.model"), model),
+    h("label", { class: "check", for: "switch-sure" }, sure, " " + I18N.t("ws.switch.sure", { who })),
   ], [{
-    label: "Switch AI", primary: true, run: async () => {
-      if (!sure.checked) { toast("Confirm that the usage has run out first.", true); return false; }
+    label: I18N.t("ws.switch.ai"), primary: true, run: async () => {
+      if (!sure.checked) { toast(I18N.t("ws.switch.confirm"), true); return false; }
       const target = sel.value;
       const chosen = model.value.trim() || null;
       try {
@@ -410,7 +410,7 @@ async function switchOwnerDialog(task, { from = null, to = null, thread = null, 
         const handoffId = r.handoff.record.id;
         if (thread) await resumeThread(thread, { handoffId, model: chosen });
         else await startThread({ kind: "agent", target, task, handoffId, model: chosen });
-        toast(`${task} switched to ${target}.${r.from && !r.stopped && !owners.length ? ` Close ${r.from.harness} yourself if it is still open.` : ""}`);
+        toast(r.from && !r.stopped && !owners.length ? I18N.t("ws.switch.doneClose", { task, target, from: r.from.harness }) : I18N.t("ws.switch.done", { task, target }));
         return true;
       } catch (e) {
         if (!e?.message) toast(errMsg(e), true);
@@ -427,17 +427,17 @@ function quotaBanner(t) {
   if (left === null || !Number.isFinite(left) || left > 10) return null;
   const out = left <= 0;
   const alt = bestFallback(agentKey(t));
-  const hint = alt ? ` ${alt.ai} has about ${Math.floor(alt.left)}% left.` : "";
+  const hint = alt ? " " + I18N.t("ws.quota.alt", { ai: alt.ai, left: Math.floor(alt.left) }) : "";
   const go = () => handoffDialog(t.task || null, alt?.ai || null, t.task ? t.target : null).catch(() => {});
   return h("div", { class: "quota-banner small" + (out ? " out" : ""), role: "status" },
     h("span", null, out
-      ? `${t.title} has no usage left. Only the latest checkpoint moves to the next AI, not this conversation.${hint}`
-      : `${t.title} is low on usage (${Math.floor(left)}% left).${hint}`),
+      ? I18N.t("ws.quota.out", { title: t.title }) + hint
+      : I18N.t("ws.quota.low", { title: t.title, left: Math.floor(left) }) + hint),
     h("div", { class: "row" },
-      checkpointPrompt(t) ? h("button", { class: "btn small", onclick: () => stageCheckpointDraft(t, true) }, "Draft checkpoint prompt") : null,
+      checkpointPrompt(t) ? h("button", { class: "btn small", onclick: () => stageCheckpointDraft(t, true) }, I18N.t("ws.quota.draft")) : null,
       t.task ? h("button", { class: "btn small primary", onclick: () => switchOwnerDialog(t.task, { from: t.target, to: alt?.ai || null }).catch(() => {}) },
-        alt ? `Switch to ${alt.ai}…` : "Switch AI…") : null,
-      h("button", { class: "btn small", onclick: go }, t.task ? "Write notes first…" : "Hand off…")));
+        alt ? I18N.t("ws.switchTo", { ai: alt.ai }) : I18N.t("ws.switchAi")) : null,
+      h("button", { class: "btn small", onclick: go }, t.task ? I18N.t("ws.quota.notes") : I18N.t("ws.quota.handoff"))));
 }
 
 /** A running AI that printed a usage-limit message gets the switch offered at once, with what it said. */
@@ -445,11 +445,11 @@ function limitBanner(t) {
   if (!t.running || t.kind !== "agent" || !t.limit_hit) return null;
   const alt = bestFallback(agentKey(t));
   return h("div", { class: "quota-banner small out", role: "status" },
-    h("span", null, `${t.title} says it has hit a usage limit: “${t.limit_hit}”. Nothing was stopped. Switching carries its latest checkpoint to the next AI once you confirm.`),
+    h("span", null, I18N.t("ws.limit.says", { title: t.title, said: t.limit_hit })),
     h("div", { class: "row" },
       t.task ? h("button", { class: "btn small primary", onclick: () => switchOwnerDialog(t.task, { from: t.target, to: alt?.ai || null, thread: t, evidence: t.limit_hit }).catch(() => {}) },
-        alt ? `Switch to ${alt.ai}…` : "Switch AI…") : null,
-      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, "Stop")));
+        alt ? I18N.t("ws.switchTo", { ai: alt.ai }) : I18N.t("ws.switchAi")) : null,
+      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, I18N.t("ws.stop"))));
 }
 
 /** A running AI that is silent or repeating itself gets a way to stop it or carry its task on. */
@@ -457,30 +457,30 @@ function stuckBanner(t) {
   if (!t.running || t.kind !== "agent" || !t.stuck) return null;
   const alt = bestFallback(agentKey(t));
   return h("div", { class: "quota-banner small out", role: "status" },
-    h("span", null, `${t.title} looks stuck: ${t.stuck}. It may still be working, so nothing was stopped.`),
+    h("span", null, I18N.t("ws.stuck.says", { title: t.title, why: t.stuck })),
     h("div", { class: "row" },
       t.task ? h("button", { class: "btn small primary", onclick: () => switchOwnerDialog(t.task, { from: t.target, to: alt?.ai || null, thread: t }).catch(() => {}) },
-        alt ? `Switch to ${alt.ai}…` : "Switch AI…") : null,
-      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, "Stop")));
+        alt ? I18N.t("ws.switchTo", { ai: alt.ai }) : I18N.t("ws.switchAi")) : null,
+      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, I18N.t("ws.stop"))));
 }
 
 function continueButton(t) {
   const task = t.task;
   if (!task) return null;
   return h("button", { class: "btn small", disabled: t.busy || t.switching_model,
-    onclick: () => handoffDialog(task, null, t.target).catch(() => {}) }, "Continue with…");
+    onclick: () => handoffDialog(task, null, t.target).catch(() => {}) }, I18N.t("ws.continue"));
 }
 
 function restartTerminalButton(t) {
   const shell = t.kind === "shell";
-  return h("button", { class: "btn small primary", title: shell ? "Open a fresh shell and keep the saved output" : "Start the agent again with its task and checkpoint",
+  return h("button", { class: "btn small primary", title: shell ? I18N.t("ws.restart.shell.title") : I18N.t("ws.restart.agent.title"),
     onclick: async (e) => {
       const button = e.currentTarget;
       button.disabled = true;
       try { await resumeThread(t); } catch { /* startThread reports the error */ }
       finally { button.disabled = false; }
     },
-  }, shell ? "Restart shell" : "Resume");
+  }, shell ? I18N.t("ws.restart.shell") : I18N.t("ws.resume"));
 }
 
 /** Relaunch a stopped terminal in its existing thread. */
@@ -502,23 +502,23 @@ async function offerRelease(el, t) {
   const [, key, sid, who] = m;
   const fix = async () => {
     // The session id comes from terminal output, so show it and ask first.
-    if (!(await confirmDialog(`Free ${key} from session ${sid}?`, `Only do this if that ${who} agent has stopped. If it is still working, it loses the task.`, "Free it"))) return;
+    if (!(await confirmDialog(I18N.t("ws.free.title", { key, sid }), I18N.t("ws.free.body", { who }), I18N.t("ws.free.do")))) return;
     const r = await act(() => invoke("release_session", { projectId: state.project.id, sessionId: sid, confirmed: true }));
     if (!r) return;
-    toast(`Freed ${key} from the earlier ${who} session. A recovery checkpoint was saved.`);
+    toast(I18N.t("ws.free.done", { key, who }));
     resumeThread(t);
   };
   el.querySelector(".thread-head").after(h("div", { class: "banner warn pane-fix", role: "status" },
-    h("span", null, `${key} is still held by an earlier ${who} session. If that AI is no longer running, free it and try again.`),
-    h("button", { class: "btn small primary", onclick: fix }, `Free ${key} and retry`),
-    h("button", { class: "btn small", onclick: () => switchOwnerDialog(key, { from: who, to: t.target, thread: t }).catch(() => {}) }, `Switch ${key} here…`)));
+    h("span", null, I18N.t("ws.free.held", { key, who })),
+    h("button", { class: "btn small primary", onclick: fix }, I18N.t("ws.free.retry", { key })),
+    h("button", { class: "btn small", onclick: () => switchOwnerDialog(key, { from: who, to: t.target, thread: t }).catch(() => {}) }, I18N.t("ws.free.switch", { key }))));
 }
 
 /** The ✕ on a pane: take the thread out of view (it keeps running). */
 function paneRemoveBtn(id) {
   const i = panes().indexOf(id);
   if (i < 0) return null;
-  return h("button", { class: "btn small ghost", "aria-label": "Remove from this pane", title: "Remove from this pane (it keeps running)", onclick: () => unpane(panes().indexOf(id)) }, "✕");
+  return h("button", { class: "btn small ghost", "aria-label": I18N.t("ws.unpane"), title: I18N.t("ws.unpane.title"), onclick: () => unpane(panes().indexOf(id)) }, "✕");
 }
 
 function unpane(i) {
@@ -526,7 +526,7 @@ function unpane(i) {
   const id = p[i];
   p[i] = null;
   render();
-  if (id) toast("Removed from the pane. It is still in the sidebar.");
+  if (id) toast(I18N.t("ws.unpane.done"));
 }
 
 function drawEmptyPane(el, i) {
@@ -535,14 +535,14 @@ function drawEmptyPane(el, i) {
   const others = projThreads().filter((t) => !shown.includes(t.id));
   const start = (fn) => () => { state.focus = i; fn(); };
   el.append(h("div", { class: "pane-empty" },
-    h("div", { class: "muted" }, "Empty pane"),
-    others.length ? h("label", { class: "field" }, "Show a thread", h("select", {
+    h("div", { class: "muted" }, I18N.t("ws.empty")),
+    others.length ? h("label", { class: "field" }, I18N.t("ws.showThread"), h("select", {
       onchange: (e) => { if (e.target.value) { state.focus = i; placeThread(e.target.value); render(); } },
-    }, h("option", { value: "" }, "Choose…"), others.map((t) => h("option", { value: t.id }, t.title)))) : null,
+    }, h("option", { value: "" }, I18N.t("skills.imp.choose")), others.map((t) => h("option", { value: t.id }, t.title)))) : null,
     h("div", { class: "row" },
-      h("button", { class: "btn small primary", onclick: start(newThreadDialog) }, "+ Agent"),
-      h("button", { class: "btn small", onclick: start(newChatDialog) }, "+ Chat"),
-      h("button", { class: "btn small", onclick: start(() => startThread({ kind: "shell" })) }, "+ Shell"))));
+      h("button", { class: "btn small primary", onclick: start(newThreadDialog) }, I18N.t("ws.agent")),
+      h("button", { class: "btn small", onclick: start(newChatDialog) }, I18N.t("ws.chat")),
+      h("button", { class: "btn small", onclick: start(() => startThread({ kind: "shell" })) }, I18N.t("ws.shell")))));
 }
 
 /** What this AI can draw from: its task and the project's shared context. */
@@ -553,7 +553,7 @@ function seesStrip(t) {
 }
 function fillSees(el, t) {
   const c = state.ctx;
-  clear(el).append(h("span", { class: "muted" }, "Shared with it:"),
+  clear(el).append(h("span", { class: "muted" }, I18N.t("ws.sharedWith")),
     h("span", { class: "chip" + (threadTasks(t).length ? " acc" : "") }, taskLabel(t)));
   if (!c) return;
   el.append(...[
