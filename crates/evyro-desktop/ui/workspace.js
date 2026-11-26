@@ -564,8 +564,6 @@ function fillSees(el, t) {
   ].filter(Boolean));
 }
 
-const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
-
 // ---------- sending text to threads ----------
 function terminalSetupPrompt(t, term) {
   const harness = state.targets?.find((r) => r.target.name === t.target)?.target.harness || t.target;
