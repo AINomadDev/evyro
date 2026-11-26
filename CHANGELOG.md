@@ -6,6 +6,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ### Added
 
+- Remote access: paired devices can expire (`evyro remote pair --expires 30d`), their scope or expiry can change without pairing again (`evyro remote set`), and an audit log of pairing, revocation, scope and expiry changes and each device's actions and refused calls is shown by `evyro remote audit` and in the desktop's Remote access card.
 - A task held by an AI whose process is gone, or that went quiet past the 30-minute heartbeat timeout, is freed as soon as another AI starts it; every lease freed when a session ends is logged (`lease.auto_released`), and `evyro task undo-release T-1` gives the task back to the same AI unless another one has claimed it since. A live AI's lease is never touched.
 - Optional encryption at rest for saved terminal output and chat transcripts (`evyro saved-output encrypt`, off by default): ChaCha20-Poly1305 with a data key in the macOS Keychain; plaintext files still load, and output whose key is missing or different is left untouched, never deleted.
 - `evyro pr create T-1` pushes the task's branch and opens a pull request whose body lists the task, each acceptance criterion (met or not, and how), the latest `evyro verify` receipts and the latest checkpoint's summary and next step, redacted; `--dry-run` prints it without pushing or calling GitHub. Needs the GitHub CLI.

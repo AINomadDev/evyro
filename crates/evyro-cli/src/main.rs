@@ -222,7 +222,7 @@ enum Cmd {
         #[arg(long)]
         allow_lan: bool,
     },
-    /// Devices that may use `evyro serve`: pair a new one, list, revoke.
+    /// Devices that may use `evyro serve`: pair, list, change access or expiry, revoke, audit.
     #[command(subcommand)]
     Remote(RemoteCmd),
     /// Skills: reusable instructions agents load when a task needs them.
@@ -680,11 +680,33 @@ enum RemoteCmd {
         /// Minutes the code stays valid (1 to 60).
         #[arg(long, default_value_t = 10)]
         minutes: i64,
+        /// When the device's access ends, from now: like 12h, 30d or 2w; never keeps it until revoked.
+        #[arg(long, default_value = "never")]
+        expires: String,
     },
     /// Paired devices and waiting codes.
     Devices,
+    /// Change a device's access or expiry without pairing it again.
+    Set {
+        /// The device's id, the first 6 or more characters of it, or its exact name.
+        device: String,
+        /// The new access: read, approve or control.
+        #[arg(long, value_parser = ["read", "approve", "control"])]
+        scope: Option<String>,
+        /// A new expiry from now (like 30d), or never. Also extends an expired device.
+        #[arg(long)]
+        expires: Option<String>,
+    },
     /// Revoke a device by id or name. Its token stops working at once.
     Revoke { device: String },
+    /// What devices did and what was done to them, newest first.
+    Audit {
+        /// Only this device (id, prefix or name, revoked ones too).
+        device: Option<String>,
+        /// How many lines to show.
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2153,12 +2175,20 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 name,
                 scope,
                 minutes,
+                expires,
             } => {
-                let p = store.pair_device(&name, &scope, minutes * 60)?;
+                let access = evyro_core::remote::parse_expiry(&expires)?;
+                let actor = evyro_core::remote::local_actor("cli");
+                let p = store.pair_device(&name, &scope, minutes * 60, access, &actor)?;
                 o.print(&p, || {
                     format!(
-                        "Pairing code for \"{}\" ({} access): {}\nIt works once and expires at {} (UTC).\nOn the device, open the address `{} serve` prints and enter the code.",
-                        p.device.name, p.device.scope, p.code, p.expires_at, brand::CLI_NAME
+                        "Pairing code for \"{}\" ({} access, {}): {}\nIt works once and expires at {} (UTC).\nOn the device, open the address `{} serve` prints and enter the code.",
+                        p.device.name,
+                        p.device.scope,
+                        access_until(&p.device),
+                        p.code,
+                        p.expires_at,
+                        brand::CLI_NAME
                     )
                 });
             }
@@ -2174,22 +2204,81 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                     ds.iter()
                         .map(|d| {
                             format!(
-                                "{:<8} {:<8} {}  {}  last seen {}",
+                                "{:<8} {:<8} {}  {}  last seen {}  {}",
                                 d.state,
                                 d.scope,
                                 d.id,
                                 d.name,
-                                d.last_seen_at.as_deref().unwrap_or("never")
+                                d.last_seen_at.as_deref().unwrap_or("never"),
+                                access_until(d)
                             )
                         })
                         .collect::<Vec<_>>()
                         .join("\n")
                 });
             }
+            RemoteCmd::Set {
+                device,
+                scope,
+                expires,
+            } => {
+                if scope.is_none() && expires.is_none() {
+                    anyhow::bail!("say what to change: --scope and/or --expires");
+                }
+                let actor = evyro_core::remote::local_actor("cli");
+                let access = expires
+                    .as_deref()
+                    .map(evyro_core::remote::parse_expiry)
+                    .transpose()?;
+                // Check both values before changing anything.
+                let mut d = store.find_device(&device, false)?;
+                if let Some(s) = &scope {
+                    d = store.set_device_scope(&d.id, s, &actor)?;
+                }
+                if let Some(a) = access {
+                    d = store.set_device_expiry(&d.id, a, &actor)?;
+                }
+                o.print(&d, || {
+                    format!(
+                        "{} ({}): {} access, {}, {}.",
+                        d.name,
+                        d.id,
+                        d.scope,
+                        access_until(&d),
+                        d.state
+                    )
+                });
+            }
             RemoteCmd::Revoke { device } => {
-                let d = store.revoke_device(&device)?;
+                let actor = evyro_core::remote::local_actor("cli");
+                let d = store.revoke_device(&device, &actor)?;
                 o.print(&d, || {
                     format!("Revoked {} ({}). Its token no longer works.", d.name, d.id)
+                });
+            }
+            RemoteCmd::Audit { device, limit } => {
+                let log = store.remote_audit(device.as_deref(), limit)?;
+                o.print(&log, || {
+                    if log.is_empty() {
+                        return "Nothing recorded yet.".into();
+                    }
+                    log.iter()
+                        .map(|e| {
+                            format!(
+                                "{}  {:<9} {:<16} {}  by {}{}",
+                                e.at,
+                                e.action,
+                                e.device_name.as_deref().unwrap_or("-"),
+                                e.detail,
+                                e.actor,
+                                e.address
+                                    .as_deref()
+                                    .map(|a| format!(" from {a}"))
+                                    .unwrap_or_default()
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
                 });
             }
         },
@@ -3444,4 +3533,13 @@ fn handoff_cmd(
         },
         o,
     )
+}
+
+/// "expires <time> UTC", "expired <time> UTC" or "no expiry", for device lines.
+fn access_until(d: &evyro_core::remote::Device) -> String {
+    match (&d.expires_at, d.state.as_str()) {
+        (None, _) => "no expiry".into(),
+        (Some(t), "expired") => format!("expired {t} UTC"),
+        (Some(t), _) => format!("expires {t} UTC"),
+    }
 }

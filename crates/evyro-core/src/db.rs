@@ -36,6 +36,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "0007_task_plans",
         include_str!("../migrations/0007_task_plans.sql"),
     ),
+    (
+        "0008_remote_expiry_audit",
+        include_str!("../migrations/0008_remote_expiry_audit.sql"),
+    ),
 ];
 
 /// How many pre-upgrade copies of the database to keep.
@@ -287,7 +291,8 @@ mod upgrade_tests {
         // Turn it back into the schema before the newest migration.
         s.conn
             .execute_batch(&format!(
-                "DROP TABLE task_plans;
+                "DROP TABLE remote_audit;
+                 ALTER TABLE remote_devices DROP COLUMN expires_at;
                  DELETE FROM schema_migrations WHERE version = {SCHEMA_VERSION};"
             ))
             .unwrap();

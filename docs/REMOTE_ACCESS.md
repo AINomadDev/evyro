@@ -38,7 +38,7 @@ evyro serve --host 0.0.0.0 --allow-lan
 1. On the computer, make a code. In the app: Settings → Remote access → **+ Pair a device**. In a terminal:
 
    ```bash
-   evyro remote pair --name "My phone" --scope approve
+   evyro remote pair --name "My phone" --scope approve --expires 30d
    ```
 
 2. On the device, open the address and type the code. Case, spaces and dashes don't matter.
@@ -46,12 +46,17 @@ evyro serve --host 0.0.0.0 --allow-lan
 
 A code works once and expires after 10 minutes (`--minutes` sets 1 to 60). Make a new code if it expires.
 
+A device can also be given an expiry (`--expires 12h`, `30d`, `2w`; `never` is the default; the app offers a choice when pairing). After it, the device is refused and listed as **expired** until you extend it or pair it again.
+
 ```bash
-evyro remote devices          # every device, its access, and when it was last seen
-evyro remote revoke "My phone" # by name, id, or the first 6+ characters of the id
+evyro remote devices                          # every device, its access, expiry, and when it was last seen
+evyro remote set "My phone" --scope read      # change its access without pairing again
+evyro remote set "My phone" --expires 7d      # a new expiry from now (or never); also extends an expired device
+evyro remote audit "My phone"                 # what it did and what was done to it, newest first
+evyro remote revoke "My phone"                # by name, id, or the first 6+ characters of the id
 ```
 
-A revoked device's token stops working on its next request.
+A revoked device's token stops working on its next request. A scope or expiry change applies to the device's next request too; an MCP session it started with write tools ends when it loses `control`. In the app, each device under Settings → Remote access has an access menu, **Expiry** and **Activity**, and **Activity log** shows every device.
 
 ## Access levels
 
@@ -70,7 +75,8 @@ Pick the lowest level that does the job.
 - **Pairing, not passwords.** Codes are 8 characters from an alphabet without look-alike characters. Tokens are `evr_` followed by 64 hex characters. Evyro stores only SHA-256 hashes of both, so a copy of the database can't be used to sign in.
 - **Exact approvals.** An approval must name the waiting request and its tool call, and pick one of the options the agent offered. A stale or mismatched approval is refused (409), and an option the agent didn't offer is refused (400). Who answered is recorded as `remote:<device name>`.
 - **Rate limits.** After 10 failed sign-ins or pairing attempts from one address within 10 minutes, that address is refused until the oldest failure is 10 minutes old. After 60 failures from anywhere within a minute, every sign-in is refused for up to a minute, paired devices included. Refused requests get 429.
-- **Audit log.** Every request is written to `logs/remote-audit.log` in Evyro's data folder: time, address, device, method, path and status. Query strings, request bodies and tokens are never written.
+- **Audit log.** Every request is written to `logs/remote-audit.log` in Evyro's data folder: time, address, device, method, path and status. Each device also has an audit log in the database (`evyro remote audit`, or **Activity** in the app): pairing, revocation, scope and expiry changes with who made them (`cli:<user>`, `desktop:<user>` or `device:<id>`), every change it made through the API, and every call or sign-in it was refused. Query strings, request bodies, codes and tokens are never written to either.
+- **Expiry.** A device past its expiry is refused like a revoked one until someone on the computer extends it.
 - **Secrets stay hidden.** Diffs pass through the same redaction as handoffs and exports.
 - **Locked-down pages.** Every response sets a strict Content-Security-Policy and `Cache-Control: no-store`. Requests larger than 1 MB are refused.
 
