@@ -47,6 +47,11 @@ pub struct Report {
 pub struct Options {
     /// Run the real headless command once in a scratch folder.
     pub smoke: bool,
+    /// Run the Evyro workflow against the agent in a scratch project: task,
+    /// a checkpoint the agent records, handoff and resume.
+    pub flow: bool,
+    /// The `evyro` program the flow runs and puts first on the agent's PATH.
+    pub evyro_bin: Option<PathBuf>,
     pub smoke_timeout: Duration,
     pub login_timeout: Duration,
 }
@@ -55,6 +60,8 @@ impl Default for Options {
     fn default() -> Self {
         Options {
             smoke: false,
+            flow: false,
+            evyro_bin: None,
             smoke_timeout: Duration::from_secs(180),
             login_timeout: Duration::from_secs(10),
         }
@@ -171,6 +178,21 @@ pub fn check(
             "smoke",
             "skip",
             "not requested; add --smoke to start the agent once",
+        ));
+    }
+    if opts.flow {
+        steps.extend(flow_steps(
+            &cand,
+            &id,
+            bin.as_deref(),
+            opts.evyro_bin.as_deref(),
+            opts.smoke_timeout,
+        ));
+    } else {
+        steps.push(step(
+            "flow",
+            "skip",
+            "not requested; add --flow to run a task, checkpoint, handoff and resume with the agent",
         ));
     }
     finish(id, display, source, steps)
@@ -360,95 +382,316 @@ fn argv_steps(cand: &Candidate, bin: Option<&Path>) -> Vec<Step> {
         .collect()
 }
 
-fn smoke_step(cand: &Candidate, bin: Option<&Path>, timeout: Duration) -> Step {
-    let Some(bin) = bin else {
-        return step("smoke", "skip", "program not found");
-    };
-    if let Candidate::Custom(a) = cand {
-        if a.scope == Scope::Project {
-            return step(
-                "smoke",
-                "skip",
-                "project file (repository text), not run: pass the file's path to check it as yours",
-            );
+/// Why a candidate's commands are not run, if they are not.
+fn not_runnable(cand: &Candidate, bin: Option<&Path>) -> Option<&'static str> {
+    if bin.is_none() {
+        return Some("program not found");
+    }
+    match cand {
+        Candidate::Custom(a) if a.scope == Scope::Project => Some(
+            "project file (repository text), not run: pass the file's path to check it as yours",
+        ),
+        _ => None,
+    }
+}
+
+/// How one headless run of the candidate ended.
+struct Launched {
+    /// Exit status, or why there is none (could not start, timed out).
+    status: std::result::Result<std::process::ExitStatus, String>,
+    secs: f32,
+    bytes: usize,
+    /// The last lines of output, redacted.
+    tail: String,
+}
+
+impl Launched {
+    fn ok(&self) -> bool {
+        self.status.as_ref().is_ok_and(|s| s.success())
+    }
+
+    fn describe(&self) -> String {
+        match &self.status {
+            Ok(s) if s.success() => format!(
+                "exited 0 in {:.1}s, {} bytes of output",
+                self.secs, self.bytes
+            ),
+            Ok(s) => format!(
+                "exited with {s} after {:.1}s; last output:\n{}",
+                self.secs, self.tail
+            ),
+            Err(why) => format!("{why}; last output:\n{}", self.tail),
         }
     }
-    let (Ok(work), Ok(logs)) = (tempfile::tempdir(), tempfile::tempdir()) else {
-        return step("smoke", "fail", "could not create a scratch folder");
-    };
+}
+
+/// Run the candidate's headless command once in `cwd` with `prompt`.
+fn launch(
+    cand: &Candidate,
+    bin: &Path,
+    cwd: &Path,
+    prompt: &str,
+    env: &[(&str, std::ffi::OsString)],
+    timeout: Duration,
+) -> std::result::Result<Launched, String> {
+    let logs =
+        tempfile::tempdir().map_err(|e| format!("could not create a scratch folder: {e}"))?;
     let bin_s = bin.to_string_lossy().into_owned();
-    let argv = match build(
-        cand,
-        &bin_s,
-        LaunchMode::Headless,
-        SMOKE_PROMPT,
-        work.path(),
-        None,
-    ) {
-        Ok(a) => adapters::launchable_argv(a),
-        Err(e) => return step("smoke", "skip", e.to_string()),
-    };
+    let argv = build(cand, &bin_s, LaunchMode::Headless, prompt, cwd, None)
+        .map(adapters::launchable_argv)
+        .map_err(|e| e.to_string())?;
     let out_path = logs.path().join("output.txt");
-    let Ok((out, err)) = std::fs::File::create(&out_path).and_then(|f| Ok((f.try_clone()?, f)))
-    else {
-        return step("smoke", "fail", "could not create the output file");
-    };
+    let (out, err) = std::fs::File::create(&out_path)
+        .and_then(|f| Ok((f.try_clone()?, f)))
+        .map_err(|e| format!("could not create the output file: {e}"))?;
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..])
-        .current_dir(work.path())
+        .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(out)
-        .stderr(err);
+        .stderr(err)
+        .env_remove("EVYRO_SESSION_ID");
     if let Candidate::Custom(a) = cand {
         cmd.envs(&a.env);
     }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     let start = Instant::now();
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            return step(
-                "smoke",
-                "fail",
-                format!("could not start `{}`: {e}", argv[0]),
-            )
-        }
-    };
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(s)) => break Ok(s),
-            Ok(None) if start.elapsed() > timeout => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break Err(format!("did not exit within {timeout:?}; killed"));
+    let status = match cmd.spawn() {
+        Err(e) => Err(format!("could not start `{}`: {e}", argv[0])),
+        Ok(mut child) => loop {
+            match child.try_wait() {
+                Ok(Some(s)) => break Ok(s),
+                Ok(None) if start.elapsed() > timeout => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break Err(format!("did not exit within {timeout:?}; killed"));
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                Err(e) => break Err(e.to_string()),
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-            Err(e) => break Err(e.to_string()),
-        }
+        },
     };
     let text = std::fs::read_to_string(&out_path).unwrap_or_default();
-    let tail: Vec<&str> = text
-        .lines()
-        .rev()
-        .take(5)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    let (tail, _) = crate::redact::redact(&tail.join("\n"));
-    let secs = start.elapsed().as_secs_f32();
-    match status {
-        Ok(s) if s.success() => step(
-            "smoke",
-            "pass",
-            format!("exited 0 in {secs:.1}s, {} bytes of output", text.len()),
-        ),
-        Ok(s) => step(
-            "smoke",
-            "fail",
-            format!("exited with {s} after {secs:.1}s; last output:\n{tail}"),
-        ),
-        Err(why) => step("smoke", "fail", format!("{why}; last output:\n{tail}")),
+    let lines: Vec<&str> = text.lines().collect();
+    let (tail, _) = crate::redact::redact(&lines[lines.len().saturating_sub(5)..].join("\n"));
+    Ok(Launched {
+        status,
+        secs: start.elapsed().as_secs_f32(),
+        bytes: text.len(),
+        tail,
+    })
+}
+
+fn smoke_step(cand: &Candidate, bin: Option<&Path>, timeout: Duration) -> Step {
+    if let Some(why) = not_runnable(cand, bin) {
+        return step("smoke", "skip", why);
     }
+    let Ok(work) = tempfile::tempdir() else {
+        return step("smoke", "fail", "could not create a scratch folder");
+    };
+    match launch(cand, bin.unwrap(), work.path(), SMOKE_PROMPT, &[], timeout) {
+        Err(why) => step("smoke", "fail", why),
+        Ok(l) => step("smoke", if l.ok() { "pass" } else { "fail" }, l.describe()),
+    }
+}
+
+/// What the flow asks the candidate to do: one Evyro command, nothing else.
+const FLOW_PROMPT: &str = "This is an Evyro adapter check in a scratch repository. Run exactly this shell command once and nothing else: evyro checkpoint --done \"adapter check\" --next \"none\" . Then reply OK. Do not change any files.";
+
+/// The Evyro workflow against the candidate, in a scratch Evyro home and
+/// repository so the person's own projects are never touched: a task started
+/// by the candidate, a checkpoint the candidate records itself with
+/// `evyro checkpoint`, a handoff to the candidate, and its resume.
+fn flow_steps(
+    cand: &Candidate,
+    id: &str,
+    bin: Option<&Path>,
+    evyro: Option<&Path>,
+    timeout: Duration,
+) -> Vec<Step> {
+    let names = [
+        "flow setup",
+        "flow checkpoint",
+        "flow handoff",
+        "flow resume",
+    ];
+    let skip_all = |why: &str| names.iter().map(|n| step(n, "skip", why)).collect();
+    if let Some(why) = not_runnable(cand, bin) {
+        return skip_all(why);
+    }
+    let Some(evyro) = evyro else {
+        return skip_all("no evyro program to run the workflow with");
+    };
+    let Ok(tmp) = tempfile::tempdir() else {
+        return skip_all("could not create a scratch folder");
+    };
+    let home = tmp.path().join("home");
+    let repo = tmp.path().join("repo");
+    // The candidate must find this evyro first, and use the scratch home.
+    let mut dirs = vec![evyro.parent().unwrap_or(Path::new(".")).to_path_buf()];
+    dirs.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let env: Vec<(&str, std::ffi::OsString)> = vec![
+        ("EVYRO_HOME", home.clone().into_os_string()),
+        ("EVYRO_NO_APP_LOOKUP", "1".into()),
+        ("PATH", std::env::join_paths(dirs).unwrap_or_default()),
+    ];
+    let run = |prog: &Path, args: &[&str]| -> std::result::Result<String, String> {
+        let o = Command::new(prog)
+            .args(args)
+            .current_dir(&repo)
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .env_remove("EVYRO_SESSION_ID")
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("could not run {}: {e}", prog.display()))?;
+        if o.status.success() {
+            Ok(String::from_utf8_lossy(&o.stdout).into_owned())
+        } else {
+            let (err, _) = crate::redact::redact(String::from_utf8_lossy(&o.stderr).trim());
+            Err(format!(
+                "`{} {}` failed: {err}",
+                prog.file_name().unwrap_or_default().to_string_lossy(),
+                args.join(" ")
+            ))
+        }
+    };
+    let git = Path::new("git");
+    let setup = std::fs::create_dir_all(&repo)
+        .map_err(|e| e.to_string())
+        .and_then(|_| run(git, &["init", "-q"]))
+        .and_then(|_| {
+            std::fs::write(repo.join("README.md"), "adapter check\n").map_err(|e| e.to_string())
+        })
+        .and_then(|_| run(git, &["add", "-A"]))
+        .and_then(|_| {
+            run(
+                git,
+                &[
+                    "-c",
+                    "user.name=Evyro check",
+                    "-c",
+                    "user.email=check@evyro.invalid",
+                    "commit",
+                    "-qm",
+                    "init",
+                ],
+            )
+        })
+        .and_then(|_| run(evyro, &["init"]))
+        .and_then(|_| {
+            run(
+                evyro,
+                &[
+                    "task",
+                    "add",
+                    "Adapter check",
+                    "--accept",
+                    "checkpoint recorded",
+                    "--ready",
+                ],
+            )
+        })
+        .and_then(|_| run(evyro, &["task", "start", "T-1", "--agent", id]));
+    let mut out = vec![match &setup {
+        Ok(_) => step(
+            "flow setup",
+            "pass",
+            format!("scratch project, task T-1 started by {id}"),
+        ),
+        Err(why) => step("flow setup", "fail", why.clone()),
+    }];
+    if setup.is_err() {
+        out.extend(names[1..].iter().map(|n| step(n, "skip", "setup failed")));
+        return out;
+    }
+
+    // The candidate records a checkpoint itself.
+    let launched = launch(cand, bin.unwrap(), &repo, FLOW_PROMPT, &env, timeout);
+    let recorded = run(evyro, &["--json", "task", "show", "T-1"])
+        .ok()
+        .and_then(|t| {
+            let t: serde_json::Value = serde_json::from_str(&t).ok()?;
+            let cp = t["checkpoints"].as_array()?.iter().find(|c| {
+                c["completed"]
+                    .as_array()
+                    .is_some_and(|d| d.iter().any(|x| x == "adapter check"))
+            })?;
+            Some(cp["id"].as_str().unwrap_or("?").to_string())
+        });
+    out.push(match (&launched, recorded) {
+        (Err(why), _) => step("flow checkpoint", "fail", why.clone()),
+        (Ok(l), Some(cp)) if l.ok() => step(
+            "flow checkpoint",
+            "pass",
+            format!("the agent ran `evyro checkpoint`: {cp}; {}", l.describe()),
+        ),
+        (Ok(l), Some(cp)) => step(
+            "flow checkpoint",
+            "fail",
+            format!("checkpoint {cp} recorded, but {}", l.describe()),
+        ),
+        (Ok(l), None) => step(
+            "flow checkpoint",
+            "fail",
+            format!(
+                "no checkpoint recorded: the agent must run `evyro checkpoint` when asked; {}",
+                l.describe()
+            ),
+        ),
+    });
+
+    // A handoff to the candidate, and the candidate accepting it.
+    let handoff = run(
+        evyro,
+        &[
+            "--json",
+            "handoff",
+            "--to",
+            id,
+            "--task",
+            "T-1",
+            "--next",
+            "finish the adapter check",
+        ],
+    );
+    out.push(match &handoff {
+        Ok(h) => {
+            let h: serde_json::Value = serde_json::from_str(h).unwrap_or_default();
+            step(
+                "flow handoff",
+                "pass",
+                format!(
+                    "handoff {} prepared for {id}",
+                    h["record"]["id"].as_str().unwrap_or("?")
+                ),
+            )
+        }
+        Err(why) => step("flow handoff", "fail", why.clone()),
+    });
+    out.push(if handoff.is_err() {
+        step("flow resume", "skip", "no handoff to resume")
+    } else {
+        match run(evyro, &["--json", "resume", "--agent", id]) {
+            Ok(r) => {
+                let r: serde_json::Value = serde_json::from_str(&r).unwrap_or_default();
+                if r["accepted"] == true {
+                    step(
+                        "flow resume",
+                        "pass",
+                        format!("{id} accepted the handoff; its checks passed"),
+                    )
+                } else {
+                    step("flow resume", "fail", "the handoff was not accepted")
+                }
+            }
+            Err(why) => step("flow resume", "fail", why),
+        }
+    });
+    out
 }
 
 #[cfg(test)]
@@ -631,9 +874,16 @@ mod tests {
             smoke: true,
             ..Options::default()
         };
+        let opts = Options {
+            flow: true,
+            evyro_bin: Some(bin.clone()),
+            ..opts
+        };
         let r = check(&paths(d.path()), Some(&root), "proj", &opts);
         assert_eq!(state(&r, "login"), "skip");
         assert_eq!(state(&r, "smoke"), "skip");
+        assert_eq!(state(&r, "flow setup"), "skip");
+        assert_eq!(state(&r, "flow checkpoint"), "skip");
         assert!(!marker.exists());
     }
 

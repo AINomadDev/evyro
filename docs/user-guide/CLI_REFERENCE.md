@@ -1102,9 +1102,10 @@ Arguments:
 Options:
       --json               Machine-readable JSON output
       --smoke              Also start the agent once in an empty scratch folder with a short prompt and check that it exits 0. Uses the agent's account
+      --flow               Also run the Evyro workflow with the agent in a scratch project (your own projects are not touched): start a task, have the agent record a checkpoint with `evyro checkpoint`, hand off to it and resume. Uses the agent's account
   -q, --quiet              Suppress non-essential output
-      --timeout <TIMEOUT>  Seconds to wait for the smoke run [default: 180]
       --debug              Print debug details on errors
+      --timeout <TIMEOUT>  Seconds to wait for each agent run [default: 180]
   -C, --dir <DIR>          Run as if started in this directory
       --project <PROJECT>  Target a registered project by id or alias instead of the current directory
   -h, --help               Print help

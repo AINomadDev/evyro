@@ -588,7 +588,13 @@ enum AgentsCmd {
         /// prompt and check that it exits 0. Uses the agent's account.
         #[arg(long)]
         smoke: bool,
-        /// Seconds to wait for the smoke run.
+        /// Also run the Evyro workflow with the agent in a scratch project
+        /// (your own projects are not touched): start a task, have the agent
+        /// record a checkpoint with `evyro checkpoint`, hand off to it and
+        /// resume. Uses the agent's account.
+        #[arg(long)]
+        flow: bool,
+        /// Seconds to wait for each agent run.
         #[arg(long, default_value_t = 180)]
         timeout: u64,
     },
@@ -1606,12 +1612,15 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 Some(AgentsCmd::Check {
                     name,
                     smoke,
+                    flow,
                     timeout,
                 }),
         } => {
             let root = store.project_for_path(&dir).ok().map(|p| p.root());
             let opts = evyro_core::agent_check::Options {
                 smoke,
+                flow,
+                evyro_bin: std::env::current_exe().ok(),
                 smoke_timeout: std::time::Duration::from_secs(timeout),
                 ..Default::default()
             };

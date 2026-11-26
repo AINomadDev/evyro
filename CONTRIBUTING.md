@@ -41,7 +41,7 @@ cargo build -p evyro-cli && node crates/evyro-desktop/tests/ui-smoke.cjs
 
 ## Rules
 
-- Adding or changing an agent? Run `evyro agents check <name>` on it (`--smoke` starts it once); see [Testing a new agent](docs/AGENT_COMPATIBILITY.md#testing-a-new-agent).
+- Adding or changing an agent? Run `evyro agents check <name>` on it (`--smoke` starts it once, `--flow` runs a task, checkpoint, handoff and resume with it); see [Testing a new agent](docs/AGENT_COMPATIBILITY.md#testing-a-new-agent).
 - Add a scenario test for every user-visible behaviour. Scenarios use simulated agent binaries on PATH; never call a real agent from a test.
 - Never edit a shipped migration. Add `crates/evyro-core/migrations/000N_*.sql` and append it to `MIGRATIONS` in `db.rs`.
 - The product name and CLI name live in `crates/evyro-core/src/brand.rs` only.

@@ -3349,3 +3349,74 @@ fn the_board_names_who_owns_the_files_and_a_plan_declares_its_files() {
         );
     }
 }
+
+/// `evyro agents check --flow` runs a task, a checkpoint the agent records
+/// itself, a handoff and its resume in a scratch project, and reports each.
+#[test]
+fn agents_check_flow_runs_the_workflow_against_a_candidate() {
+    let mut env = Env::new();
+    let work = env.repo("flowcheck");
+    // Stand-in agents: one does what the flow prompt asks, one ignores it.
+    script(
+        env.bin.path(),
+        "flow-agent",
+        "evyro checkpoint --done \"adapter check\" --next none >/dev/null || exit 4\necho OK\n",
+    );
+    script(env.bin.path(), "lazy-agent", "echo OK\n");
+    let toml = |name: &str| {
+        let f = env.bin.path().join(format!("{name}.toml"));
+        std::fs::write(
+            &f,
+            format!("name = \"{name}\"\ncommand = \"{name}\"\nargs = [\"{{prompt}}\"]\n"),
+        )
+        .unwrap();
+        f.to_string_lossy().into_owned()
+    };
+    let state = |r: &Value, n: &str| {
+        r["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == n)
+            .and_then(|s| s["state"].as_str())
+            .unwrap_or_default()
+            .to_string()
+    };
+
+    let good = toml("flow-agent");
+    let r = env.json(
+        &work,
+        &["agents", "check", &good, "--flow", "--timeout", "60"],
+    );
+    for n in [
+        "flow setup",
+        "flow checkpoint",
+        "flow handoff",
+        "flow resume",
+    ] {
+        assert_eq!(state(&r, n), "pass", "{n}: {r:#}");
+    }
+    assert_eq!(r["ok"], true);
+    // The scratch project never reaches the person's own Evyro home.
+    let projects = env.ok(&work, &["projects"]);
+    assert!(projects.contains("No projects registered"), "{projects}");
+
+    let lazy = toml("lazy-agent");
+    let o = env.run(
+        &work,
+        &[
+            "--json",
+            "agents",
+            "check",
+            &lazy,
+            "--flow",
+            "--timeout",
+            "60",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(1));
+    let r: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(state(&r, "flow checkpoint"), "fail", "{r:#}");
+    assert_eq!(state(&r, "flow handoff"), "pass", "{r:#}");
+    assert_eq!(state(&r, "flow resume"), "pass", "{r:#}");
+}
