@@ -1107,11 +1107,14 @@ fn main() {
     // (with their output) after the app restarts.
     let terms: threads::Terms =
         std::sync::Arc::new(match evyro_core::paths::GlobalPaths::resolve() {
-            Ok(p) => evyro_term::Terminals::with_store(p.data_dir.join("threads"))
-                .with_keep(evyro_core::retention::Retention::load(&p).threads)
-                .with_redactor(std::sync::Arc::new(|text| {
-                    evyro_core::redact::redact(text).0
-                })),
+            Ok(p) => {
+                evyro_term::Terminals::with_store(p.data_dir.join(evyro_core::at_rest::THREADS_DIR))
+                    .with_sealer(evyro_core::at_rest::Sealer::from_settings(&p))
+                    .with_keep(evyro_core::retention::Retention::load(&p).threads)
+                    .with_redactor(std::sync::Arc::new(|text| {
+                        evyro_core::redact::redact(text).0
+                    }))
+            }
             Err(_) => evyro_term::Terminals::new(),
         });
     let chats: chat::Chats = chat::new_chats();

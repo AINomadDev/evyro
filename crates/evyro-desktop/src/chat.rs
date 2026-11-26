@@ -58,7 +58,8 @@ pub fn new_chats() -> Chats {
     if let Ok(paths) = evyro_core::paths::GlobalPaths::resolve() {
         host = host
             .with_retention(evyro_core::retention::Retention::load(&paths).chats)
-            .with_archive(paths.data_dir.join("chat-history"));
+            .with_sealer(evyro_core::at_rest::Sealer::from_settings(&paths))
+            .with_archive(paths.data_dir.join(evyro_core::at_rest::CHATS_DIR));
     }
     Arc::new(ChatState { host, feed, app })
 }

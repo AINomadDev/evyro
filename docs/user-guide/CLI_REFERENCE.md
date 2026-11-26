@@ -43,6 +43,7 @@ Commands:
   agents         Detected agents and their capabilities. `evyro agents check <name>` tests one agent definition, built-in or custom
   targets        Switch targets: every AI you can hand work to (agent CLIs, IDEs, chat apps, API models). `evyro targets` lists them with their setup status
   models         Model selection support per agent
+  saved-output   Encryption at rest for saved terminal output and chat transcripts (off by default). `evyro saved-output` shows whether it is on
   sessions       Agent sessions
   recover        Recover sessions whose process died (quota kill, crash)
   worktrees      Git worktrees
@@ -1117,6 +1118,28 @@ Options:
 Model selection support per agent
 
 Usage: evyro models [OPTIONS]
+
+Options:
+      --json               Machine-readable JSON output
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro saved-output
+
+```text
+Encryption at rest for saved terminal output and chat transcripts (off by default). `evyro saved-output` shows whether it is on
+
+Usage: evyro saved-output [OPTIONS] [COMMAND]
+
+Commands:
+  status   Whether saved output is encrypted, and how many files are (the default)
+  encrypt  Encrypt saved output with a key kept in the macOS Keychain (created on first use), including what is already saved. Quit the desktop app first
+  decrypt  Stop encrypting and decrypt what is already saved. The key stays in the Keychain. Quit the desktop app first
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
       --json               Machine-readable JSON output

@@ -10,6 +10,7 @@
 pub use crate::archive::SearchHit;
 use crate::archive::{self, SavedChat, MAX_SAVED};
 use crate::{ChatOpts, Event, Started};
+use evyro_core::at_rest::Sealer;
 use evyro_core::Store;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -54,6 +55,8 @@ pub struct Host {
     notify: Notify,
     evyro_mcp: Option<PathBuf>,
     archive: Option<PathBuf>,
+    /// Encrypts saved transcripts when the person turned that on.
+    sealer: Sealer,
     /// How many ended saved transcripts to keep; older ones are deleted.
     keep: Arc<AtomicUsize>,
 }
@@ -129,6 +132,7 @@ impl Host {
             notify,
             evyro_mcp,
             archive: None,
+            sealer: Sealer::plain(),
             keep: Arc::new(AtomicUsize::new(MAX_SAVED)),
         }
     }
@@ -185,9 +189,15 @@ impl Host {
         removed
     }
 
+    /// Seal saved transcripts with `sealer`. Call before [`Host::with_archive`].
+    pub fn with_sealer(mut self, sealer: Sealer) -> Self {
+        self.sealer = sealer;
+        self
+    }
+
     /// Enable local desktop history. Live chat APIs continue to see only this run.
     pub fn with_archive(mut self, dir: PathBuf) -> Self {
-        match archive::load(&dir, self.keep.load(Ordering::SeqCst)) {
+        match archive::load(&dir, self.keep.load(Ordering::SeqCst), &self.sealer) {
             Ok(saved) => self.inner.lock().unwrap().saved = saved,
             Err(e) => eprintln!("evyro: could not read chat history: {e}"),
         }
@@ -591,7 +601,7 @@ impl Host {
             let mut c = self.inner.lock().map_err(|e| e.to_string())?;
             let entry = c.map.remove(id);
             let save = match (&self.archive, &entry) {
-                (Some(dir), Some(e)) => Self::save_entry(dir, &mut c.saved, id, e),
+                (Some(dir), Some(e)) => Self::save_entry(dir, &self.sealer, &mut c.saved, id, e),
                 _ => Ok(()),
             };
             if let Some(dir) = &self.archive {
@@ -627,7 +637,7 @@ impl Host {
         newest.dedup();
         for id in newest.iter().rev() {
             if let Some(e) = c.map.get_mut(id).filter(|e| e.dirty) {
-                match Self::save_entry(dir, &mut c.saved, id, e) {
+                match Self::save_entry(dir, &self.sealer, &mut c.saved, id, e) {
                     Ok(()) => e.dirty = false,
                     Err(e) => eprintln!("evyro: could not save transcript {id}: {e}"),
                 }
@@ -638,12 +648,13 @@ impl Host {
 
     fn save_entry(
         dir: &std::path::Path,
+        sealer: &Sealer,
         saved: &mut HashMap<String, SavedChat>,
         id: &str,
         e: &Entry,
     ) -> std::io::Result<()> {
         let record =
-            SavedChat::capture(e.info.clone(), e.log.clone(), e.base > 0).write(dir, id)?;
+            SavedChat::capture(e.info.clone(), e.log.clone(), e.base > 0).write(dir, id, sealer)?;
         saved.insert(id.to_owned(), record);
         Ok(())
     }
