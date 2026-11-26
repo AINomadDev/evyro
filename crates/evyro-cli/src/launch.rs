@@ -6,8 +6,9 @@
 //! - Chat targets: build a self-contained chat pack and copy it.
 
 use crate::out::Out;
-use evyro_core::adapters::{self, LaunchMode};
+use evyro_core::adapters::{self, AdapterSpec, LaunchMode};
 use evyro_core::checkpoints::NewCheckpoint;
+use evyro_core::custom_agents::{self, CustomAgent};
 use evyro_core::handoff::resume_prompt;
 use evyro_core::handover::Claim;
 use evyro_core::plans;
@@ -16,7 +17,7 @@ use evyro_core::sessions::SessionStatus;
 use evyro_core::targets::{self, Target, TargetKind};
 use evyro_core::{brand, Error, Store};
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn bin_override(id: &str) -> Option<PathBuf> {
@@ -25,6 +26,70 @@ fn bin_override(id: &str) -> Option<PathBuf> {
         id.to_ascii_uppercase().replace('-', "_")
     );
     std::env::var_os(key).map(PathBuf::from)
+}
+
+/// The CLI that does the work: a built-in harness, or one from a TOML file
+/// (`evyro_core::custom_agents`).
+enum Agent {
+    Builtin(AdapterSpec),
+    Custom(CustomAgent),
+}
+
+impl Agent {
+    fn id(&self) -> &str {
+        match self {
+            Agent::Builtin(s) => s.id,
+            Agent::Custom(a) => &a.name,
+        }
+    }
+    fn display_name(&self) -> &str {
+        match self {
+            Agent::Builtin(s) => s.display_name,
+            Agent::Custom(a) => &a.display_name,
+        }
+    }
+    fn bin(&self) -> Option<PathBuf> {
+        bin_override(self.id()).or_else(|| match self {
+            Agent::Builtin(s) => s.binaries.iter().find_map(|b| adapters::which(b)),
+            Agent::Custom(a) => a.binary(),
+        })
+    }
+    fn launch_argv(
+        &self,
+        bin: &Path,
+        mode: LaunchMode,
+        prompt: &str,
+        cwd: &Path,
+        model: Option<&str>,
+    ) -> evyro_core::Result<Vec<String>> {
+        let bin = bin.to_string_lossy();
+        match self {
+            Agent::Builtin(s) => s.launch_argv(&bin, mode, prompt, model),
+            Agent::Custom(a) => a.launch_argv(&bin, mode, prompt, cwd, model),
+        }
+    }
+}
+
+/// A custom agent named `name`, as a harness target of its own.
+fn custom_target(store: &Store, p: &Project, name: &str) -> Option<(Target, CustomAgent)> {
+    let name = name.trim();
+    let loaded = custom_agents::load(&store.paths, Some(&p.root()));
+    let a = loaded.agents.into_iter().find(|a| a.name == name)?;
+    let t = Target {
+        name: a.name.clone(),
+        kind: TargetKind::Harness,
+        harness: Some(a.name.clone()),
+        app: None,
+        auth: Default::default(),
+        provider: None,
+        model: None,
+        key_env: None,
+        key_keychain: None,
+        base_url: None,
+        description: String::new(),
+        builtin: false,
+    };
+    Some((t, a))
 }
 
 pub struct RunOpts<'a> {
@@ -43,27 +108,54 @@ pub struct RunOpts<'a> {
 }
 
 pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::Result<i32> {
-    let target = targets::resolve_target(&store.paths, opts.target)?;
-    match target.kind {
-        TargetKind::Ide | TargetKind::Chat => return hand_to_app(store, p, &target, &opts, o),
-        TargetKind::Harness | TargetKind::Api => {}
-    }
-    // Resolve model and keys before touching any state: a missing key must
-    // not accept a handoff.
-    let mut plan = targets::launch_plan(&target)?;
+    // Switch targets first; then agents from TOML files (`evyro agents`).
+    let (target, spec, mut plan) = match targets::resolve_target(&store.paths, opts.target) {
+        Ok(target) => {
+            match target.kind {
+                TargetKind::Ide | TargetKind::Chat => {
+                    return hand_to_app(store, p, &target, &opts, o)
+                }
+                TargetKind::Harness | TargetKind::Api => {}
+            }
+            // Resolve model and keys before touching any state: a missing key must
+            // not accept a handoff.
+            let plan = targets::launch_plan(&target)?;
+            let spec = Agent::Builtin(adapters::get(&plan.harness)?);
+            (target, spec, plan)
+        }
+        Err(Error::NotFound(msg)) => match custom_target(store, p, opts.target) {
+            Some((target, a)) => {
+                let plan = targets::LaunchPlan {
+                    harness: a.name.clone(),
+                    ..Default::default()
+                };
+                (target, Agent::Custom(a), plan)
+            }
+            None => {
+                let bad = custom_agents::load(&store.paths, Some(&p.root()))
+                    .errors
+                    .len();
+                let msg = if bad > 0 {
+                    format!("{msg}. {bad} agent file(s) could not be read; `evyro doctor` says why")
+                } else {
+                    msg
+                };
+                return Err(Error::NotFound(msg).into());
+            }
+        },
+        Err(e) => return Err(e.into()),
+    };
     if let Some(m) = opts.model {
         plan.model = Some(m.to_string());
     }
-    let spec = adapters::get(&plan.harness)?;
-    let bin =
-        bin_override(spec.id).or_else(|| spec.binaries.iter().find_map(|b| adapters::which(b)));
+    let bin = spec.bin();
 
     // Interactive agents need a terminal. Check before touching any state so
     // a launch that cannot work never accepts a handoff or claims a task.
     if !opts.headless && bin.is_some() && !std::io::stdin().is_terminal() {
         eprintln!(
             "{} needs an interactive terminal. Run this from a terminal, or pass --headless.",
-            spec.display_name
+            spec.display_name()
         );
         return Ok(Error::Unsupported(String::new()).exit_code());
     }
@@ -83,7 +175,7 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
                 .as_ref(),
             ),
         };
-        println!("{} is not installed or has no launchable CLI. Fallback: open this repository in {} and give it this prompt:\n\n{}", spec.display_name, spec.display_name, prompt);
+        println!("{} is not installed or has no launchable CLI. Fallback: open this repository in {} and give it this prompt:\n\n{}", spec.display_name(), spec.display_name(), prompt);
         return Ok(Error::Unsupported(String::new()).exit_code());
     }
     let mode = if opts.headless {
@@ -93,7 +185,18 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
     };
     let bin = bin.unwrap();
     // Validate the argv shape (model support) before claiming.
-    spec.launch_argv(&bin.to_string_lossy(), mode, "probe", plan.model.as_deref())?;
+    spec.launch_argv(&bin, mode, "probe", &p.root(), plan.model.as_deref())?;
+    // A custom agent's login check runs before anything is claimed, so a
+    // signed-out agent never takes a task or a handoff.
+    if let Agent::Custom(a) = &spec {
+        if let Some(Err(why)) = a.check_login(std::time::Duration::from_secs(30)) {
+            return Err(Error::Unsupported(format!(
+                "{} is not signed in: login check failed: {why}. Sign in, then run this again.",
+                a.display_name
+            ))
+            .into());
+        }
+    }
 
     // Decide where the AI works. It stays in the main checkout unless another AI is there and the
     // two cannot be shown to touch different files; unfinished work keeps its worktree.
@@ -143,14 +246,17 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
         };
         prompt = format!("{}\n\n{prompt}", plans::plan_first_prompt(&task.key));
     }
-    let mut argv =
-        spec.launch_argv(&bin.to_string_lossy(), mode, &prompt, plan.model.as_deref())?;
+    let cwd = match &session.task_id {
+        Some(t) => store.task_root(&store.get_task(t)?)?,
+        None => p.root(),
+    };
+    let mut argv = spec.launch_argv(&bin, mode, &prompt, &cwd, plan.model.as_deref())?;
     if opts.plan_first {
-        let locked = plans::apply_read_only(spec.id, &mut argv);
+        let locked = plans::apply_read_only(spec.id(), &mut argv);
         if !locked && !o.quiet && !o.json {
             eprintln!(
                 "[{}] {} has no read-only mode Evyro can set, so plan first is a request to it, not a lock.",
-                brand::CLI_NAME, spec.display_name
+                brand::CLI_NAME, spec.display_name()
             );
         }
     }
@@ -162,14 +268,14 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
         ("EVYRO_DESKTOP_COPILOT_SESSION", "--session-id"),
         ("EVYRO_DESKTOP_COPILOT_USAGE", "--usage-output-file"),
     ];
-    if spec.id == "copilot" && !opts.headless {
+    if spec.id() == "copilot" && !opts.headless {
         for (env, flag) in desktop_copilot {
             if let Ok(value) = std::env::var(env) {
                 argv.splice(1..1, [flag.to_string(), value]);
             }
         }
     }
-    if opts.headless && spec.id == "codex" {
+    if opts.headless && spec.id() == "codex" {
         // The workspace-write sandbox lets Codex write only in the repo and
         // temp dirs. Its own `evyro checkpoint` / `evyro verify` calls write
         // Evyro's database, so that folder has to be writable too.
@@ -179,15 +285,11 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
             argv.insert(at + 2, data.to_string_lossy().into_owned());
         }
     }
-    let cwd = match &session.task_id {
-        Some(t) => store.task_root(&store.get_task(t)?)?,
-        None => p.root(),
-    };
     if !o.quiet && !o.json {
         eprintln!(
             "[{}] launching {} for target '{}' ({}; session {})",
             brand::CLI_NAME,
-            spec.display_name,
+            spec.display_name(),
             target.name,
             target.auth.label(),
             session.id
@@ -196,6 +298,10 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
     // Windows: npm `.cmd` shims cannot carry the prompt's line breaks.
     let argv = evyro_core::adapters::launchable_argv(argv);
     let mut cmd = Command::new(&argv[0]);
+    if let Agent::Custom(a) = &spec {
+        // Before Evyro's own variables, so a file cannot replace those.
+        cmd.envs(&a.env);
+    }
     cmd.args(&argv[1..])
         .current_dir(&cwd)
         .env("EVYRO_SESSION_ID", &session.id)
@@ -204,7 +310,7 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
         // Nobody types into a headless run. An open stdin makes some CLIs
         // (Codex among them) wait for more prompt text forever.
         cmd.stdin(std::process::Stdio::null());
-        if spec.id == "gemini" {
+        if spec.id() == "gemini" {
             // Gemini asks whether to trust a new folder before it will edit
             // there; headless runs have nobody to answer.
             cmd.env("GEMINI_CLI_TRUST_WORKSPACE", "true");
@@ -258,7 +364,7 @@ pub fn run_agent(store: &Store, p: &Project, opts: RunOpts, o: &Out) -> anyhow::
         };
         store.set_session_status(&s.id, to, Some(&reason))?;
         if !o.quiet && !o.json {
-            eprintln!("[{}] {} exited ({}); progress checkpointed. Continue later with `evyro run --agent <target>` or `evyro switch --to <target>`.", brand::CLI_NAME, spec.display_name, reason);
+            eprintln!("[{}] {} exited ({}); progress checkpointed. Continue later with `evyro run --agent <target>` or `evyro switch --to <target>`.", brand::CLI_NAME, spec.display_name(), reason);
         }
     }
     Ok(code.unwrap_or(1))

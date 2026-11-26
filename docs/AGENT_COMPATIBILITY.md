@@ -74,10 +74,10 @@ model_args = ["--model", "{model}"]   # optional; put right after the command wh
 instruction_file = "AGENTS.md"        # optional; the file the agent reads from the repository root
 login_check = ["my-agent", "auth", "status"]  # optional; exit status 0 means signed in
 
-[env]                                 # optional; set for the login check (and for runs, once supported)
+[env]                                 # optional; set for the agent's runs and its login check
 MY_AGENT_TELEMETRY = "0"
 ```
 
 Placeholders are `{prompt}`, `{cwd}` and `{model}` (only in `model_args`). No shell is used: each list item is one argument and a placeholder's value is inserted as-is, so prompt text cannot add arguments or commands. Unknown fields, unknown placeholders and a missing `{prompt}` are errors that name the file. Login checks in a project's `.evyro/agents/` are repository text, so `evyro doctor` shows them instead of running them.
 
-Custom agents are listed and checked today; starting them with `evyro run` and showing them in the desktop app are not done yet.
+Start one like any other agent: `evyro run --to my-agent --task T-1` (add `--headless` for `args`, otherwise `interactive_args` is used). Evyro runs `login_check` first and stops with an error, before claiming the task or a handoff, if it fails; Evyro's own variables (`EVYRO_SESSION_ID`, `EVYRO_PROJECT_ID`) always win over `[env]`. A switch target with the same name comes first. `evyro run` runs the command of a project's agent file only when you name that agent. `evyro switch` and the desktop app do not offer custom agents yet.

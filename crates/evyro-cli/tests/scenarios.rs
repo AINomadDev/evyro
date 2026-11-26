@@ -3349,3 +3349,76 @@ fn the_board_names_who_owns_the_files_and_a_plan_declares_its_files() {
         );
     }
 }
+
+/// An agent added with one TOML file starts through `evyro run`: its argv
+/// template is expanded, its env is set, and a failing login check stops the
+/// run before any task or session is claimed.
+#[test]
+fn run_starts_a_custom_agent_from_a_toml_file() {
+    let mut env = Env::new();
+    let repo = env.repo("custom");
+    env.init(&repo);
+    env.ok(&repo, &["task", "add", "Custom agent work"]);
+    env.agent(
+        "teamagent",
+        "1.0.0",
+        "printf '%s %s\\n' \"$TEAM_TOKEN\" \"${EVYRO_SESSION_ID:+session}\" > \"$PWD/.team-env\"\nexit 0",
+    );
+    let agents = repo.join(".evyro/agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    let file = |token: &str| {
+        format!(
+            r#"name = "team"
+command = "teamagent"
+args = ["go", "--dir={{cwd}}", "{{prompt}}"]
+login_check = ["sh", "-c", "test \"$TEAM_TOKEN\" = abc"]
+
+[env]
+TEAM_TOKEN = "{token}"
+"#
+        )
+    };
+
+    // Signed out: a clear error, and nothing is claimed.
+    std::fs::write(agents.join("team.toml"), file("expired")).unwrap();
+    let o = env.run(
+        &repo,
+        &["run", "--to", "team", "--task", "T-1", "--headless"],
+    );
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(
+        err.contains("not signed in") && err.contains("login check failed"),
+        "{err}"
+    );
+    assert!(env
+        .json(&repo, &["sessions"])
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(!repo.join(".agent-teamagent-args").exists());
+
+    // Signed in: launched with the expanded template and the file's env.
+    std::fs::write(agents.join("team.toml"), file("abc")).unwrap();
+    env.ok(
+        &repo,
+        &["run", "--to", "team", "--task", "T-1", "--headless"],
+    );
+    let args = read(&repo.join(".agent-teamagent-args"));
+    let root = std::fs::canonicalize(&repo).unwrap();
+    assert!(args.starts_with("go --dir="), "{args}");
+    assert!(args.contains("T-1"), "the prompt names the task: {args}");
+    let dir = args["go --dir=".len()..].split(' ').next().unwrap();
+    assert_eq!(std::fs::canonicalize(dir).unwrap(), root, "{args}");
+    assert_eq!(read(&repo.join(".team-env")).trim(), "abc session");
+    let s = env.json(&repo, &["sessions"]);
+    assert_eq!(s[0]["harness"], "team");
+    assert_eq!(s[0]["status"], "completed");
+
+    // A name nobody defined, with a broken file: the error points at doctor.
+    std::fs::write(agents.join("broken.toml"), "name = ").unwrap();
+    let o = env.run(&repo, &["run", "--to", "nobody", "--headless"]);
+    assert!(!o.status.success());
+    let err = String::from_utf8_lossy(&o.stderr);
+    assert!(err.contains("1 agent file(s) could not be read"), "{err}");
+}
