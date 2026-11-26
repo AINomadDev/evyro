@@ -426,69 +426,73 @@ impl Store {
                 return Err(Error::Invalid("priority must be 0..4".into()));
             }
         }
-        self.conn.execute(
-            "UPDATE tasks SET status = ?1, title = ?2, description = ?3, priority = ?4, acceptance = ?5,
-               constraints = ?6, files = ?7, assigned_agent = ?8, branch = ?9, worktree = ?10, updated_at = ?11
-             WHERE id = ?12",
-            rusqlite::params![
-                u.status.unwrap_or(t.status).as_str(),
-                u.title.clone().unwrap_or(t.title.clone()),
-                u.description.clone().unwrap_or(t.description.clone()),
-                u.priority.unwrap_or(t.priority),
-                to_json(&acceptance),
-                to_json(&constraints),
-                to_json(&files),
-                u.assigned_agent.clone().or(t.assigned_agent.clone()),
-                u.branch.clone().or(t.branch.clone()),
-                u.worktree.clone().or(t.worktree.clone()),
-                now,
-                t.id
-            ],
-        )?;
-        if let Some(to) = u.status {
-            if to != t.status {
-                let mut payload =
-                    serde_json::json!({"from": t.status, "to": to, "actor": actor.label()});
-                if let Actor::Human {
-                    override_reason: Some(r),
-                } = actor
-                {
-                    payload["override_reason"] = serde_json::Value::String(r.clone());
+        // The task row, its event and ending the session that held it change together.
+        self.atomic(|| {
+            self.conn.execute(
+                "UPDATE tasks SET status = ?1, title = ?2, description = ?3, priority = ?4, acceptance = ?5,
+                   constraints = ?6, files = ?7, assigned_agent = ?8, branch = ?9, worktree = ?10, updated_at = ?11
+                 WHERE id = ?12",
+                rusqlite::params![
+                    u.status.unwrap_or(t.status).as_str(),
+                    u.title.clone().unwrap_or(t.title.clone()),
+                    u.description.clone().unwrap_or(t.description.clone()),
+                    u.priority.unwrap_or(t.priority),
+                    to_json(&acceptance),
+                    to_json(&constraints),
+                    to_json(&files),
+                    u.assigned_agent.clone().or(t.assigned_agent.clone()),
+                    u.branch.clone().or(t.branch.clone()),
+                    u.worktree.clone().or(t.worktree.clone()),
+                    now,
+                    t.id
+                ],
+            )?;
+            if let Some(to) = u.status {
+                if to != t.status {
+                    let mut payload =
+                        serde_json::json!({"from": t.status, "to": to, "actor": actor.label()});
+                    if let Actor::Human {
+                        override_reason: Some(r),
+                    } = actor
+                    {
+                        payload["override_reason"] = serde_json::Value::String(r.clone());
+                    }
+                    self.emit(
+                        Some(&t.project_id),
+                        Some(&t.id),
+                        None,
+                        "task.status_changed",
+                        payload,
+                    )?;
+                    // Work handed to review, or finished, is no longer being worked on: end the
+                    // session that held it so its lease does not outlive the work.
+                    if matches!(
+                        to,
+                        TaskStatus::InReview
+                            | TaskStatus::Verified
+                            | TaskStatus::Done
+                            | TaskStatus::Cancelled
+                    ) {
+                        if let Some(s) = self.active_session_for_task(&t.id)? {
+                            self.set_session_status(
+                                &s.id,
+                                crate::sessions::SessionStatus::Completed,
+                                Some(&format!("task_{}", to.as_str())),
+                            )?;
+                        }
+                    }
                 }
+            } else {
                 self.emit(
                     Some(&t.project_id),
                     Some(&t.id),
                     None,
-                    "task.status_changed",
-                    payload,
+                    "task.updated",
+                    serde_json::json!({"actor": actor.label()}),
                 )?;
-                // Work handed to review, or finished, is no longer being worked on: end the
-                // session that held it so its lease does not outlive the work.
-                if matches!(
-                    to,
-                    TaskStatus::InReview
-                        | TaskStatus::Verified
-                        | TaskStatus::Done
-                        | TaskStatus::Cancelled
-                ) {
-                    if let Some(s) = self.active_session_for_task(&t.id)? {
-                        self.set_session_status(
-                            &s.id,
-                            crate::sessions::SessionStatus::Completed,
-                            Some(&format!("task_{}", to.as_str())),
-                        )?;
-                    }
-                }
             }
-        } else {
-            self.emit(
-                Some(&t.project_id),
-                Some(&t.id),
-                None,
-                "task.updated",
-                serde_json::json!({"actor": actor.label()}),
-            )?;
-        }
+            Ok(())
+        })?;
         self.get_task(&t.id)
     }
 

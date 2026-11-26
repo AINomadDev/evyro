@@ -157,6 +157,83 @@ impl Store {
         )?)
     }
 
+    /// Run `f` so that all of its writes land or none do. Outside a transaction it opens one
+    /// (`write_tx`); inside one it uses a savepoint, so a failure undoes only `f`'s writes and
+    /// the caller decides what happens to the rest.
+    pub(crate) fn atomic<T>(&self, f: impl FnOnce() -> Result<T>) -> Result<T> {
+        if self.conn.is_autocommit() {
+            let tx = self.write_tx()?;
+            let v = f()?; // dropping `tx` rolls back
+            tx.commit()?;
+            return Ok(v);
+        }
+        self.conn.execute_batch("SAVEPOINT evyro_atomic")?;
+        match f() {
+            Ok(v) => {
+                self.conn.execute_batch("RELEASE evyro_atomic")?;
+                Ok(v)
+            }
+            Err(e) => {
+                let _ = self
+                    .conn
+                    .execute_batch("ROLLBACK TO evyro_atomic; RELEASE evyro_atomic");
+                Err(e)
+            }
+        }
+    }
+
+    /// Rows that point at rows that are not there, or a lease held by a session that has ended:
+    /// what an interrupted multi-row write leaves behind. Covers the links foreign keys do not.
+    pub fn consistency_problems(&self) -> Result<Vec<String>> {
+        const CHECKS: &[(&str, &str)] = &[
+            (
+                "lease(s) held by a missing or ended session",
+                "SELECT COUNT(*) FROM leases l LEFT JOIN sessions s ON s.id = l.session_id
+                 WHERE s.id IS NULL OR s.status IN ('completed','failed','cancelled')",
+            ),
+            (
+                "lease(s) on a missing task",
+                "SELECT COUNT(*) FROM leases WHERE task_id NOT IN (SELECT id FROM tasks)",
+            ),
+            (
+                "event(s) for a missing task",
+                "SELECT COUNT(*) FROM events WHERE task_id IS NOT NULL
+                 AND task_id NOT IN (SELECT id FROM tasks)",
+            ),
+            (
+                "event(s) for a missing session",
+                "SELECT COUNT(*) FROM events WHERE session_id IS NOT NULL
+                 AND session_id NOT IN (SELECT id FROM sessions)",
+            ),
+            (
+                "checkpoint(s) for a missing task or session",
+                "SELECT COUNT(*) FROM checkpoints
+                 WHERE (task_id IS NOT NULL AND task_id NOT IN (SELECT id FROM tasks))
+                    OR (session_id IS NOT NULL AND session_id NOT IN (SELECT id FROM sessions))",
+            ),
+            (
+                "session(s) whose latest checkpoint is missing",
+                "SELECT COUNT(*) FROM sessions WHERE latest_checkpoint_id IS NOT NULL
+                 AND latest_checkpoint_id NOT IN (SELECT id FROM checkpoints)",
+            ),
+            (
+                "handoff(s) whose checkpoint or accepting session is missing",
+                "SELECT COUNT(*) FROM handoffs
+                 WHERE (checkpoint_id IS NOT NULL AND checkpoint_id NOT IN (SELECT id FROM checkpoints))
+                    OR (accepted_session_id IS NOT NULL
+                        AND accepted_session_id NOT IN (SELECT id FROM sessions))",
+            ),
+        ];
+        let mut out = Vec::new();
+        for (what, sql) in CHECKS {
+            let n: i64 = self.conn.query_row(sql, [], |r| r.get(0))?;
+            if n > 0 {
+                out.push(format!("{n} {what}"));
+            }
+        }
+        Ok(out)
+    }
+
     /// `PRAGMA integrity_check` + foreign key check. Returns problems found.
     pub fn integrity_check(&self) -> Result<Vec<String>> {
         let mut out = Vec::new();
@@ -247,5 +324,168 @@ mod upgrade_tests {
             .query_row("PRAGMA integrity_check", [], |r| r.get(0))
             .unwrap();
         assert_eq!(ok, "ok");
+    }
+}
+
+#[cfg(test)]
+mod consistency_tests {
+    use super::*;
+    use crate::sessions::{NewSession, SessionStatus};
+    use crate::tasks::{NewTask, Task};
+
+    fn setup() -> (tempfile::TempDir, Store, Task) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = GlobalPaths {
+            data_dir: dir.path().join("data"),
+            config_dir: dir.path().join("config"),
+        };
+        paths.ensure().unwrap();
+        let store = Store::open_at(&paths.db_path(), paths).unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(&root).unwrap();
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&root)
+            .args(["init", "-q", "-b", "main"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let project = store.register_project(&root, None).unwrap().project;
+        let task = store
+            .create_task(
+                &project.id,
+                NewTask {
+                    title: "Work".into(),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        (dir, store, task)
+    }
+
+    fn new_session(task: &Task) -> NewSession {
+        NewSession {
+            task_id: Some(task.id.clone()),
+            harness: "codex".into(),
+            ..Default::default()
+        }
+    }
+
+    /// Make the next event insert fail: a write in the middle of each operation below.
+    fn fail_events(store: &Store) {
+        store
+            .conn
+            .execute_batch(
+                "CREATE TEMP TRIGGER fail_events BEFORE INSERT ON events
+                 BEGIN SELECT RAISE(ABORT, 'injected failure'); END;",
+            )
+            .unwrap();
+    }
+
+    fn count(store: &Store, sql: &str) -> i64 {
+        store.conn.query_row(sql, [], |r| r.get(0)).unwrap()
+    }
+
+    #[test]
+    fn a_failed_session_start_leaves_no_session_or_lease() {
+        let (_d, store, task) = setup();
+        fail_events(&store);
+        let err = store
+            .start_session(&task.project_id, new_session(&task))
+            .unwrap_err();
+        assert!(err.to_string().contains("injected failure"), "{err}");
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM sessions"), 0);
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM leases"), 0);
+        assert_eq!(store.get_task(&task.id).unwrap().assigned_agent, None);
+        assert!(store.conn.is_autocommit(), "no transaction left open");
+        assert!(store.consistency_problems().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_failed_session_end_keeps_the_session_and_its_lease() {
+        let (_d, store, task) = setup();
+        let s = store
+            .start_session(&task.project_id, new_session(&task))
+            .unwrap();
+        fail_events(&store);
+        assert!(store
+            .set_session_status(&s.id, SessionStatus::Completed, None)
+            .is_err());
+        assert_eq!(
+            store.get_session(&s.id).unwrap().status,
+            SessionStatus::Running
+        );
+        assert_eq!(store.lease(&task.id).unwrap().unwrap().session_id, s.id);
+        assert!(store.consistency_problems().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_failure_inside_a_transaction_undoes_only_its_own_writes() {
+        let (_d, store, task) = setup();
+        let before = count(&store, "SELECT COUNT(*) FROM events");
+        store
+            .atomic(|| {
+                store.emit(
+                    Some(&task.project_id),
+                    Some(&task.id),
+                    None,
+                    "kept",
+                    serde_json::json!({}),
+                )?;
+                let inner: Result<()> = store.atomic(|| {
+                    store.emit(None, None, None, "undone", serde_json::json!({}))?;
+                    Err(Error::Invalid("inner".into()))
+                });
+                assert!(inner.is_err());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(count(&store, "SELECT COUNT(*) FROM events"), before + 1);
+        assert_eq!(
+            count(&store, "SELECT COUNT(*) FROM events WHERE kind = 'undone'"),
+            0
+        );
+    }
+
+    #[test]
+    fn doctor_reports_dangling_references() {
+        let (d, store, task) = setup();
+        let s = store
+            .start_session(&task.project_id, new_session(&task))
+            .unwrap();
+        let ok = crate::doctor::run(&store, d.path());
+        let check = ok.iter().find(|c| c.name == "store consistency").unwrap();
+        assert_eq!(check.status, "ok", "{check:?}");
+
+        // What a half-finished write leaves: a session ended without freeing its lease, and
+        // events and a checkpoint pointer naming rows that were never written.
+        store
+            .conn
+            .execute_batch(&format!(
+                "UPDATE sessions SET status = 'failed', latest_checkpoint_id = 'chk_gone'
+                   WHERE id = '{}';
+                 INSERT INTO events(id, project_id, task_id, session_id, kind, created_at)
+                   VALUES ('evt_x', '{}', 'tsk_gone', 'ses_gone', 'x', 'now');",
+                s.id, task.project_id
+            ))
+            .unwrap();
+        let problems = store.consistency_problems().unwrap();
+        for want in [
+            "1 lease(s) held by a missing or ended session",
+            "1 event(s) for a missing task",
+            "1 event(s) for a missing session",
+            "1 session(s) whose latest checkpoint is missing",
+        ] {
+            assert!(problems.iter().any(|p| p == want), "{want}: {problems:?}");
+        }
+        let checks = crate::doctor::run(&store, d.path());
+        let check = checks
+            .iter()
+            .find(|c| c.name == "store consistency")
+            .unwrap();
+        assert_eq!(check.status, "warn");
+        assert!(check
+            .detail
+            .contains("lease(s) held by a missing or ended session"));
     }
 }

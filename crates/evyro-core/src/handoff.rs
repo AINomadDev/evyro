@@ -167,14 +167,17 @@ impl Store {
             }
         }
 
-        let result = self.build_handoff(
-            &project,
-            task.as_ref(),
-            source_session.as_ref(),
-            from_harness.as_deref(),
-            &to,
-            &req,
-        );
+        // The handoff checkpoint and the handoff record land together or not at all.
+        let result = self.atomic(|| {
+            self.build_handoff(
+                &project,
+                task.as_ref(),
+                source_session.as_ref(),
+                from_harness.as_deref(),
+                &to,
+                &req,
+            )
+        });
         match result {
             Ok(h) => {
                 if let Some(s) = &source_session {
@@ -630,45 +633,49 @@ impl Store {
             });
         }
 
-        let session = self.start_session(
-            project_id,
-            NewSession {
-                task_id: h.task_id.clone(),
-                harness: agent.clone(),
-                model: model
-                    .map(|s| s.to_string())
-                    .or(contract.target.model.clone()),
-                provider: None,
-                worktree: task.as_ref().and_then(|t| t.worktree.clone()),
-                pid: None,
-                handoff_id: Some(h.id.clone()),
-            },
-        )?;
-        self.conn.execute(
-            "UPDATE handoffs SET status = 'accepted', accepted_at = ?1, accepted_session_id = ?2 WHERE id = ?3",
-            rusqlite::params![util::now(), session.id, h.id],
-        )?;
-        if let Some(t) = &task {
-            if matches!(
-                t.status,
-                TaskStatus::Backlog
-                    | TaskStatus::Ready
-                    | TaskStatus::Blocked
-                    | TaskStatus::InReview
-            ) && self.open_blockers(&t.id)?.is_empty()
-            {
-                self.update_task(
-                    &t.id,
-                    TaskUpdate {
-                        status: Some(TaskStatus::InProgress),
-                        ..Default::default()
-                    },
-                    &Actor::Agent(agent.clone()),
-                )?;
+        // The new session, the accepted handoff and the task status change together.
+        let session = self.atomic(|| {
+            let session = self.start_session(
+                project_id,
+                NewSession {
+                    task_id: h.task_id.clone(),
+                    harness: agent.clone(),
+                    model: model
+                        .map(|s| s.to_string())
+                        .or(contract.target.model.clone()),
+                    provider: None,
+                    worktree: task.as_ref().and_then(|t| t.worktree.clone()),
+                    pid: None,
+                    handoff_id: Some(h.id.clone()),
+                },
+            )?;
+            self.conn.execute(
+                "UPDATE handoffs SET status = 'accepted', accepted_at = ?1, accepted_session_id = ?2 WHERE id = ?3",
+                rusqlite::params![util::now(), session.id, h.id],
+            )?;
+            if let Some(t) = &task {
+                if matches!(
+                    t.status,
+                    TaskStatus::Backlog
+                        | TaskStatus::Ready
+                        | TaskStatus::Blocked
+                        | TaskStatus::InReview
+                ) && self.open_blockers(&t.id)?.is_empty()
+                {
+                    self.update_task(
+                        &t.id,
+                        TaskUpdate {
+                            status: Some(TaskStatus::InProgress),
+                            ..Default::default()
+                        },
+                        &Actor::Agent(agent.clone()),
+                    )?;
+                }
             }
-        }
-        self.emit(Some(project_id), h.task_id.as_deref(), Some(&session.id), "handoff.accepted",
-            serde_json::json!({"handoff_id": h.id, "agent": agent, "drift": drift.drifted, "drift_summary": drift.summary()}))?;
+            self.emit(Some(project_id), h.task_id.as_deref(), Some(&session.id), "handoff.accepted",
+                serde_json::json!({"handoff_id": h.id, "agent": agent, "drift": drift.drifted, "drift_summary": drift.summary()}))?;
+            Ok(session)
+        })?;
         let h = self.get_handoff(&h.id)?;
         Ok(ResumeOutcome {
             accepted: true,
@@ -897,50 +904,52 @@ impl Store {
         project_id: &str,
         s: crate::sessions::Session,
     ) -> Result<RecoveredSession> {
-        self.set_session_status(
-            &s.id,
-            SessionStatus::Recovering,
-            Some("process_not_running"),
-        )?;
-        let prev = match &s.task_id {
-            Some(t) => self.latest_checkpoint(project_id, Some(t))?,
-            None => None,
-        };
-        let cp = self.create_checkpoint(
-            project_id,
-            NewCheckpoint {
-                task_id: s.task_id.clone(),
-                session_id: Some(s.id.clone()),
-                trigger: Some("recovery".into()),
-                summary: String::new(),
-                dedupe: false,
-                ..Default::default()
-            },
-        )?;
-        let changed: Vec<String> = match &prev {
-            Some(p) => {
-                let root = PathBuf::from(&cp.checkpoint.git.root);
-                let d = detect_drift(&p.git, &root)?;
-                d.modified_since.into_iter().chain(d.newly_dirty).collect()
-            }
-            None => cp
-                .checkpoint
-                .git
-                .files
-                .iter()
-                .map(|f| f.path.clone())
-                .collect(),
-        };
-        self.set_session_status(
-            &s.id,
-            SessionStatus::Failed,
-            Some("process_exited_unexpectedly"),
-        )?;
-        Ok(RecoveredSession {
-            session_id: s.id,
-            harness: s.harness,
-            checkpoint_id: cp.checkpoint.id,
-            changed_since_last_checkpoint: changed,
+        self.atomic(|| {
+            self.set_session_status(
+                &s.id,
+                SessionStatus::Recovering,
+                Some("process_not_running"),
+            )?;
+            let prev = match &s.task_id {
+                Some(t) => self.latest_checkpoint(project_id, Some(t))?,
+                None => None,
+            };
+            let cp = self.create_checkpoint(
+                project_id,
+                NewCheckpoint {
+                    task_id: s.task_id.clone(),
+                    session_id: Some(s.id.clone()),
+                    trigger: Some("recovery".into()),
+                    summary: String::new(),
+                    dedupe: false,
+                    ..Default::default()
+                },
+            )?;
+            let changed: Vec<String> = match &prev {
+                Some(p) => {
+                    let root = PathBuf::from(&cp.checkpoint.git.root);
+                    let d = detect_drift(&p.git, &root)?;
+                    d.modified_since.into_iter().chain(d.newly_dirty).collect()
+                }
+                None => cp
+                    .checkpoint
+                    .git
+                    .files
+                    .iter()
+                    .map(|f| f.path.clone())
+                    .collect(),
+            };
+            self.set_session_status(
+                &s.id,
+                SessionStatus::Failed,
+                Some("process_exited_unexpectedly"),
+            )?;
+            Ok(RecoveredSession {
+                session_id: s.id,
+                harness: s.harness,
+                checkpoint_id: cp.checkpoint.id,
+                changed_since_last_checkpoint: changed,
+            })
         })
     }
 }
