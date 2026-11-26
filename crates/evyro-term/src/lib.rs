@@ -10,6 +10,7 @@
 //! (as ended, `restored`) with their output after a restart.
 
 use anyhow::{anyhow, Context, Result};
+use evyro_core::at_rest::{Sealer, Unreadable};
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -96,6 +97,8 @@ struct Term {
     forgotten: std::sync::atomic::AtomicBool,
     /// Applied to output before it is written to disk (never to the live view).
     redactor: Option<Redactor>,
+    /// Encrypts what is written to disk when the person turned that on.
+    sealer: Sealer,
 }
 
 #[derive(Default)]
@@ -124,6 +127,7 @@ pub struct Terminals {
     /// Makes ids unique across runs of the app, so saved threads never collide.
     run: String,
     redactor: Option<Redactor>,
+    sealer: Sealer,
     /// How many ended saved threads to keep; older ones are deleted.
     keep: AtomicUsize,
     /// Seconds of silence before a running thread is flagged; 0 means the default.
@@ -184,7 +188,7 @@ impl Terminals {
             let live: std::collections::HashSet<String> =
                 self.terms.lock().unwrap().keys().cloned().collect();
             ended.extend(
-                load_saved(dir)
+                load_saved(dir, &self.sealer)
                     .into_iter()
                     .filter(|i| !live.contains(&i.id))
                     .map(|i| (i.started_at, i.id)),
@@ -212,6 +216,13 @@ impl Terminals {
     /// scrollback are left as they are.
     pub fn with_redactor(mut self, redactor: Redactor) -> Self {
         self.redactor = Some(redactor);
+        self
+    }
+
+    /// Encrypt saved details and output with `sealer` (see `evyro_core::at_rest`).
+    /// Files saved earlier, encrypted or not, still load.
+    pub fn with_sealer(mut self, sealer: Sealer) -> Self {
+        self.sealer = sealer;
         self
     }
 
@@ -266,7 +277,7 @@ impl Terminals {
                     .store
                     .as_ref()
                     .ok_or_else(|| anyhow!("no terminal {id}"))?;
-                read_info(&saved_path(dir, id, "json")?)
+                read_info(&self.sealer, &saved_path(dir, id, "json")?)
                     .with_context(|| format!("no terminal {id}"))?
             }
         };
@@ -394,6 +405,7 @@ impl Terminals {
             watch: Mutex::new(watchdog::Watch::new(Instant::now())),
             forgotten: Default::default(),
             redactor: self.redactor.clone(),
+            sealer: self.sealer.clone(),
         });
         self.terms.lock().unwrap().insert(id.clone(), term.clone());
         let store = self.store.clone();
@@ -492,8 +504,12 @@ impl Terminals {
             Ok(t) => t,
             Err(e) => {
                 let dir = self.store.as_ref().ok_or(e)?;
-                let bytes = std::fs::read(saved_path(dir, id, "log")?)
+                let stored = std::fs::read(saved_path(dir, id, "log")?)
                     .map_err(|_| anyhow!("no terminal {id}"))?;
+                let bytes = self
+                    .sealer
+                    .open(&stored)
+                    .map_err(|e| anyhow!("cannot show the output of {id}: {e}"))?;
                 let trimmed = if bytes.len() >= SCROLLBACK_BYTES {
                     drop_partial_start(&bytes)
                 } else {
@@ -603,7 +619,7 @@ impl Terminals {
         if let Some(dir) = &self.store {
             let live: std::collections::HashSet<String> = v.iter().map(|i| i.id.clone()).collect();
             v.extend(
-                load_saved(dir)
+                load_saved(dir, &self.sealer)
                     .into_iter()
                     .filter(|i| !live.contains(&i.id)),
             );
@@ -704,20 +720,29 @@ fn save_term_locked(dir: &std::path::Path, t: &Term, info: &TermInfo) {
     if let Some(redact) = &t.redactor {
         bytes = redact(&String::from_utf8_lossy(&bytes)).into_bytes();
     }
-    let _ = replace_file(&log, &bytes, |_| false);
-    if let Ok(j) = serde_json::to_vec_pretty(info) {
-        let _ = replace_file(&json, &j, |b| parse_info(b).is_some());
+    let sealer = &t.sealer;
+    if let Ok(sealed) = sealer.seal(&bytes) {
+        let _ = replace_file(sealer, &log, &sealed, |_| false);
+    }
+    if let Some(j) = serde_json::to_vec_pretty(info)
+        .ok()
+        .and_then(|j| sealer.seal(&j).ok())
+    {
+        let _ = replace_file(sealer, &json, &j, |b| parse_info(sealer, b).is_some());
     }
 }
 
 /// Replace `path` through a synced temporary file in the same directory. The
 /// file being replaced becomes `<file>.bak` when `is_good` accepts it, so a
-/// damaged file never overwrites a good copy.
+/// damaged file never overwrites a good copy, and a file encrypted with a key
+/// we do not have is never replaced.
 fn replace_file(
+    sealer: &Sealer,
     path: &std::path::Path,
     data: &[u8],
     is_good: impl Fn(&[u8]) -> bool,
 ) -> std::io::Result<()> {
+    sealer.check_overwrite(path)?;
     let tmp = path.with_extension("tmp");
     write_private(&tmp, data)?;
     if std::fs::read(path).is_ok_and(|current| is_good(&current)) {
@@ -737,16 +762,30 @@ fn last_good(path: &std::path::Path) -> PathBuf {
     path.with_file_name(name)
 }
 
-fn parse_info(bytes: &[u8]) -> Option<TermInfo> {
-    serde_json::from_slice(bytes).ok()
+fn parse_info(sealer: &Sealer, bytes: &[u8]) -> Option<TermInfo> {
+    serde_json::from_slice(&sealer.open(bytes).ok()?).ok()
 }
 
 /// A thread's saved details, or their last good copy when the file is missing
-/// or damaged.
-fn read_info(path: &std::path::Path) -> Option<TermInfo> {
-    [path.to_path_buf(), last_good(path)]
+/// or damaged. Details encrypted with a key we do not have are reported and
+/// left on disk.
+fn read_info(sealer: &Sealer, path: &std::path::Path) -> Option<TermInfo> {
+    let paths = [path.to_path_buf(), last_good(path)];
+    let found = paths
         .iter()
-        .find_map(|p| std::fs::read(p).ok().and_then(|b| parse_info(&b)))
+        .find_map(|p| std::fs::read(p).ok().and_then(|b| parse_info(sealer, &b)));
+    if found.is_none() {
+        if let Some(why) = paths
+            .iter()
+            .find_map(|p| match sealer.open(&std::fs::read(p).ok()?) {
+                Err(e @ (Unreadable::NoKey(_) | Unreadable::WrongKey)) => Some(e),
+                _ => None,
+            })
+        {
+            eprintln!("evyro: saved thread {} not loaded: {why}", path.display());
+        }
+    }
+    found
 }
 
 /// Saved output can hold secrets, so only the current user may read it.
@@ -765,7 +804,7 @@ fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
 }
 
 /// Threads saved by earlier runs, as ended.
-fn load_saved(dir: &std::path::Path) -> Vec<TermInfo> {
+fn load_saved(dir: &std::path::Path, sealer: &Sealer) -> Vec<TermInfo> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return vec![];
     };
@@ -782,7 +821,7 @@ fn load_saved(dir: &std::path::Path) -> Vec<TermInfo> {
     ids.sort_unstable();
     ids.dedup();
     ids.into_iter()
-        .filter_map(|id| read_info(&saved_path(dir, &id, "json").ok()?))
+        .filter_map(|id| read_info(sealer, &saved_path(dir, &id, "json").ok()?))
         .map(|mut i| {
             if i.running {
                 // Saved while running and the app never closed it cleanly.
@@ -896,6 +935,7 @@ pub fn shell_command(line: Option<&str>) -> (String, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evyro_core::at_rest::{new_key, DataKey, MemoryKeys};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -1219,9 +1259,26 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_damaged_thread_file_falls_back_to_its_last_good_copy() {
-        let dir = std::env::temp_dir().join(format!("evyro-term-recover-{}", std::process::id()));
+        last_good_recovery("plain", Sealer::plain());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn last_good_recovery_works_with_encryption_on() {
+        last_good_recovery("sealed", encrypted(new_key()));
+    }
+
+    fn encrypted(key: DataKey) -> Sealer {
+        Sealer::new(true, Arc::new(MemoryKeys::with(key)))
+    }
+
+    #[cfg(unix)]
+    fn last_good_recovery(name: &str, sealer: Sealer) {
+        let dir =
+            std::env::temp_dir().join(format!("evyro-term-recover-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let first = Terminals::with_store(dir.clone());
+        let store = || Terminals::with_store(dir.clone()).with_sealer(sealer.clone());
+        let first = store();
         let mut ids = Vec::new();
         for _ in 0..2 {
             let (o, e, _, rx) = collect();
@@ -1248,17 +1305,69 @@ mod tests {
         };
         let mut both = ids.clone();
         both.sort();
-        assert_eq!(listed(&Terminals::with_store(dir.clone())), both);
+        assert_eq!(listed(&store()), both);
 
         // Stopped between keeping the last good copy and the rename.
         std::fs::remove_file(&json).unwrap();
-        let second = Terminals::with_store(dir.clone());
+        let second = store();
         assert_eq!(listed(&second), both);
         assert!(second.snapshot(other).is_ok());
 
         // Forgetting a thread also removes its last good copy.
         second.close(damaged).unwrap();
         assert!(!dir.join(format!("{damaged}.json.bak")).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn encrypted_threads_round_trip_and_a_wrong_key_never_loses_them() {
+        let dir = std::env::temp_dir().join(format!("evyro-term-sealed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let key = new_key();
+
+        // A thread saved before encryption was turned on.
+        let plain = Terminals::with_store(dir.clone());
+        let (o, e, _, rx) = collect();
+        let old = plain
+            .open(spec("/bin/sh", &["-c", "echo plain-output"]), o, e)
+            .unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(0));
+        plain.save_all();
+
+        let sealed = Terminals::with_store(dir.clone()).with_sealer(encrypted(key));
+        let (o, e, _, rx) = collect();
+        let new = sealed
+            .open(spec("/bin/sh", &["-c", "echo sealed-output"]), o, e)
+            .unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(0));
+        sealed.save_all();
+        for ext in ["json", "log"] {
+            let file = std::fs::read(dir.join(format!("{}.{ext}", new.id))).unwrap();
+            assert!(Sealer::is_sealed(&file), "{ext} not encrypted");
+            assert!(!String::from_utf8_lossy(&file).contains("sealed-output"));
+        }
+
+        // After a restart both the plaintext and the encrypted thread load.
+        let again = Terminals::with_store(dir.clone()).with_sealer(encrypted(key));
+        assert_eq!(again.list().len(), 2);
+        assert!(again.snapshot(&old.id).unwrap().0.contains("plain-output"));
+        assert!(again.snapshot(&new.id).unwrap().0.contains("sealed-output"));
+
+        // With another key, or none, the encrypted thread is not listed, its
+        // output is a clear error, and clearing saved threads leaves it on disk.
+        for other in [encrypted(new_key()), Sealer::plain()] {
+            let wrong = Terminals::with_store(dir.clone()).with_sealer(other);
+            let ids: Vec<String> = wrong.list().into_iter().map(|i| i.id).collect();
+            assert!(!ids.contains(&new.id), "{ids:?}");
+            let err = wrong.snapshot(&new.id).unwrap_err().to_string();
+            assert!(err.contains("left on disk untouched"), "{err}");
+            wrong.clear_saved();
+            assert!(dir.join(format!("{}.json", new.id)).exists());
+            assert!(dir.join(format!("{}.log", new.id)).exists());
+        }
+        let back = Terminals::with_store(dir.clone()).with_sealer(encrypted(key));
+        assert!(back.snapshot(&new.id).unwrap().0.contains("sealed-output"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

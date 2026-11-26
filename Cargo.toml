@@ -20,6 +20,7 @@ toml = "1"
 rusqlite = { version = "0.43", features = ["bundled", "backup"] }
 sha2 = "0.11"
 hmac = "0.13"
+chacha20poly1305 = "0.10"
 uuid = { version = "1", features = ["v4", "v7"] }
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 directories = "6"

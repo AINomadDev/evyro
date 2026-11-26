@@ -148,6 +148,12 @@ enum Cmd {
     },
     /// Model selection support per agent.
     Models,
+    /// Encryption at rest for saved terminal output and chat transcripts
+    /// (off by default). `evyro saved-output` shows whether it is on.
+    SavedOutput {
+        #[command(subcommand)]
+        cmd: Option<SavedOutputCmd>,
+    },
     /// Agent sessions.
     Sessions {
         #[arg(long)]
@@ -572,6 +578,18 @@ struct ChatArgs {
     list: bool,
     /// The first message (after Evyro's task or handoff context).
     prompt: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum SavedOutputCmd {
+    /// Whether saved output is encrypted, and how many files are (the default).
+    Status,
+    /// Encrypt saved output with a key kept in the macOS Keychain (created on
+    /// first use), including what is already saved. Quit the desktop app first.
+    Encrypt,
+    /// Stop encrypting and decrypt what is already saved. The key stays in the
+    /// Keychain. Quit the desktop app first.
+    Decrypt,
 }
 
 #[derive(Subcommand)]
@@ -1109,6 +1127,43 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
         o.print(&json!({"name": brand::CLI_NAME, "version": brand::VERSION, "schema_version": evyro_core::db::SCHEMA_VERSION, "contract_schema": evyro_core::contract::SCHEMA_VERSION, "os": std::env::consts::OS, "arch": std::env::consts::ARCH}),
             || format!("{} {} (db schema v{}, contract {})", brand::CLI_NAME, brand::VERSION, evyro_core::db::SCHEMA_VERSION, evyro_core::contract::SCHEMA_VERSION));
         return Ok(0);
+    }
+    if let Cmd::SavedOutput { cmd } = &cli.cmd {
+        use evyro_core::at_rest;
+        let paths = evyro_core::paths::GlobalPaths::resolve()?;
+        let keys = std::sync::Arc::new(at_rest::Keychain);
+        let st = match cmd {
+            None | Some(SavedOutputCmd::Status) => at_rest::status(&paths, keys.as_ref()),
+            Some(SavedOutputCmd::Encrypt) => at_rest::set_encryption(&paths, true, keys)?,
+            Some(SavedOutputCmd::Decrypt) => at_rest::set_encryption(&paths, false, keys)?,
+        };
+        o.print(&st, || {
+            let mut s = format!(
+                "encryption: {}\nencrypted files: {}\nplaintext files: {}",
+                if st.encrypt { "on" } else { "off" },
+                st.encrypted_files,
+                st.plain_files
+            );
+            match st.key_available {
+                Some(true) => s.push_str("\nkey: in the Keychain"),
+                Some(false) => s.push_str("\nkey: MISSING (encrypted output cannot be read)"),
+                None => {}
+            }
+            for (path, why) in &st.skipped {
+                s.push_str(&format!("\nleft as is: {}: {why}", path.display()));
+            }
+            if cmd.is_some() && !matches!(cmd, Some(SavedOutputCmd::Status)) {
+                s.push_str("\nRestart the desktop app for the change to take effect.");
+            }
+            s
+        });
+        return Ok(
+            if st.key_available == Some(false) || !st.skipped.is_empty() {
+                1
+            } else {
+                0
+            },
+        );
     }
     if let Cmd::BugReport { out } = &cli.cmd {
         // Works even when the database cannot be opened.
@@ -2809,6 +2864,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
         | Cmd::Version
         | Cmd::Restore { .. }
         | Cmd::BugReport { .. }
+        | Cmd::SavedOutput { .. }
         | Cmd::CaptureUsage { .. } => {
             unreachable!()
         }

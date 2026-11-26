@@ -1,5 +1,6 @@
 //! Bounded, local desktop transcripts. Each file is replaced atomically.
 
+use evyro_core::at_rest::{Sealer, Unreadable};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::borrow::Cow;
@@ -118,7 +119,7 @@ impl SavedChat {
         Self { info, log }
     }
 
-    pub fn write(mut self, dir: &Path, id: &str) -> io::Result<Self> {
+    pub fn write(mut self, dir: &Path, id: &str, sealer: &Sealer) -> io::Result<Self> {
         fs::create_dir_all(dir)?;
         private(dir, 0o700)?;
         let log = std::mem::take(&mut self.log);
@@ -152,9 +153,10 @@ impl SavedChat {
         }
         self.log.reverse();
         let path = dir.join(format!("{id}.json"));
-        evyro_core::util::write_keeping_last_good(&path, &serde_json::to_vec(&self)?, |b| {
-            parse(b).is_some()
-        })?;
+        // A transcript sealed with a key we do not have is never replaced.
+        sealer.check_overwrite(&path)?;
+        let data = sealer.seal(&serde_json::to_vec(&self)?)?;
+        evyro_core::util::write_keeping_last_good(&path, &data, |b| parse(sealer, b).is_some())?;
         private(&path, 0o600)?;
         Ok(self)
     }
@@ -172,12 +174,25 @@ fn private(path: &Path, mode: u32) -> io::Result<()> {
     Ok(())
 }
 
-/// A saved transcript, or `None` when it is too large, cut short or damaged.
-fn parse(bytes: &[u8]) -> Option<SavedChat> {
+/// A saved transcript, or `None` when it is too large, cut short, damaged or
+/// encrypted with a key we do not have.
+fn parse(sealer: &Sealer, bytes: &[u8]) -> Option<SavedChat> {
+    let bytes = sealer.open(bytes).ok()?;
     if bytes.len() as u64 > MAX_BYTES {
         return None;
     }
-    serde_json::from_slice(bytes).ok()
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Why an encrypted transcript cannot be opened, when the key is the reason.
+fn key_problem(sealer: &Sealer, path: &Path) -> Option<Unreadable> {
+    [path.to_path_buf(), evyro_core::util::last_good_path(path)]
+        .iter()
+        .filter_map(|p| fs::read(p).ok())
+        .find_map(|b| match sealer.open(&b) {
+            Err(e @ (Unreadable::NoKey(_) | Unreadable::WrongKey)) => Some(e),
+            _ => None,
+        })
 }
 
 /// The chat ID a transcript file (or its last good copy) belongs to.
@@ -189,7 +204,11 @@ fn file_id(path: &Path) -> Option<&str> {
     (valid_id(id) && path.symlink_metadata().is_ok_and(|m| m.is_file())).then_some(id)
 }
 
-pub(crate) fn load(dir: &Path, keep: usize) -> io::Result<HashMap<String, SavedChat>> {
+pub(crate) fn load(
+    dir: &Path,
+    keep: usize,
+    sealer: &Sealer,
+) -> io::Result<HashMap<String, SavedChat>> {
     fs::create_dir_all(dir)?;
     let paths: Vec<_> = fs::read_dir(dir)?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -200,10 +219,13 @@ pub(crate) fn load(dir: &Path, keep: usize) -> io::Result<HashMap<String, SavedC
     let mut saved = HashMap::new();
     for id in ids.into_iter().rev() {
         // A transcript cut short by a crash or a full disk falls back to its
-        // last good copy; other transcripts are unaffected.
-        let Some(record) =
-            evyro_core::util::read_or_last_good(&dir.join(format!("{id}.json")), parse)
-        else {
+        // last good copy; other transcripts are unaffected. One that cannot be
+        // decrypted is reported and left on disk, never deleted.
+        let path = dir.join(format!("{id}.json"));
+        let Some(record) = evyro_core::util::read_or_last_good(&path, |b| parse(sealer, b)) else {
+            if let Some(why) = key_problem(sealer, &path) {
+                eprintln!("evyro: saved chat {id} not loaded: {why}");
+            }
             continue;
         };
         if record.info["id"] == id {
@@ -248,6 +270,8 @@ fn valid_id(id: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evyro_core::at_rest::{new_key, DataKey, MemoryKeys};
+    use std::sync::Arc;
 
     #[test]
     fn search_joins_reply_chunks_and_excludes_thoughts_and_context_packets() {
@@ -286,11 +310,11 @@ mod tests {
         let secret = format!("ghp_{}", "B".repeat(36));
         let log = vec![json!({"t": "user", "text": format!("my token is {secret}")})];
         SavedChat::capture(json!({"id": id}), log, false)
-            .write(dir.path(), &id)
+            .write(dir.path(), &id, &Sealer::plain())
             .unwrap();
         let file = fs::read_to_string(dir.path().join(format!("{id}.json"))).unwrap();
         assert!(!file.contains(&secret), "secret reached the saved file");
-        let saved = load(dir.path(), MAX_SAVED).unwrap();
+        let saved = load(dir.path(), MAX_SAVED, &Sealer::plain()).unwrap();
         assert!(saved[&id].log[0]["text"]
             .as_str()
             .unwrap()
@@ -306,7 +330,7 @@ mod tests {
             json!({"t": "update", "text": "x".repeat(MAX_BYTES as usize)}),
         ];
         SavedChat::capture(json!({"id": id}), log, false)
-            .write(dir.path(), &id)
+            .write(dir.path(), &id, &Sealer::plain())
             .unwrap();
         #[cfg(unix)]
         {
@@ -315,23 +339,37 @@ mod tests {
             assert_eq!(mode(dir.path()), 0o700);
             assert_eq!(mode(&dir.path().join(format!("{id}.json"))), 0o600);
         }
-        let saved = load(dir.path(), MAX_SAVED).unwrap();
+        let saved = load(dir.path(), MAX_SAVED, &Sealer::plain()).unwrap();
         assert_eq!(saved[&id].log, vec![json!({"t": "user", "text": "hello"})]);
         assert_eq!(saved[&id].info["history_truncated"], true);
     }
 
     #[test]
     fn a_cut_short_transcript_falls_back_to_its_last_good_copy() {
+        last_good_recovery(&Sealer::plain());
+    }
+
+    #[test]
+    fn last_good_recovery_works_with_encryption_on() {
+        last_good_recovery(&encrypted(new_key()));
+    }
+
+    fn encrypted(key: DataKey) -> Sealer {
+        Sealer::new(true, Arc::new(MemoryKeys::with(key)))
+    }
+
+    fn save(dir: &Path, id: &str, texts: &[&str], sealer: &Sealer) -> io::Result<SavedChat> {
+        let log = texts
+            .iter()
+            .map(|t| json!({"t": "user", "text": t}))
+            .collect();
+        SavedChat::capture(json!({"id": id}), log, false).write(dir, id, sealer)
+    }
+
+    fn last_good_recovery(sealer: &Sealer) {
         let dir = tempfile::tempdir().unwrap();
-        let save = |id: &str, texts: &[&str]| {
-            let log = texts
-                .iter()
-                .map(|t| json!({"t": "user", "text": t}))
-                .collect();
-            SavedChat::capture(json!({"id": id}), log, false)
-                .write(dir.path(), id)
-                .unwrap();
-        };
+        let save = |id: &str, texts: &[&str]| save(dir.path(), id, texts, sealer).unwrap();
+        let load = || load(dir.path(), MAX_SAVED, sealer).unwrap();
         let (damaged, other) = (
             evyro_core::util::new_id("chat"),
             evyro_core::util::new_id("chat"),
@@ -347,7 +385,7 @@ mod tests {
         // newest file is cut short.
         let full = fs::read(&path).unwrap();
         fs::write(&path, &full[..full.len() / 2]).unwrap();
-        let saved = load(dir.path(), MAX_SAVED).unwrap();
+        let saved = load();
         assert_eq!(
             saved[&damaged].log,
             vec![json!({"t": "user", "text": "first"})]
@@ -356,18 +394,76 @@ mod tests {
 
         // Saving again keeps the good copy rather than the damaged file.
         save(&damaged, &["first", "second", "third"]);
-        let kept: SavedChat = serde_json::from_slice(&fs::read(&last_good).unwrap()).unwrap();
+        let kept = parse(sealer, &fs::read(&last_good).unwrap()).unwrap();
         assert_eq!(kept.log.len(), 1);
-        assert_eq!(load(dir.path(), MAX_SAVED).unwrap()[&damaged].log.len(), 3);
+        assert_eq!(load()[&damaged].log.len(), 3);
 
         // Stopped between keeping the last good copy and the rename: only the
         // copy is left, and it still loads.
         fs::remove_file(&path).unwrap();
-        assert_eq!(load(dir.path(), MAX_SAVED).unwrap()[&damaged].log.len(), 1);
+        assert_eq!(load()[&damaged].log.len(), 1);
 
         // Deleting a transcript also deletes its last good copy.
         remove(dir.path(), &damaged).unwrap();
         assert!(!last_good.exists());
-        assert!(!load(dir.path(), MAX_SAVED).unwrap().contains_key(&damaged));
+        assert!(!load().contains_key(&damaged));
+    }
+
+    #[test]
+    fn encrypted_transcripts_round_trip_and_hide_their_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let sealer = encrypted(new_key());
+        let id = evyro_core::util::new_id("chat");
+        save(dir.path(), &id, &["deploy notes"], &sealer).unwrap();
+        let file = fs::read(dir.path().join(format!("{id}.json"))).unwrap();
+        assert!(Sealer::is_sealed(&file));
+        assert!(!String::from_utf8_lossy(&file).contains("deploy notes"));
+        let saved = load(dir.path(), MAX_SAVED, &sealer).unwrap();
+        assert_eq!(saved[&id].log[0]["text"], "deploy notes");
+    }
+
+    #[test]
+    fn plaintext_transcripts_still_load_and_are_encrypted_on_the_next_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = evyro_core::util::new_id("chat");
+        save(dir.path(), &id, &["old"], &Sealer::plain()).unwrap();
+        let sealer = encrypted(new_key());
+        let saved = load(dir.path(), MAX_SAVED, &sealer).unwrap();
+        assert_eq!(saved[&id].log[0]["text"], "old");
+        save(dir.path(), &id, &["old", "new"], &sealer).unwrap();
+        let path = dir.path().join(format!("{id}.json"));
+        assert!(Sealer::is_sealed(&fs::read(&path).unwrap()));
+        // The plaintext copy became the last good copy and still loads.
+        let last_good = evyro_core::util::last_good_path(&path);
+        assert_eq!(
+            parse(&sealer, &fs::read(last_good).unwrap())
+                .unwrap()
+                .log
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_missing_or_wrong_key_never_loads_replaces_or_deletes_a_transcript() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = evyro_core::util::new_id("chat");
+        save(dir.path(), &id, &["kept"], &encrypted(new_key())).unwrap();
+        let path = dir.path().join(format!("{id}.json"));
+        let before = fs::read(&path).unwrap();
+        for sealer in [
+            encrypted(new_key()),
+            Sealer::new(true, Arc::new(MemoryKeys::default())),
+            Sealer::plain(),
+        ] {
+            // Not loaded, and so never trimmed by retention (keep 0).
+            assert!(load(dir.path(), 0, &sealer).unwrap().is_empty());
+            let Err(err) = save(dir.path(), &id, &["overwrite"], &sealer) else {
+                panic!("replaced a transcript it cannot open");
+            };
+            assert_eq!(err.kind(), io::ErrorKind::PermissionDenied, "{err}");
+            assert!(err.to_string().contains("left on disk untouched"), "{err}");
+            assert_eq!(fs::read(&path).unwrap(), before);
+        }
     }
 }

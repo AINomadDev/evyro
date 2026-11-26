@@ -109,6 +109,18 @@ Ended threads and chat transcripts are saved on this computer so you can reopen 
 
 Saved output has secrets redacted and is readable only by you. Deleting is permanent: the files are removed from disk.
 
+### Encrypting saved history (optional, macOS)
+
+Saved threads and chats can also be encrypted on disk, so a copy of the data folder (a backup, a stolen disk image) is unreadable without your Mac's Keychain. It is off by default and is turned on from a terminal, with the desktop app quit:
+
+```sh
+evyro saved-output encrypt   # creates a key in the Keychain and encrypts what is already saved
+evyro saved-output           # on or off, how many files are encrypted, whether the key is there
+evyro saved-output decrypt   # stop encrypting and decrypt what is saved; the key stays in the Keychain
+```
+
+The setting is read when the app starts. Files saved before you turned it on still open and are encrypted the next time they are saved (`encrypt` converts them all at once). The key is a random 256-bit key in the login Keychain (service `dev.evyro.saved-output`). If it is missing or different, encrypted threads and chats are not listed, the app says why in its log, and the files are left on disk untouched, never replaced or deleted, including by **Clear saved threads/chats** and the keep limits; put the key back and they return. Deleting the Keychain item makes them unreadable for good. A switch in Settings is planned.
+
 ## Appearance
 
 Settings › **Appearance** changes the look at once and keeps it on this computer.
