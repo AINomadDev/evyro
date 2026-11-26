@@ -733,9 +733,10 @@ fn save_term_locked(dir: &std::path::Path, t: &Term, info: &TermInfo) {
 }
 
 /// Replace `path` through a synced temporary file in the same directory. The
-/// file being replaced becomes `<file>.bak` when `is_good` accepts it, so a
-/// damaged file never overwrites a good copy, and a file encrypted with a key
-/// we do not have is never replaced.
+/// file being replaced is copied to `<file>.bak` when `is_good` accepts it, so
+/// a damaged file never overwrites a good copy, and a file encrypted with a key
+/// we do not have is never replaced. `path` itself exists at every moment: a
+/// thread's exit handler can save it while the app or a reader looks at it.
 fn replace_file(
     sealer: &Sealer,
     path: &std::path::Path,
@@ -745,8 +746,14 @@ fn replace_file(
     sealer.check_overwrite(path)?;
     let tmp = path.with_extension("tmp");
     write_private(&tmp, data)?;
-    if std::fs::read(path).is_ok_and(|current| is_good(&current)) {
-        std::fs::rename(path, last_good(path))?;
+    if let Ok(current) = std::fs::read(path) {
+        if is_good(&current) {
+            // Copy rather than move, so `path` is never briefly absent.
+            let bak = last_good(path);
+            let keep = bak.with_extension("bak.tmp");
+            write_private(&keep, &current)?;
+            std::fs::rename(&keep, &bak)?;
+        }
     }
     std::fs::rename(&tmp, path)?;
     #[cfg(unix)]
