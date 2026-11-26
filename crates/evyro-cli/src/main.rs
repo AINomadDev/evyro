@@ -164,8 +164,8 @@ enum Cmd {
     /// Create a small sample project to try Evyro on (inside Evyro's own data folder) with two
     /// ready tasks and a test command that works anywhere, and print the first steps.
     Sample,
-    /// The pull request of a task: what is failing and what reviewers asked for, as a prompt
-    /// for the AI that owns the branch. Needs the GitHub CLI (`gh`).
+    /// The pull request of a task: open one written from the task's records, or read what is
+    /// failing and what reviewers asked for. Needs the GitHub CLI (`gh`).
     Pr {
         #[command(subcommand)]
         cmd: PrCmd,
@@ -803,6 +803,22 @@ enum ReviewCmd {
 
 #[derive(Subcommand)]
 enum PrCmd {
+    /// Push the task's branch and open a pull request whose body lists the task, its acceptance
+    /// criteria (met or not, and how), the latest test receipts and the latest checkpoint.
+    /// Secrets are redacted from the body.
+    Create {
+        /// The task (default: the active task).
+        task: Option<String>,
+        /// The branch to merge into (default: the repository's default branch).
+        #[arg(long)]
+        base: Option<String>,
+        /// Open it as a draft.
+        #[arg(long)]
+        draft: bool,
+        /// Print the title and body without pushing or calling GitHub.
+        #[arg(long, alias = "print")]
+        dry_run: bool,
+    },
     /// Failing checks (with the end of their log) and unresolved review comments on the
     /// task's pull request, written as one prompt. Quoted GitHub text is fenced as data.
     Feedback {
@@ -1749,16 +1765,49 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
         }
         Cmd::Pr { cmd } => {
             let p = project(&store, &cli.project, &dir)?;
+            let pick = |task: Option<String>, verb: &str| match task {
+                Some(r) => store.resolve_task(&p.id, &r),
+                None => store.active_task(&p.id)?.ok_or_else(|| {
+                    Error::Invalid(format!("no active task; name one: `evyro pr {verb} T-1`"))
+                }),
+            };
             match cmd {
-                PrCmd::Feedback { task, links_only } => {
-                    let t = match task {
-                        Some(r) => store.resolve_task(&p.id, &r)?,
-                        None => store.active_task(&p.id)?.ok_or_else(|| {
-                            Error::Invalid(
-                                "no active task; name one: `evyro pr feedback T-1`".into(),
+                PrCmd::Create {
+                    task,
+                    base,
+                    draft,
+                    dry_run,
+                } => {
+                    let t = pick(task, "create")?;
+                    let r = store.pr_create(
+                        &t,
+                        &evyro_core::pr_feedback::RealGh,
+                        base.as_deref(),
+                        draft,
+                        dry_run,
+                    )?;
+                    o.print(&r, || {
+                        if r.dry_run {
+                            format!(
+                                "Would open a {}pull request from {} into {}:\n\n# {}\n\n{}",
+                                if r.draft { "draft " } else { "" },
+                                r.branch,
+                                r.base,
+                                r.title,
+                                r.body
                             )
-                        })?,
-                    };
+                        } else {
+                            let url = r.url.as_deref().unwrap_or("(no address returned)");
+                            if r.created {
+                                format!("Opened the pull request for {}: {url}", r.task)
+                            } else {
+                                format!("{} already has an open pull request: {url}", r.task)
+                            }
+                        }
+                    });
+                }
+                PrCmd::Feedback { task, links_only } => {
+                    let t = pick(task, "feedback")?;
                     let f = store.pr_feedback_with(
                         &t,
                         &evyro_core::pr_feedback::RealGh,

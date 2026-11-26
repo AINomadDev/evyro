@@ -31,6 +31,7 @@ pub mod memory;
 pub mod ownership;
 pub mod paths;
 pub mod plans;
+pub mod pr_create;
 pub mod pr_feedback;
 pub mod projects;
 pub mod quota;

@@ -106,6 +106,27 @@ pub fn default_branch(dir: &Path) -> Result<Option<String>> {
     Ok(current_branch(dir).ok().flatten())
 }
 
+/// Push `branch` to `remote` and set it as the branch's upstream. Never prompts for credentials.
+pub fn push_branch(dir: &Path, remote: &str, branch: &str) -> Result<()> {
+    validate_ref_name(branch)?;
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["push", "-u", remote, branch])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| Error::Git(format!("cannot run git: {e}")))?;
+    if !out.status.success() {
+        return Err(Error::Git(format!(
+            "git push {remote} {branch} failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
 pub fn current_branch(dir: &Path) -> Result<Option<String>> {
     let s = git(dir, &["symbolic-ref", "--short", "-q", "HEAD"]).unwrap_or_default();
     let s = s.trim();
