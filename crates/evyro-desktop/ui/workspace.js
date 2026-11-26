@@ -557,12 +557,13 @@ function fillSees(el, t) {
     h("span", { class: "chip" + (threadTasks(t).length ? " acc" : "") }, taskLabel(t)));
   if (!c) return;
   el.append(...[
-    h("span", { class: "chip" }, plural(c.decisions.length, "decision")),
-    h("span", { class: "chip" }, plural(c.review.length, "review note")),
-    h("span", { class: "chip" }, plural(c.memory.length, "memory item", "memory items")),
+    h("span", { class: "chip" }, I18N.t("ws.sees.decisions", { count: c.decisions.length })),
+    h("span", { class: "chip" }, I18N.t("ws.sees.notes", { count: c.review.length })),
+    h("span", { class: "chip" }, I18N.t("ws.sees.memory", { count: c.memory.length })),
     c.overview && c.overview.latest_checkpoint ? h("span", { class: "chip" }, `checkpoint ${ago(c.overview.latest_checkpoint.created_at)}`) : h("span", { class: "chip" }, "no checkpoint yet"),
   ].filter(Boolean));
 }
+
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + "s"}`;
 
 // ---------- sending text to threads ----------
@@ -573,17 +574,17 @@ function terminalSetupPrompt(t, term) {
   const lines = [];
   for (let i = 0; i < term.rows; i++) lines.push(screen.getLine(screen.baseY + i)?.translateToString(true) || "");
   const text = lines.join(" ");
-  if (harness === "cursor" && /Press any key to log in/i.test(text)) return "Sign in to Cursor in its pane first.";
-  if (harness === "copilot" && /Confirm folder trust|Do you trust the files/i.test(text)) return "Review Copilot's folder trust prompt in its pane first.";
+  if (harness === "cursor" && /Press any key to log in/i.test(text)) return I18N.t("ws.setup.cursor");
+  if (harness === "copilot" && /Confirm folder trust|Do you trust the files/i.test(text)) return I18N.t("ws.setup.copilot");
   return null;
 }
 
 /** Type text into a thread as one message: a chat turn, or a bracketed paste plus Enter in a terminal. */
 async function sendToThread(id, text) {
   const t = state.threads.find((x) => x.id === id);
-  if (!t || !t.running) throw { message: `${t ? t.title : "That thread"} is not running.` };
+  if (!t || !t.running) throw { message: t ? I18N.t("ws.send.notRunning", { name: t.title }) : I18N.t("ws.send.threadNotRunning") };
   if (t.kind === "chat") {
-    if (t.busy || t.state !== "ready") throw { message: `${t.title} is busy. Send again when it is your turn.` };
+    if (t.busy || t.state !== "ready") throw { message: I18N.t("ws.send.busy", { name: t.title }) };
     await invoke("chat_send", { id, text });
     return;
   }
@@ -594,10 +595,10 @@ async function sendToThread(id, text) {
   const setup = terminalSetupPrompt(t, x.term);
   if (setup) throw new Error(`${t.title}: ${setup}`);
   const body = text.replace(/\r\n?/g, "\n");
-  if (/\p{Cc}/u.test(body.replace(/[\n\t]/g, ""))) throw new Error(`${t.title}: remove control characters from the message.`);
+  if (/\p{Cc}/u.test(body.replace(/[\n\t]/g, ""))) throw new Error(I18N.t("ws.send.control", { name: t.title }));
   const bracketed = x.term.modes.bracketedPasteMode;
-  if (!bracketed && /[\n\t]/.test(body)) throw new Error(`${t.title}: the terminal is not accepting multiline paste. Try again at its prompt or paste there directly.`);
-  if (x.sending) throw new Error(`${t.title}: a message is already being sent.`);
+  if (!bracketed && /[\n\t]/.test(body)) throw new Error(I18N.t("ws.send.multiline", { name: t.title }));
+  if (x.sending) throw new Error(I18N.t("ws.send.already", { name: t.title }));
   x.sending = true;
   try {
     await invoke("term_write", { id, data: bracketed ? `\x1b[200~${body.replace(/\n/g, "\r")}\x1b[201~` : body });
@@ -611,8 +612,8 @@ async function sendToThread(id, text) {
 /** Send text to the focused AI, or say how to get one. */
 async function sendToFocused(text, what) {
   const t = state.threads.find((x) => x.id === state.thread && x.running && x.kind !== "shell");
-  if (!t) { await copy(text, `No AI is focused, so the ${what} was copied instead.`); return false; }
-  try { await sendToThread(t.id, text); toast(`Sent the ${what} to ${t.title}.`); return true; }
+  if (!t) { await copy(text, I18N.t("ws.send.copied", { what })); return false; }
+  try { await sendToThread(t.id, text); toast(I18N.t("ws.send.sentWhat", { what, name: t.title })); return true; }
   catch (e) { toast(errMsg(e), true); return false; }
 }
 
@@ -620,7 +621,7 @@ async function sendContext(t) {
   let r;
   try { r = await invoke("context_packet", { projectId: state.project.id, task: t.task || null, budget: "small" }); }
   catch (e) { toast(errMsg(e), true); return; }
-  try { await sendToThread(t.id, r.text); toast(`Sent the shared context to ${t.title} (about ${r.packet.approx_tokens} tokens).`); }
+  try { await sendToThread(t.id, r.text); toast(I18N.t("ws.send.context", { name: t.title, tokens: r.packet.approx_tokens })); }
   catch (e) { toast(errMsg(e), true); }
 }
 
@@ -634,7 +635,7 @@ function loadThreadDraft(t, text, quiet = false) {
   if (!text) return false;
   const draft = workspaceDraft(t.project_id);
   if (draft.text.trim() || draft.sending) {
-    if (!quiet) toast("Finish the current message before loading another draft.");
+    if (!quiet) toast(I18N.t("ws.draft.busy"));
     return false;
   }
   draft.text = text;
@@ -664,9 +665,9 @@ async function prepareTerminalDraft(t, handoffId) {
 function composer() {
   const projectId = state.project.id;
   const draft = workspaceDraft(projectId);
-  const input = h("textarea", { class: "ws-input", rows: "2", "aria-label": "Message to the selected AIs", placeholder: "Message the selected AIs…" });
+  const input = h("textarea", { class: "ws-input", rows: "2", "aria-label": I18N.t("ws.compose.label"), placeholder: I18N.t("ws.compose.ph") });
   const status = h("div", { class: "ws-send-status small", role: "status" });
-  const to = h("div", { class: "ws-to", role: "group", "aria-label": "Send to" });
+  const to = h("div", { class: "ws-to", role: "group", "aria-label": I18N.t("ws.compose.sendTo") });
   input.value = draft.text;
   const meta = h("span", { class: "ws-meta muted small" });
   const updateText = () => {
@@ -683,18 +684,18 @@ function composer() {
     const lines = input.value ? input.value.split("\n").length : 0;
     clear(meta);
     if (lines > 3 || input.value.length > 300) {
-      meta.append(`${plural(lines, "line", "lines")} · ${input.value.length.toLocaleString()} characters `,
-        h("button", { class: "link-btn", type: "button", onclick: () => { input.value = ""; updateText(); input.focus(); } }, "Discard"));
-    } else meta.append("Enter sends · Shift+Enter adds a line");
+      meta.append(I18N.t("ws.compose.size", { lines: I18N.t("ws.compose.lines", { count: lines }), chars: input.value.length.toLocaleString() }) + " ",
+        h("button", { class: "link-btn", type: "button", onclick: () => { input.value = ""; updateText(); input.focus(); } }, I18N.t("ws.compose.discard")));
+    } else meta.append(I18N.t("ws.compose.keys"));
   };
   input.addEventListener("input", updateText);
   const drawTo = () => {
     const running = projThreads().filter((t) => t.running && t.kind !== "shell");
     const sel = running.filter((t) => !draft.recipients || draft.recipients.includes(t.id)).map((t) => t.id);
-    clear(to).append(h("span", { class: "muted small" }, `To (${sel.length})`));
-    if (!running.length) to.append(h("span", { class: "muted small" }, "No AI running"));
+    clear(to).append(h("span", { class: "muted small" }, I18N.t("ws.compose.to", { count: sel.length })));
+    if (!running.length) to.append(h("span", { class: "muted small" }, I18N.t("ws.noAiRunning")));
     else if (running.length > 1) to.append(h("button", { class: "chip", "aria-pressed": String(draft.recipients === null),
-      onclick: () => { draft.recipients = null; drawTo(); } }, "All AIs"));
+      onclick: () => { draft.recipients = null; drawTo(); } }, I18N.t("ws.compose.all")));
     for (const t of running) {
       const on = sel.includes(t.id);
       to.append(h("button", {
@@ -709,15 +710,15 @@ function composer() {
     const text = original.trim();
     if (!text || draft.sending) return;
     const sel = drawTo();
-    if (!sel.length) { status.textContent = "Select a running AI to send to."; return; }
+    if (!sel.length) { status.textContent = I18N.t("ws.compose.pick"); return; }
     draft.sending = true;
     button.disabled = true;
-    status.textContent = "Sending…";
+    status.textContent = I18N.t("ws.compose.sending");
     const results = await Promise.allSettled(sel.map((id) => sendToThread(id, text)));
     results.forEach((r, i) => { if (r.status === "fulfilled" && terminalDrafts.get(sel[i])?.trim() === text) terminalDrafts.delete(sel[i]); });
     const failures = results.flatMap((r, i) => r.status === "rejected" ? [{ id: sel[i], reason: errMsg(r.reason) }] : []);
     const ok = results.length - failures.length;
-    draft.status = [...(ok ? [`Sent to ${plural(ok, "AI", "AIs")}.`] : []), ...failures.map((f) => f.reason)].join(" ");
+    draft.status = [...(ok ? [I18N.t("ws.compose.sent", { count: ok })] : []), ...failures.map((f) => f.reason)].join(" ");
     if (draft.text === original) {
       if (failures.length) draft.recipients = failures.map((f) => f.id);
       else draft.text = "";
@@ -730,11 +731,11 @@ function composer() {
   });
   const save = async () => {
     const text = input.value.trim();
-    if (!text) { toast("Write something to save", true); return; }
-    await act(() => invoke("add_memory", { projectId: state.project.id, category: "note", content: text }), "Saved to project memory. Every AI here can read it.");
+    if (!text) { toast(I18N.t("ws.memory.empty"), true); return; }
+    await act(() => invoke("add_memory", { projectId: state.project.id, category: "note", content: text }), I18N.t("ws.memory.saved"));
     drawContext();
   };
-  const button = h("button", { class: "btn primary small", onclick: send }, "Send");
+  const button = h("button", { class: "btn primary small", onclick: send }, I18N.t("ws.send"));
   const refresh = () => {
     if (input.value !== draft.text) input.value = draft.text;
     fit();
@@ -747,7 +748,7 @@ function composer() {
     input,
     h("div", { class: "ws-compose-foot" }, meta,
       h("div", { class: "row" },
-        h("button", { class: "btn small ghost", onclick: save, title: "Save as a project memory note that every AI can read" }, "Save to memory"),
+        h("button", { class: "btn small ghost", onclick: save, title: I18N.t("ws.memory.title") }, I18N.t("ws.memory.save")),
         button)),
     status);
 }
@@ -769,7 +770,7 @@ function applyCtxVisibility() {
   const b = $("#ctx-btn");
   b.classList.toggle("hidden", !state.project);
   b.setAttribute("aria-pressed", String(show));
-  b.textContent = show ? "Hide context" : "Shared context";
+  b.textContent = show ? I18N.t("ws.ctx.hide") : I18N.t("ws.ctx.show");
 }
 
 /** Load the project's shared context and draw the panel, the status bar and each pane's strip. */
@@ -851,32 +852,32 @@ const quotaKey = (ai, projectId) => ai === "opencode" ? `${ai}:${projectId}` : a
 function quotaText(q) {
   if (q.state === "stats") {
     const count = new Intl.NumberFormat();
-    const cost = q.cost === null ? "" : ` · ${new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(q.cost)} recorded cost`;
-    return ["7-day usage in this project", `${count.format(q.input)} input · ${count.format(q.output)} output tokens${cost}`];
+    const cost = q.cost === null ? "" : " · " + I18N.t("ws.quota.cost", { cost: new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(q.cost) });
+    return [I18N.t("ws.quota.week"), I18N.t("ws.quota.tokens", { input: count.format(q.input), output: count.format(q.output) }) + cost];
   }
-  if (q.state === "loading") return "Checking account limits…";
-  if (q.state !== "ready") return q.message || "Account quota unavailable";
+  if (q.state === "loading") return I18N.t("ws.quota.loading");
+  if (q.state !== "ready") return q.message || I18N.t("ws.quota.unavailable");
   return [
     ...q.windows.map((w) => {
-      const window = w.minutes === 10080 ? "Weekly" : w.minutes === 300 ? "5-hour" : w.minutes ? `${w.minutes}-minute` : "";
+      const window = w.minutes === 10080 ? I18N.t("ws.quota.weekly") : w.minutes && w.minutes % 60 === 0 ? I18N.t("ws.quota.hours", { count: w.minutes / 60 }) : w.minutes ? I18N.t("ws.quota.minutes", { count: w.minutes }) : "";
       const label = [w.label, window].filter(Boolean).join(" · ");
       const reset = w.resets_at ? new Date(w.resets_at * 1000) : null;
-      const remaining = `${Number(w.remaining.toFixed(1))}% left`;
-      return `${label ? `${label} ` : ""}${reset && +reset <= Date.now() ? `${remaining} at last reading · reset passed` : remaining}${reset && +reset > Date.now() ? ` · resets ${reset.toLocaleString()}` : ""}`;
+      const remaining = I18N.t("ws.quota.left", { pct: Number(w.remaining.toFixed(1)) });
+      return `${label ? `${label} ` : ""}${reset && +reset <= Date.now() ? I18N.t("ws.quota.passed", { remaining }) : remaining}${reset && +reset > Date.now() ? " · " + I18N.t("ws.quota.resets", { when: reset.toLocaleString() }) : ""}`;
     }),
-    q.credits === null ? null : q.credits === "Unlimited" ? "Unlimited credits" : `${q.credits} credits left`,
+    q.credits === null ? null : q.credits === "Unlimited" ? I18N.t("ws.quota.unlimited") : I18N.t("ws.quota.credits", { count: q.credits }),
   ];
 }
 
 function quotaSetup(q) {
   const config = JSON.stringify({ statusLine: { type: "command", command: q.capture_command } }, null, 2);
-  modal("Connect Claude Code usage", [
-    h("p", null, "Set statusLine in ~/.claude/settings.json, or pipe your existing status-line script’s input to the command below. The next regular model response can report your subscription limits."),
+  modal(I18N.t("ws.quota.connectTitle"), [
+    h("p", null, I18N.t("ws.quota.connectText")),
     h("pre", null, config),
-    h("button", { class: "btn small", onclick: () => copy(config, "Status-line settings copied") }, "Copy settings"),
-    h("button", { class: "btn small", onclick: () => copy(q.capture_command, "Usage command copied") }, "Copy command"),
-    h("p", { class: "hint" }, "For API billing, check usage in Claude Console."),
-    h("button", { class: "btn small ghost", onclick: () => copy("https://platform.claude.com/usage", "Claude Console usage link copied") }, "Copy Console usage link"),
+    h("button", { class: "btn small", onclick: () => copy(config, I18N.t("ws.quota.settingsCopied")) }, I18N.t("ws.quota.copySettings")),
+    h("button", { class: "btn small", onclick: () => copy(q.capture_command, I18N.t("ws.quota.commandCopied")) }, I18N.t("ws.quota.copyCommand")),
+    h("p", { class: "hint" }, I18N.t("ws.quota.api")),
+    h("button", { class: "btn small ghost", onclick: () => copy("https://platform.claude.com/usage", I18N.t("ws.quota.consoleCopied")) }, I18N.t("ws.quota.copyConsole")),
   ], []);
 }
 
@@ -884,18 +885,18 @@ function drawQuota(el, q) {
   const text = quotaText(q);
   clear(el).append(...[].concat(text).map((line) => h("div", null, line)));
   if (q.observed_at) {
-    const source = q.stale ? "Last saved reading · refresh unavailable" : q.source || (q.cached ? "CLI snapshot" : "CLI reading");
+    const source = q.stale ? I18N.t("ws.quota.stale") : q.source || (q.cached ? I18N.t("ws.quota.snapshot") : I18N.t("ws.quota.reading"));
     el.append(h("div", { class: "muted small", title: new Date(q.observed_at).toLocaleString() }, `${source} · ${ago(q.observed_at)}`));
   }
-  if (q.capture_command) el.append(h("button", { class: "btn small ghost", onclick: () => quotaSetup(q) }, "Connect usage"));
+  if (q.capture_command) el.append(h("button", { class: "btn small ghost", onclick: () => quotaSetup(q) }, I18N.t("ws.quota.connect")));
   if (el.dataset.ai === "opencode") {
-    el.append(h("div", { class: "muted small" }, "Check the connected provider for remaining credits or reset times."));
+    el.append(h("div", { class: "muted small" }, I18N.t("ws.quota.opencode")));
   }
   if (el.dataset.ai === "cursor") {
     clear(el).append(
-      h("div", null, "Account limits are available in Cursor or Grok’s usage dashboard."),
-      h("button", { class: "btn small ghost", onclick: () => copy("https://cursor.com/dashboard", "Cursor dashboard link copied") }, "Copy Cursor dashboard link"),
-      h("button", { class: "btn small ghost", onclick: () => copy("https://grok.com/dashboard", "Grok dashboard link copied") }, "Copy Grok dashboard link"));
+      h("div", null, I18N.t("ws.quota.cursor")),
+      h("button", { class: "btn small ghost", onclick: () => copy("https://cursor.com/dashboard", I18N.t("ws.quota.cursorCopied")) }, I18N.t("ws.quota.copyCursor")),
+      h("button", { class: "btn small ghost", onclick: () => copy("https://grok.com/dashboard", I18N.t("ws.quota.grokCopied")) }, I18N.t("ws.quota.copyGrok")));
   }
 }
 
@@ -940,9 +941,9 @@ function refreshQuota(ai, projectId, force = false) {
 
 function sessionCredits(t) {
   if (!t.credit_budget) return null;
-  if (typeof t.credits_used !== "number") return `${t.credit_budget} credit budget · waiting for a usage report`;
+  if (typeof t.credits_used !== "number") return I18N.t("ws.credits.waiting", { budget: t.credit_budget });
   const left = Math.max(0, t.credit_budget - t.credits_used);
-  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(left)} of ${t.credit_budget} credits left · last report`;
+  return I18N.t("ws.credits.left", { left: new Intl.NumberFormat(undefined, { maximumFractionDigits: 3 }).format(left), budget: t.credit_budget });
 }
 
 function usagePanel(sessions, tasks) {
@@ -956,7 +957,7 @@ function usagePanel(sessions, tasks) {
     }, () => {});
   }
   const agents = [...new Set([...stats.map((u) => u.ai), ...threads.map(agentKey), ...quotaAgents])];
-  return ctxSection("Usage, by AI", null, agents.length ? h("ul", { class: "ctx-list ctx-usage" }, agents.map((ai) => {
+  return ctxSection(I18N.t("ws.usage.title"), null, agents.length ? h("ul", { class: "ctx-list ctx-usage" }, agents.map((ai) => {
     if (canReadQuota(ai)) refreshQuota(ai, projectId);
     const quota = h("div", { class: "ctx-quota small", "data-ai": ai, role: "status" });
     drawQuota(quota, accountQuota.get(quotaKey(ai, projectId)) || { state: "unsupported" });
@@ -964,14 +965,14 @@ function usagePanel(sessions, tasks) {
     const named = threads.filter((t) => agentKey(t) === ai);
     return h("li", null,
       h("div", { class: "row" }, agentBadge({ target: ai }, true), h("strong", null, ai), h("span", { class: "spacer" }),
-        canReadQuota(ai) ? h("button", { class: "btn small ghost", "aria-label": `Refresh ${ai} quota`, onclick: () => refreshQuota(ai, projectId, true) }, "Refresh") : null),
+        canReadQuota(ai) ? h("button", { class: "btn small ghost", "aria-label": I18N.t("ws.usage.refreshLabel", { name: ai }), onclick: () => refreshQuota(ai, projectId, true) }, I18N.t("ws.usage.refresh")) : null),
       quota,
-      u ? h("div", { class: "muted small" }, [plural(u.runs, "run"), duration(u.secs), u.failed ? `${u.failed} failed` : null, u.holds.length ? `holds ${u.holds.join(", ")}` : null].filter(Boolean).join(" · ")) : null,
+      u ? h("div", { class: "muted small" }, [I18N.t("ws.usage.runs", { count: u.runs }), duration(u.secs), u.failed ? I18N.t("ws.usage.failed", { count: u.failed }) : null, u.holds.length ? I18N.t("ws.usage.holds", { tasks: u.holds.join(", ") }) : null].filter(Boolean).join(" · ")) : null,
       named.length ? h("ul", { class: "ctx-usage-threads" }, named.map((t) => h("li", null,
         h("button", { class: "btn small ghost", title: t.title, onclick: () => { placeThread(t.id); setTab("workspace"); } }, t.title),
         threadStatus(t), sessionCredits(t) ? h("div", { class: "muted small" }, sessionCredits(t)) : null))) : null);
-  })) : h("div", { class: "muted small" }, "No AI has worked here yet."),
-  agents.length ? h("span", { class: "muted small", title: "Account limits are shared by the account’s threads." }, "Reported usage") : null);
+  })) : h("div", { class: "muted small" }, I18N.t("ws.usage.none")),
+  agents.length ? h("span", { class: "muted small", title: I18N.t("ws.usage.sharedTitle") }, I18N.t("ws.usage.reported")) : null);
 }
 
 function ctxSection(title, count, kids, extra) {
@@ -979,56 +980,56 @@ function ctxSection(title, count, kids, extra) {
     h("div", { class: "ctx-hd" }, h("h3", null, title), h("span", { class: "row" }, count !== null && count !== undefined ? h("span", { class: "muted small" }, String(count)) : null, extra)),
     kids);
 }
-const sendBtn = (label, fn) => h("button", { class: "btn small ghost ctx-send", onclick: fn, title: "Send to the focused AI" }, label);
+const sendBtn = (label, fn) => h("button", { class: "btn small ghost ctx-send", onclick: fn, title: I18N.t("ws.ctx.sendTitle") }, label);
 
 function ctxSections(c) {
   const o = c.overview;
   const out = [];
   // Active task, with its acceptance criteria.
   const t = o && o.active_task;
-  out.push(ctxSection("Active task", null, t ? [
+  out.push(ctxSection(I18N.t("ws.ctx.active"), null, t ? [
     h("div", { class: "ctx-task" }, h("span", { class: "key" }, t.key), " ", h("strong", null, t.title), " ", pill(t.status)),
     c.detail && c.detail.criteria.length ? h("ul", { class: "ctx-crit" }, c.detail.criteria.map((k) => h("li", { class: k.met ? "met" : "" },
-      h("span", { class: "box", "aria-hidden": "true" }, k.met ? "✓" : ""), h("span", null, k.text, h("span", { class: "sr-only" }, k.met ? " (met)" : " (not met)"))))) : null,
+      h("span", { class: "box", "aria-hidden": "true" }, k.met ? "✓" : ""), h("span", null, k.text, h("span", { class: "sr-only" }, " " + (k.met ? I18N.t("ws.ctx.met") : I18N.t("ws.ctx.notMet"))))))) : null,
     h("dl", { class: "kv" },
-      h("dt", null, "Owner"), h("dd", null, o.owner ? o.owner.harness : "nobody"),
-      h("dt", null, "Next"), h("dd", null, (o.latest_checkpoint && o.latest_checkpoint.next_action) || "-")),
+      h("dt", null, I18N.t("ws.ctx.owner")), h("dd", null, o.owner ? o.owner.harness : I18N.t("ws.ctx.nobody")),
+      h("dt", null, I18N.t("ws.ctx.next")), h("dd", null, (o.latest_checkpoint && o.latest_checkpoint.next_action) || "-")),
     h("div", { class: "row ctx-actions" },
-      h("button", { class: "btn small", onclick: () => openTask(t.key) }, "Open task"),
-      sendBtn("Send context", async () => {
+      h("button", { class: "btn small", onclick: () => openTask(t.key) }, I18N.t("ws.ctx.openTask")),
+      sendBtn(I18N.t("ws.ctx.sendContext"), async () => {
         const r = await act(() => invoke("context_packet", { projectId: state.project.id, task: t.key, budget: "small" }));
-        sendToFocused(r.text, "task context");
+        sendToFocused(r.text, I18N.t("ws.what.task"));
       })),
-  ] : h("div", { class: "muted small" }, "Nothing in progress. ", h("button", { class: "btn small", onclick: () => setTab("tasks") }, "Pick a task"))));
+  ] : h("div", { class: "muted small" }, I18N.t("ws.ctx.idle") + " ", h("button", { class: "btn small", onclick: () => setTab("tasks") }, I18N.t("ws.ctx.pickTask")))));
   // Handoff
   const hd = o && o.pending_handoff;
-  out.push(ctxSection("Handoff", null, hd ? h("div", { class: "row ctx-item" },
-    pill("warn", "waiting"), h("span", null, `${hd.from_harness || "you"} → ${hd.to_harness}, quality ${hd.quality.met}/${hd.quality.total}`),
-    h("span", { class: "spacer" }), h("button", { class: "btn small", onclick: () => openHandoff(hd.id) }, "Review"))
-    : h("div", { class: "muted small" }, "No handoff waiting.")));
+  out.push(ctxSection(I18N.t("ws.ctx.handoff"), null, hd ? h("div", { class: "row ctx-item" },
+    pill("warn", "waiting"), h("span", null, I18N.t("ws.ctx.handoffLine", { from: hd.from_harness || I18N.t("ws.ctx.you"), to: hd.to_harness, met: hd.quality.met, total: hd.quality.total })),
+    h("span", { class: "spacer" }), h("button", { class: "btn small", onclick: () => openHandoff(hd.id) }, I18N.t("ws.ctx.review")))
+    : h("div", { class: "muted small" }, I18N.t("ws.ctx.noHandoff"))));
   // Decisions
   const ds = c.decisions.slice().reverse();
-  out.push(ctxSection("Decisions", ds.length, ds.length ? h("ul", { class: "ctx-list" }, ds.slice(0, 5).map((d) => h("li", null,
+  out.push(ctxSection(I18N.t("ws.ctx.decisions"), ds.length, ds.length ? h("ul", { class: "ctx-list" }, ds.slice(0, 5).map((d) => h("li", null,
     h("div", null, h("strong", null, d.title, ": "), d.decision), h("div", { class: "row" }, h("span", { class: "muted small" }, `${d.source} · ${ago(d.created_at)}`), h("span", { class: "spacer" }),
-      sendBtn("Send", () => sendToFocused(`Project decision, ${d.title}: ${d.decision}${d.rationale ? ". Why: " + d.rationale : ""}`, "decision"))))))
-    : h("div", { class: "muted small" }, "None recorded yet."), ds.length > 5 ? h("button", { class: "btn small ghost", onclick: () => setTab("knowledge") }, "All") : null));
+      sendBtn(I18N.t("ws.send"), () => sendToFocused(d.rationale ? I18N.t("ws.ctx.decisionWhy", { title: d.title, decision: d.decision, why: d.rationale }) : I18N.t("ws.ctx.decisionMsg", { title: d.title, decision: d.decision }), I18N.t("ws.what.decision")))))))
+    : h("div", { class: "muted small" }, I18N.t("ws.ctx.noDecisions")), ds.length > 5 ? h("button", { class: "btn small ghost", onclick: () => setTab("knowledge") }, "All") : null));
   // Review notes
-  out.push(ctxSection("Review notes", c.review.length, c.review.length ? [
+  out.push(ctxSection(I18N.t("ws.ctx.reviewNotes"), c.review.length, c.review.length ? [
     h("ul", { class: "ctx-list" }, c.review.slice(0, 5).map((r) => h("li", null,
-      h("div", { class: "mono small" }, `${r.path}${r.line ? ":" + r.line : ""}`, r.status === "sent" ? h("span", { class: "muted" }, " · sent") : null), h("div", null, r.body)))),
-    h("div", { class: "row ctx-actions" }, h("button", { class: "btn small", onclick: () => setTab("changes") }, "Open review"),
-      c.review.some((r) => r.status === "open") ? sendBtn("Send open notes", sendOpenNotes) : null),
-  ] : h("div", { class: "muted small" }, "No open notes. Comment on lines in Changes.")));
+      h("div", { class: "mono small" }, `${r.path}${r.line ? ":" + r.line : ""}`, r.status === "sent" ? h("span", { class: "muted" }, " · " + I18N.t("ws.ctx.sent")) : null), h("div", null, r.body)))),
+    h("div", { class: "row ctx-actions" }, h("button", { class: "btn small", onclick: () => setTab("changes") }, I18N.t("ws.ctx.openReview")),
+      c.review.some((r) => r.status === "open") ? sendBtn(I18N.t("ws.ctx.sendNotes"), sendOpenNotes) : null),
+  ] : h("div", { class: "muted small" }, I18N.t("ws.ctx.noNotes"))));
   // Memory
-  out.push(ctxSection("Memory", c.memory.length, c.memory.length ? h("ul", { class: "ctx-list" }, c.memory.slice(0, 5).map((m) => h("li", null,
+  out.push(ctxSection(I18N.t("ws.ctx.memory"), c.memory.length, c.memory.length ? h("ul", { class: "ctx-list" }, c.memory.slice(0, 5).map((m) => h("li", null,
     h("div", null, h("span", { class: "pill accent" }, m.category), " ", m.content),
-    h("div", { class: "row" }, h("span", { class: "spacer" }), sendBtn("Send", () => sendToFocused(`Project memory (${m.category}): ${m.content}`, "memory note"))))))
-    : h("div", { class: "muted small" }, "Nothing saved. Use Save to memory under the panes."), c.memory.length > 5 ? h("button", { class: "btn small ghost", onclick: () => setTab("knowledge") }, "All") : null));
+    h("div", { class: "row" }, h("span", { class: "spacer" }), sendBtn(I18N.t("ws.send"), () => sendToFocused(I18N.t("ws.ctx.memoryMsg", { category: m.category, content: m.content }), I18N.t("ws.what.memory")))))))
+    : h("div", { class: "muted small" }, I18N.t("ws.ctx.noMemory")), c.memory.length > 5 ? h("button", { class: "btn small ghost", onclick: () => setTab("knowledge") }, "All") : null));
   out.push(usagePanel(c.sessions || [], c.tasks || []));
   // Activity across every AI
   const evs = o ? o.events.slice().reverse().slice(0, 8) : [];
-  out.push(ctxSection("Activity, all AIs", null, evs.length ? h("ul", { class: "timeline ctx-feed" }, evs.map((e) => h("li", null, h("span", { class: "when" }, ago(e.created_at)), h("span", null, describeEvent(e)))))
-    : h("div", { class: "muted small" }, "No activity yet.")));
+  out.push(ctxSection(I18N.t("ws.ctx.activity"), null, evs.length ? h("ul", { class: "timeline ctx-feed" }, evs.map((e) => h("li", null, h("span", { class: "when" }, ago(e.created_at)), h("span", null, describeEvent(e)))))
+    : h("div", { class: "muted small" }, I18N.t("ws.ctx.noActivity"))));
   return out;
 }
 
@@ -1045,18 +1046,18 @@ function drawStatusBar() {
   const o = state.ctx && state.ctx.overview;
   const g = o && o.git;
   bar.append(...[
-    g ? h("span", null, g.branch || "(detached)", " · ", g.dirty ? plural(g.files.length, "file") + " changed" : "clean") : null,
-    h("span", null, running ? `${plural(running, "AI")} running` : "No AI running"),
-    need ? h("span", { class: "sb-warn" }, `${need} need${need === 1 ? "s" : ""} you`) : null,
-    o && o.pending_handoff ? h("span", null, `Handoff waiting for ${o.pending_handoff.to_harness}`) : null,
+    g ? h("span", null, g.branch || "(detached)", " · ", g.dirty ? I18N.t("ws.bar.changed", { count: g.files.length }) : I18N.t("ws.bar.clean")) : null,
+    h("span", null, running ? I18N.t("ws.bar.running", { count: running }) : I18N.t("ws.noAiRunning")),
+    need ? h("span", { class: "sb-warn" }, I18N.t("ws.bar.need", { count: need })) : null,
+    o && o.pending_handoff ? h("span", null, I18N.t("ws.bar.handoff", { name: o.pending_handoff.to_harness })) : null,
     h("span", { class: "spacer" }),
-    h("span", null, "local only")].filter(Boolean));
+    h("span", null, I18N.t("ws.bar.local"))].filter(Boolean));
 }
 
 // ---------- history: handoffs and sessions ----------
 async function viewHistory(v) {
-  const a = h("section", { class: "history-sec" }, h("h2", null, "Handoffs"));
-  const b = h("section", { class: "history-sec" }, h("h2", null, "Sessions"));
+  const a = h("section", { class: "history-sec" }, h("h2", null, I18N.t("ws.history.handoffs")));
+  const b = h("section", { class: "history-sec" }, h("h2", null, I18N.t("ws.history.sessions")));
   v.append(a, b);
   await Promise.all([viewHandoffs(a), viewSessions(b)]);
 }
@@ -1077,15 +1078,15 @@ function termDrawer() {
   state.drawerThread = shell?.id ?? null;
   const box = h("div", { class: "ws-drawer", style: `height:${appearance().drawerHeight}px` });
   const head = h("div", { class: "ws-drawer-head" },
-    h("strong", null, "Terminal"),
-    shell ? h("span", { class: "muted small" }, shell.title, " · ", shell.running ? (shell.cwd || "") : "Saved output · read-only") : null,
+    h("strong", null, I18N.t("ws.term.title")),
+    shell ? h("span", { class: "muted small" }, shell.title, " · ", shell.running ? (shell.cwd || "") : I18N.t("ws.term.saved")) : null,
     h("span", { class: "spacer" }),
     shell && !shell.running ? restartTerminalButton(shell) : null,
-    state.drawerThread ? h("button", { class: "btn small ghost", onclick: () => { const id = state.drawerThread; state.drawerThread = null; placeThread(id); render(); }, title: "Move this shell into a pane" }, "Move to a pane") : null,
-    h("button", { class: "btn small ghost", "aria-label": "Close the terminal drawer", onclick: toggleTermDrawer }, "✕"));
+    state.drawerThread ? h("button", { class: "btn small ghost", onclick: () => { const id = state.drawerThread; state.drawerThread = null; placeThread(id); render(); }, title: I18N.t("ws.term.moveTitle") }, I18N.t("ws.term.move")) : null,
+    h("button", { class: "btn small ghost", "aria-label": I18N.t("ws.term.close"), onclick: toggleTermDrawer }, "✕"));
   box.append(head);
   if (!state.drawerThread) {
-    box.append(h("div", { class: "ws-drawer-empty" }, h("button", { class: "btn small", onclick: () => startThread({ kind: "shell" }) }, "Start a shell here")));
+    box.append(h("div", { class: "ws-drawer-empty" }, h("button", { class: "btn small", onclick: () => startThread({ kind: "shell" }) }, I18N.t("ws.term.start"))));
     return box;
   }
   const x = ensureXterm(shell.id);
@@ -1117,20 +1118,20 @@ async function ctxChanges() {
   const byFile = {};
   for (const r of review) byFile[r.path] = (byFile[r.path] || 0) + 1;
   return [
-    ctxSection("Changed files", c.files.length, c.files.length ? h("ul", { class: "ctx-list" }, c.files.slice(0, 30).map((f) => h("li", { class: "row ctx-file" },
+    ctxSection(I18N.t("ws.changes.title"), c.files.length, c.files.length ? h("ul", { class: "ctx-list" }, c.files.slice(0, 30).map((f) => h("li", { class: "row ctx-file" },
       h("code", null, f.status.trim() || "M"), h("span", { class: "mono small ctx-path" }, f.path),
-      byFile[f.path] ? h("span", { class: "pill warn" }, plural(byFile[f.path], "note")) : null)))
-      : h("div", { class: "muted small" }, "Nothing changed since the last commit.")),
+      byFile[f.path] ? h("span", { class: "pill warn" }, I18N.t("ws.changes.notes", { count: byFile[f.path] })) : null)))
+      : h("div", { class: "muted small" }, I18N.t("ws.changes.none"))),
     h("div", { class: "row ctx-actions", style: "padding:0 14px 12px" },
-      h("button", { class: "btn small", onclick: () => setTab("changes") }, "Open review"),
-      review.some((r) => r.status === "open") ? sendBtn(`Send ${plural(review.filter((r) => r.status === "open").length, "note")}`, sendOpenNotes) : null),
+      h("button", { class: "btn small", onclick: () => setTab("changes") }, I18N.t("ws.ctx.openReview")),
+      review.some((r) => r.status === "open") ? sendBtn(I18N.t("ws.changes.send", { notes: I18N.t("ws.changes.notes", { count: review.filter((r) => r.status === "open").length }) }), sendOpenNotes) : null),
   ];
 }
 async function sendOpenNotes() {
   const projectId = state.project.id;
   const r = await act(() => invoke("review_prompt_text", { projectId }));
-  if (!r.count) { toast("No open review notes to send."); return; }
-  if (state.project?.id === projectId && await sendToFocused(r.prompt, "review notes")) {
+  if (!r.count) { toast(I18N.t("ws.changes.nothing")); return; }
+  if (state.project?.id === projectId && await sendToFocused(r.prompt, I18N.t("ws.what.review"))) {
     await recordReviewDelivery(projectId, r.ids);
     drawContext();
   }
