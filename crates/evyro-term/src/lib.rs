@@ -198,7 +198,7 @@ impl Terminals {
                 t.forgotten.store(true, Ordering::SeqCst);
             }
             if let Some(dir) = &self.store {
-                for ext in ["json", "log", "usage.json"] {
+                for ext in ["json", "json.bak", "log", "usage.json"] {
                     if let Ok(p) = saved_path(dir, id, ext) {
                         let _ = std::fs::remove_file(p);
                     }
@@ -266,9 +266,8 @@ impl Terminals {
                     .store
                     .as_ref()
                     .ok_or_else(|| anyhow!("no terminal {id}"))?;
-                let bytes = std::fs::read(saved_path(dir, id, "json")?)
-                    .with_context(|| format!("no terminal {id}"))?;
-                serde_json::from_slice::<TermInfo>(&bytes)?
+                read_info(&saved_path(dir, id, "json")?)
+                    .with_context(|| format!("no terminal {id}"))?
             }
         };
         if old.is_some() && previous.running {
@@ -555,8 +554,10 @@ impl Terminals {
         }
         if let Some(dir) = &self.store {
             let json = saved_path(dir, id, "json")?;
-            let had = json.exists();
+            let bak = saved_path(dir, id, "json.bak")?;
+            let had = json.exists() || bak.exists();
             let _ = std::fs::remove_file(json);
+            let _ = std::fs::remove_file(bak);
             let _ = std::fs::remove_file(saved_path(dir, id, "log")?);
             let _ = std::fs::remove_file(saved_path(dir, id, "usage.json")?);
             if removed.is_none() && had {
@@ -683,7 +684,8 @@ fn saved_path(dir: &std::path::Path, id: &str, ext: &str) -> Result<PathBuf> {
 }
 
 /// Write a terminal's details and output; written to a temporary file first
-/// so a crash never leaves half a file.
+/// so a crash never leaves half a file. The details also keep their last good
+/// copy, which loading falls back to if the newest file is damaged anyway.
 fn save_term(dir: &std::path::Path, t: &Term) {
     save_term_locked(dir, t, &t.info.lock().unwrap());
 }
@@ -702,16 +704,49 @@ fn save_term_locked(dir: &std::path::Path, t: &Term, info: &TermInfo) {
     if let Some(redact) = &t.redactor {
         bytes = redact(&String::from_utf8_lossy(&bytes)).into_bytes();
     }
-    let write = |p: &PathBuf, data: &[u8]| {
-        let tmp = p.with_extension("tmp");
-        if write_private(&tmp, data).is_ok() {
-            let _ = std::fs::rename(&tmp, p);
-        }
-    };
-    write(&log, &bytes);
+    let _ = replace_file(&log, &bytes, |_| false);
     if let Ok(j) = serde_json::to_vec_pretty(info) {
-        write(&json, &j);
+        let _ = replace_file(&json, &j, |b| parse_info(b).is_some());
     }
+}
+
+/// Replace `path` through a synced temporary file in the same directory. The
+/// file being replaced becomes `<file>.bak` when `is_good` accepts it, so a
+/// damaged file never overwrites a good copy.
+fn replace_file(
+    path: &std::path::Path,
+    data: &[u8],
+    is_good: impl Fn(&[u8]) -> bool,
+) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    write_private(&tmp, data)?;
+    if std::fs::read(path).is_ok_and(|current| is_good(&current)) {
+        std::fs::rename(path, last_good(path))?;
+    }
+    std::fs::rename(&tmp, path)?;
+    #[cfg(unix)]
+    if let Some(dir) = path.parent() {
+        std::fs::File::open(dir)?.sync_all()?;
+    }
+    Ok(())
+}
+
+fn last_good(path: &std::path::Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".bak");
+    path.with_file_name(name)
+}
+
+fn parse_info(bytes: &[u8]) -> Option<TermInfo> {
+    serde_json::from_slice(bytes).ok()
+}
+
+/// A thread's saved details, or their last good copy when the file is missing
+/// or damaged.
+fn read_info(path: &std::path::Path) -> Option<TermInfo> {
+    [path.to_path_buf(), last_good(path)]
+        .iter()
+        .find_map(|p| std::fs::read(p).ok().and_then(|b| parse_info(&b)))
 }
 
 /// Saved output can hold secrets, so only the current user may read it.
@@ -724,7 +759,9 @@ fn write_private(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         options.mode(0o600);
     }
-    options.open(path)?.write_all(data)
+    let mut file = options.open(path)?;
+    file.write_all(data)?;
+    file.sync_all()
 }
 
 /// Threads saved by earlier runs, as ended.
@@ -732,13 +769,20 @@ fn load_saved(dir: &std::path::Path) -> Vec<TermInfo> {
     let Ok(rd) = std::fs::read_dir(dir) else {
         return vec![];
     };
-    rd.flatten()
-        .filter(|e| {
-            e.path().extension().is_some_and(|x| x == "json")
-                && !e.file_name().to_string_lossy().ends_with(".usage.json")
+    let mut ids: Vec<String> = rd
+        .flatten()
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let id = name
+                .strip_suffix(".json.bak")
+                .or(name.strip_suffix(".json"))?;
+            (!id.ends_with(".usage")).then(|| id.to_owned())
         })
-        .filter_map(|e| std::fs::read(e.path()).ok())
-        .filter_map(|b| serde_json::from_slice::<TermInfo>(&b).ok())
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids.into_iter()
+        .filter_map(|id| read_info(&saved_path(dir, &id, "json").ok()?))
         .map(|mut i| {
             if i.running {
                 // Saved while running and the app never closed it cleanly.
@@ -1169,6 +1213,52 @@ mod tests {
             saved.contains("[REDACTED]") && !saved.contains(&secret),
             "{saved:?}"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_damaged_thread_file_falls_back_to_its_last_good_copy() {
+        let dir = std::env::temp_dir().join(format!("evyro-term-recover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let first = Terminals::with_store(dir.clone());
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let (o, e, _, rx) = collect();
+            let info = first
+                .open(spec("/bin/sh", &["-c", "echo done"]), o, e)
+                .unwrap();
+            assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(0));
+            ids.push(info.id);
+        }
+        first.save_all();
+        first.save_all(); // the second save keeps the first as the last good copy
+        let (damaged, other) = (&ids[0], &ids[1]);
+        let json = dir.join(format!("{damaged}.json"));
+        assert!(dir.join(format!("{damaged}.json.bak")).exists());
+
+        // Cut the newest file short, as a crash on a disk that does not honour
+        // renames could.
+        let full = std::fs::read(&json).unwrap();
+        std::fs::write(&json, &full[..full.len() / 2]).unwrap();
+        let listed = |t: &Terminals| {
+            let mut v: Vec<String> = t.list().into_iter().map(|i| i.id).collect();
+            v.sort();
+            v
+        };
+        let mut both = ids.clone();
+        both.sort();
+        assert_eq!(listed(&Terminals::with_store(dir.clone())), both);
+
+        // Stopped between keeping the last good copy and the rename.
+        std::fs::remove_file(&json).unwrap();
+        let second = Terminals::with_store(dir.clone());
+        assert_eq!(listed(&second), both);
+        assert!(second.snapshot(other).is_ok());
+
+        // Forgetting a thread also removes its last good copy.
+        second.close(damaged).unwrap();
+        assert!(!dir.join(format!("{damaged}.json.bak")).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 
 pub(crate) const MAX_SAVED: usize = 60;
@@ -151,11 +151,10 @@ impl SavedChat {
             self.log.push(item);
         }
         self.log.reverse();
-        let mut temp = tempfile::NamedTempFile::new_in(dir)?;
-        serde_json::to_writer(&mut temp, &self)?;
-        temp.flush()?;
         let path = dir.join(format!("{id}.json"));
-        temp.persist(&path)?;
+        evyro_core::util::write_keeping_last_good(&path, &serde_json::to_vec(&self)?, |b| {
+            parse(b).is_some()
+        })?;
         private(&path, 0o600)?;
         Ok(self)
     }
@@ -173,37 +172,43 @@ fn private(path: &Path, mode: u32) -> io::Result<()> {
     Ok(())
 }
 
+/// A saved transcript, or `None` when it is too large, cut short or damaged.
+fn parse(bytes: &[u8]) -> Option<SavedChat> {
+    if bytes.len() as u64 > MAX_BYTES {
+        return None;
+    }
+    serde_json::from_slice(bytes).ok()
+}
+
+/// The chat ID a transcript file (or its last good copy) belongs to.
+fn file_id(path: &Path) -> Option<&str> {
+    let name = path.file_name()?.to_str()?;
+    let id = name
+        .strip_suffix(".json.bak")
+        .or(name.strip_suffix(".json"))?;
+    (valid_id(id) && path.symlink_metadata().is_ok_and(|m| m.is_file())).then_some(id)
+}
+
 pub(crate) fn load(dir: &Path, keep: usize) -> io::Result<HashMap<String, SavedChat>> {
     fs::create_dir_all(dir)?;
-    let mut paths: Vec<_> = fs::read_dir(dir)?
+    let paths: Vec<_> = fs::read_dir(dir)?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .collect();
-    paths.sort_unstable();
+    let mut ids: Vec<&str> = paths.iter().filter_map(|p| file_id(p)).collect();
+    ids.sort_unstable();
+    ids.dedup();
     let mut saved = HashMap::new();
-    for path in paths.into_iter().rev() {
-        let Some(id) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .filter(|id| valid_id(id))
-        else {
-            continue;
-        };
-        if path.extension().and_then(|s| s.to_str()) != Some("json")
-            || !path
-                .symlink_metadata()
-                .is_ok_and(|m| m.is_file() && m.len() <= MAX_BYTES)
-        {
-            continue;
-        }
-        let Some(record) = fs::read(&path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<SavedChat>(&bytes).ok())
+    for id in ids.into_iter().rev() {
+        // A transcript cut short by a crash or a full disk falls back to its
+        // last good copy; other transcripts are unaffected.
+        let Some(record) =
+            evyro_core::util::read_or_last_good(&dir.join(format!("{id}.json")), parse)
         else {
             continue;
         };
         if record.info["id"] == id {
             if saved.len() >= keep {
-                if let Err(e) = fs::remove_file(&path) {
+                if let Err(e) = remove(dir, id) {
                     eprintln!("evyro: could not trim old chat history: {e}");
                 }
                 continue;
@@ -225,10 +230,14 @@ pub(crate) fn remove(dir: &Path, id: &str) -> io::Result<()> {
             "invalid chat ID",
         ));
     }
-    match fs::remove_file(dir.join(format!("{id}.json"))) {
-        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-        result => result,
+    let path = dir.join(format!("{id}.json"));
+    for p in [evyro_core::util::last_good_path(&path), path] {
+        match fs::remove_file(p) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            result => result?,
+        }
     }
+    Ok(())
 }
 
 fn valid_id(id: &str) -> bool {
@@ -309,5 +318,56 @@ mod tests {
         let saved = load(dir.path(), MAX_SAVED).unwrap();
         assert_eq!(saved[&id].log, vec![json!({"t": "user", "text": "hello"})]);
         assert_eq!(saved[&id].info["history_truncated"], true);
+    }
+
+    #[test]
+    fn a_cut_short_transcript_falls_back_to_its_last_good_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let save = |id: &str, texts: &[&str]| {
+            let log = texts
+                .iter()
+                .map(|t| json!({"t": "user", "text": t}))
+                .collect();
+            SavedChat::capture(json!({"id": id}), log, false)
+                .write(dir.path(), id)
+                .unwrap();
+        };
+        let (damaged, other) = (
+            evyro_core::util::new_id("chat"),
+            evyro_core::util::new_id("chat"),
+        );
+        save(&damaged, &["first"]);
+        save(&damaged, &["first", "second"]);
+        save(&other, &["untouched"]);
+        let path = dir.path().join(format!("{damaged}.json"));
+        let last_good = evyro_core::util::last_good_path(&path);
+        assert!(last_good.exists(), "no last good copy kept");
+
+        // The app stopped mid-write on a disk that does not honour renames: the
+        // newest file is cut short.
+        let full = fs::read(&path).unwrap();
+        fs::write(&path, &full[..full.len() / 2]).unwrap();
+        let saved = load(dir.path(), MAX_SAVED).unwrap();
+        assert_eq!(
+            saved[&damaged].log,
+            vec![json!({"t": "user", "text": "first"})]
+        );
+        assert_eq!(saved[&other].log[0]["text"], "untouched");
+
+        // Saving again keeps the good copy rather than the damaged file.
+        save(&damaged, &["first", "second", "third"]);
+        let kept: SavedChat = serde_json::from_slice(&fs::read(&last_good).unwrap()).unwrap();
+        assert_eq!(kept.log.len(), 1);
+        assert_eq!(load(dir.path(), MAX_SAVED).unwrap()[&damaged].log.len(), 3);
+
+        // Stopped between keeping the last good copy and the rename: only the
+        // copy is left, and it still loads.
+        fs::remove_file(&path).unwrap();
+        assert_eq!(load(dir.path(), MAX_SAVED).unwrap()[&damaged].log.len(), 1);
+
+        // Deleting a transcript also deletes its last good copy.
+        remove(dir.path(), &damaged).unwrap();
+        assert!(!last_good.exists());
+        assert!(!load(dir.path(), MAX_SAVED).unwrap().contains_key(&damaged));
     }
 }
