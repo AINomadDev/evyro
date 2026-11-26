@@ -63,4 +63,7 @@ step "remote revoke" "$EVYRO" remote revoke "E2E phone"
 if "$EVYRO" serve --host 0.0.0.0 >/dev/null 2>&1; then echo "FAIL  serve refuses a LAN address without --allow-lan"; exit 1; else ok "serve refuses a LAN address without --allow-lan"; fi
 step "export" "$EVYRO" export --out "$TMP/export.json"
 step "backup" "$EVYRO" backup "$TMP/backup.db"
+printf 'name = "e2e-agent"\ncommand = "sh"\nargs = ["-c", "exit 0", "sh", "{prompt}"]\n' > "$TMP/e2e-agent.toml"
+step "agents check a TOML file" "$EVYRO" agents check "$TMP/e2e-agent.toml" --smoke
+if "$EVYRO" agents check no-such-agent >/dev/null 2>&1; then echo "FAIL  agents check fails for an unknown agent"; exit 1; else ok "agents check fails for an unknown agent"; fi
 echo "CLI end-to-end passed."
