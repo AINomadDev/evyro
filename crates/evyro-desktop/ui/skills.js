@@ -86,7 +86,7 @@ async function viewSkills(v) {
 
   const newDialog = () => {
     const name = h("input", { type: "text", placeholder: "api-conventions" });
-    const desc = h("input", { type: "text", placeholder: "Use when adding or changing an HTTP endpoint" });
+    const desc = h("input", { type: "text", placeholder: t("skills.new.whenPh") });
     const where = h("select", null,
       h("option", { value: "project" }, t("skills.new.project")),
       h("option", { value: "global" }, t("skills.new.global")));

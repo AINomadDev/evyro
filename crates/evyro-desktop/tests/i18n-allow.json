@@ -1,0 +1,63 @@
+{
+  "app.js": [
+    "ArrowDown",
+    "ArrowUp",
+    "Ctrl",
+    "Ctrl `",
+    "Enter",
+    "Escape",
+    "Evyro",
+    "Evyro sample",
+    "Tab / ⇧ Tab",
+    "cargo clippy -- -D warnings",
+    "cargo test\\nnpm test",
+    "evyro run --agent claude-code --task …",
+    "evyro run --to …"
+  ],
+  "appearance.js": [
+    "(prefers-color-scheme: dark)",
+    "(prefers-contrast: more)",
+    "(prefers-reduced-motion: reduce)",
+    "Atkinson Hyperlegible",
+    "Atkinson Hyperlegible Next",
+    "Cascadia Code",
+    "Cascadia Mono",
+    "Fira Code",
+    "Inter",
+    "Inter Display",
+    "Iosevka",
+    "Iosevka Term",
+    "JetBrains Mono",
+    "New York",
+    "Nunito",
+    "SF Mono",
+    "SF Pro Rounded",
+    "Segoe UI",
+    "Times New Roman",
+    "color-mix(in srgb, … …%, var(--panel))",
+    "evyro run --to codex  # 0Oo 1lI {}"
+  ],
+  "chat.js": [
+    "Enter"
+  ],
+  "remote.js": [
+    "tailscale serve --bg --https=… http://127.0.0.1:…"
+  ],
+  "review.js": [
+    "Enter",
+    "Escape"
+  ],
+  "search.js": [
+    "ArrowDown",
+    "ArrowUp",
+    "Enter",
+    "Escape"
+  ],
+  "threads.js": [
+    "ui-monospace, Menlo, Consolas, monospace"
+  ],
+  "workspace.js": [
+    "Enter",
+    "Unlimited"
+  ]
+}
