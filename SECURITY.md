@@ -11,6 +11,13 @@
 - Destructive actions need confirmation: `restore --yes`, `memory delete --yes`, `worktrees remove --force` for dirty worktrees.
 - Contracts are sealed with HMAC-SHA256 using a per-install key (`contract.key`, mode 0600 on Unix).
 
+## Dependencies
+
+- Every pull request runs `cargo deny check advisories licenses bans sources` (the `audit` job in CI, configured in `deny.toml`).
+- Once a month Dependabot opens one grouped update pull request for Rust crates and one for GitHub Actions (`.github/dependabot.yml`). Security advisories open their own pull requests straight away.
+- On the 1st of each month the `dependency-review` workflow re-runs `cargo deny` on `main`, so a new advisory shows up even when no pull request is open. It can also be run by hand from the Actions tab. When it fails, update the dependency, or, if it cannot move yet, add the advisory to `ignore` in `deny.toml` with the reason.
+- Known exception: glib 0.18 (GHSA-wrw7-89jp-8q8g, unsound `VariantStrIter`) is pinned by Tauri's Linux GTK3 stack and the fix needs glib 0.20. Evyro does not use `VariantStrIter`, so the Dependabot alert is dismissed. Revisit when Tauri moves to GTK4.
+
 ## Reporting
 
 Please open a private security advisory on the repository rather than a public issue.
