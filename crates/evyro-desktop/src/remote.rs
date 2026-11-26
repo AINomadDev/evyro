@@ -174,12 +174,19 @@ pub async fn remote_devices() -> CmdResult {
 }
 
 #[tauri::command]
-pub async fn remote_pair(name: String, scope: String, minutes: Option<i64>) -> CmdResult {
+pub async fn remote_pair(
+    name: String,
+    scope: String,
+    minutes: Option<i64>,
+    expires_days: Option<i64>,
+) -> CmdResult {
     with_store(move |s| {
         Ok(json!(s.pair_device(
             &name,
             &scope,
-            minutes.unwrap_or(10) * 60
+            minutes.unwrap_or(10) * 60,
+            expires_days.map(|d| d.saturating_mul(86_400)),
+            &evyro_core::remote::local_actor("desktop"),
         )?))
     })
     .await
@@ -187,7 +194,47 @@ pub async fn remote_pair(name: String, scope: String, minutes: Option<i64>) -> C
 
 #[tauri::command]
 pub async fn remote_revoke(id: String) -> CmdResult {
-    with_store(move |s| Ok(json!(s.revoke_device(&id)?))).await
+    with_store(move |s| {
+        Ok(json!(s.revoke_device(
+            &id,
+            &evyro_core::remote::local_actor("desktop")
+        )?))
+    })
+    .await
+}
+
+/// Change a device's access and/or expiry. `expires_days`: `Some(0)` removes
+/// the expiry, `Some(n)` ends access n days from now, `None` leaves it.
+#[tauri::command]
+pub async fn remote_set(id: String, scope: Option<String>, expires_days: Option<i64>) -> CmdResult {
+    with_store(move |s| {
+        use evyro_core::remote::{local_actor, parse_expiry, SCOPES};
+        // Check both values before changing anything.
+        if scope.as_deref().is_some_and(|s| !SCOPES.contains(&s)) {
+            return Err(evyro_core::Error::Invalid("unknown scope".into()));
+        }
+        let access = match expires_days {
+            Some(days) if days > 0 => Some(parse_expiry(&format!("{days}d"))?),
+            Some(_) => Some(None),
+            None => None,
+        };
+        let actor = local_actor("desktop");
+        let mut d = s.find_device(&id, false)?;
+        if let Some(scope) = scope {
+            d = s.set_device_scope(&d.id, &scope, &actor)?;
+        }
+        if let Some(secs) = access {
+            d = s.set_device_expiry(&d.id, secs, &actor)?;
+        }
+        Ok(json!(d))
+    })
+    .await
+}
+
+/// The newest remote audit lines, for one device or all.
+#[tauri::command]
+pub async fn remote_audit(id: Option<String>, limit: Option<usize>) -> CmdResult {
+    with_store(move |s| Ok(json!(s.remote_audit(id.as_deref(), limit.unwrap_or(100))?))).await
 }
 
 /// When the app quits.

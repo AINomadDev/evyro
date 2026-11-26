@@ -173,10 +173,18 @@ const FIX = {
           if (cmd === "remote_stop") { rm.running = false; return null; }
           if (cmd === "remote_devices") return JSON.parse(JSON.stringify(rm.devices));
           if (cmd === "remote_pair") {
-            const device = { id: "dev_0" + (rm.devices.length + 1) + "abcdef", name: args.name, scope: args.scope, state: "waiting", created_at: new Date().toISOString(), last_seen_at: null, last_address: null };
-            rm.devices.push(device); return { device, code: "K7QM-4XPZ", expires_at: new Date(Date.now() + 6e5).toISOString() };
+            const device = { id: "dev_0" + (rm.devices.length + 1) + "abcdef", name: args.name, scope: args.scope, state: "waiting", created_at: new Date().toISOString(), last_seen_at: null, last_address: null,
+              expires_at: args.expiresDays ? new Date(Date.now() + args.expiresDays * 864e5).toISOString() : null };
+            rm.devices.push(device); (rm.audit = rm.audit || []).unshift({ seq: rm.audit.length + 1, at: new Date().toISOString(), device_id: device.id, device_name: device.name, actor: "desktop:me", action: "pair_code", detail: "scope " + args.scope, address: null }); return { device, code: "K7QM-4XPZ", expires_at: new Date(Date.now() + 6e5).toISOString() };
           }
           if (cmd === "remote_revoke") { const d = rm.devices.find((d) => d.id === args.id); d.state = "revoked"; return d; }
+          if (cmd === "remote_set") {
+            const d = rm.devices.find((d) => d.id === args.id);
+            if (args.scope) { rm.audit.unshift({ seq: rm.audit.length + 1, at: new Date().toISOString(), device_id: d.id, device_name: d.name, actor: "desktop:me", action: "scope", detail: d.scope + " -> " + args.scope, address: null }); d.scope = args.scope; }
+            if (args.expiresDays != null) { d.expires_at = args.expiresDays ? new Date(Date.now() + args.expiresDays * 864e5).toISOString() : null; if (d.state === "expired") d.state = "active"; }
+            return d;
+          }
+          if (cmd === "remote_audit") return (rm.audit || []).filter((e) => !args.id || e.device_id === args.id);
           // Review comments, kept in memory.
           const rv = (window.__rv = window.__rv || []);
           if (cmd === "list_review_comments") return rv.filter((c) => args.all || c.status !== "resolved");
@@ -904,6 +912,18 @@ const FIX = {
     await page.getByRole("dialog", { name: "Pairing code" }).getByRole("button", { name: "Copy address", exact: true }).waitFor();
     await page.click(".modal .actions .btn");
     await page.waitForSelector(".list li:has-text('My phone') .pill:text-is('waiting')");
+    await page.waitForSelector(".list li:has-text('My phone') >> text=access until");
+    // Change access without pairing again, and see it in the activity log.
+    await page.getByRole("combobox", { name: "Access for My phone" }).selectOption("read");
+    await page.waitForSelector(".toast >> text=My phone now has read access");
+    await page.getByRole("button", { name: "Change expiry for My phone" }).click();
+    await page.getByRole("dialog", { name: "Expiry for My phone" }).getByRole("combobox").selectOption("0");
+    await page.click(".modal .actions .btn.primary");
+    await page.waitForSelector(".list li:has-text('My phone') >> text=no expiry");
+    await page.getByRole("button", { name: "Activity for My phone" }).click();
+    await page.waitForSelector(".modal .audit-log >> text=approve -> read");
+    await page.waitForSelector(".modal .audit-log .pill:text-is('code made')");
+    await page.click(".modal .actions .btn");
     await page.click(".list li:has-text('My phone') >> text=Revoke");
     await page.waitForSelector(".list li:has-text('My phone') .pill:text-is('revoked')");
     await page.click(".card >> text=Stop");

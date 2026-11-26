@@ -22,6 +22,11 @@
 //!   pick one of the options the agent offered.
 //! - Failed sign-ins are rate limited per address and overall. Every request
 //!   is written to `logs/remote-audit.log` (no query strings, no bodies).
+//!   Each device's changes and refused calls also go to its audit log in the
+//!   store (`evyro remote audit`), next to pairing, scope and expiry changes.
+//! - A device's scope and expiry are read again on every request, so a change
+//!   or an expiry applies at once; an MCP session started with write tools ends
+//!   when its device loses `control`.
 
 use evyro_acp::host::{Change, Host, OpenOpts};
 use evyro_core::remote::Device;
@@ -208,6 +213,8 @@ pub struct ServeOpts {
 struct McpSession {
     server: Mutex<evyro_mcp::Server>,
     device: String,
+    /// Started with write tools; ends if the device loses `control`.
+    writes: bool,
     last_used: Mutex<Instant>,
 }
 
@@ -635,6 +642,19 @@ fn handle(ctx: &Ctx, mut req: tiny_http::Request) {
         route(ctx, &r, &mut who)
     };
     let code = respond(req, out);
+    if let Some(d) = &who {
+        if let Some((action, detail)) = audit_line(&method, &path, code) {
+            if let Ok(s) = Store::open_default() {
+                let _ = s.record_remote(
+                    Some(d),
+                    &format!("device:{}", d.id),
+                    action,
+                    &detail,
+                    Some(&addr),
+                );
+            }
+        }
+    }
     if let Ok(mut a) = ctx.audit.lock() {
         if let Some(f) = a.as_mut() {
             let line = json!({
@@ -643,6 +663,22 @@ fn handle(ctx: &Ctx, mut req: tiny_http::Request) {
             });
             let _ = writeln!(f, "{line}");
         }
+    }
+}
+
+/// What a device's request adds to its audit log: changes it made and calls
+/// it was refused. Reads are left to the file log so polling does not flood it.
+fn audit_line(method: &str, path: &str, status: u16) -> Option<(&'static str, String)> {
+    if path == "/api/v1/pair" {
+        return None; // pairing records itself
+    }
+    let detail = format!("{method} {path} -> {status}");
+    if status == 401 || status == 403 {
+        Some(("refused", detail))
+    } else if method != "GET" {
+        Some(("api", detail))
+    } else {
+        None
     }
 }
 
@@ -1048,11 +1084,12 @@ fn mcp(ctx: &Ctx, r: &Req, d: &Device, project: Option<&str>) -> Result<Out, Out
     let (session, sid) = if is_init {
         let s = store()?;
         let p = s.get_project(project).map_err(from_core)?;
+        let writes = d.allows("control");
         let server = evyro_mcp::Server::new(
             s,
             p,
             evyro_mcp::ServerOptions {
-                read_only: !d.allows("control"),
+                read_only: !writes,
                 agent: r.query.get("agent").cloned().filter(|a| !a.is_empty()),
             },
         );
@@ -1060,6 +1097,7 @@ fn mcp(ctx: &Ctx, r: &Req, d: &Device, project: Option<&str>) -> Result<Out, Out
         let sess = Arc::new(McpSession {
             server: Mutex::new(server),
             device: d.id.clone(),
+            writes,
             last_used: Mutex::new(Instant::now()),
         });
         ctx.mcp
@@ -1078,7 +1116,16 @@ fn mcp(ctx: &Ctx, r: &Req, d: &Device, project: Option<&str>) -> Result<Out, Out
             .get(&sid)
             .cloned();
         match sess {
-            Some(s) if s.device == d.id => (s, sid),
+            Some(s) if s.device == d.id && (!s.writes || d.allows("control")) => (s, sid),
+            Some(s) if s.device == d.id => {
+                if let Ok(mut m) = ctx.mcp.lock() {
+                    m.remove(&sid);
+                }
+                return Err(err(
+                    403,
+                    "this device no longer has 'control' access; initialize again for read-only tools",
+                ));
+            }
             _ => return Err(err(404, "unknown MCP session; initialize again")),
         }
     };
@@ -1146,6 +1193,21 @@ mod tests {
             "feed items are redacted"
         );
         assert!(f.after(1, Duration::from_millis(10)).1.is_empty());
+    }
+
+    #[test]
+    fn audit_lines_cover_changes_and_refusals_only() {
+        assert_eq!(audit_line("GET", "/api/v1/feed", 200), None);
+        assert_eq!(audit_line("POST", "/api/v1/pair", 401), None);
+        assert_eq!(
+            audit_line("POST", "/api/v1/chats", 403),
+            Some(("refused", "POST /api/v1/chats -> 403".into()))
+        );
+        assert_eq!(
+            audit_line("POST", "/mcp/p", 200),
+            Some(("api", "POST /mcp/p -> 200".into()))
+        );
+        assert_eq!(audit_line("GET", "/api/v1/me", 401).unwrap().0, "refused");
     }
 
     #[test]

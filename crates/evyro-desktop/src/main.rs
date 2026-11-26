@@ -1199,6 +1199,8 @@ fn main() {
             remote::remote_devices,
             remote::remote_pair,
             remote::remote_revoke,
+            remote::remote_set,
+            remote::remote_audit,
             skills::skill_text,
             skills::set_skill_enabled,
             skills::new_skill,

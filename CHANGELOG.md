@@ -6,6 +6,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ### Added
 
+- Remote access: paired devices can expire (`evyro remote pair --expires 30d`), their scope or expiry can change without pairing again (`evyro remote set`), and an audit log of pairing, revocation, scope and expiry changes and each device's actions and refused calls is shown by `evyro remote audit` and in the desktop's Remote access card.
 - Optional encryption at rest for saved terminal output and chat transcripts (`evyro saved-output encrypt`, off by default): ChaCha20-Poly1305 with a data key in the macOS Keychain; plaintext files still load, and output whose key is missing or different is left untouched, never deleted.
 - `evyro pr create T-1` pushes the task's branch and opens a pull request whose body lists the task, each acceptance criterion (met or not, and how), the latest `evyro verify` receipts and the latest checkpoint's summary and next step, redacted; `--dry-run` prints it without pushing or calling GitHub. Needs the GitHub CLI.
 - CI checks startup and large-repository timings against budgets in `docs/PERFORMANCE.md`: `scripts/perf-check.py` generates a 5,000-file repository with 2,000 tasks and fails when the median of `evyro version`, `tasks`, `status`, `context` or `search` is over its budget.

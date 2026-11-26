@@ -2782,6 +2782,38 @@ fn remote_access_pairs_approves_and_revokes() {
     let devices = env.json(&repo, &["remote", "devices"]);
     assert!(devices.to_string().contains("\"revoked\""));
 
+    // Scope and expiry change without pairing again, and apply at once.
+    env.ok(
+        &repo,
+        &["remote", "set", "control-phone", "--scope", "read"],
+    );
+    let refused = post(
+        "/api/v1/chats",
+        Some(&ctl),
+        serde_json::json!({"project": pid, "target": "x"}),
+    );
+    assert_eq!(refused.0, 403, "{}", refused.2);
+    let d = env.json(&repo, &["remote", "set", "read-phone", "--expires", "1d"]);
+    assert_eq!(d["state"], "active");
+    assert!(d["expires_at"].is_string(), "{d}");
+    assert_eq!(get("/api/v1/me", Some(&read)).0, 200);
+
+    // The device audit log records who changed what, and refused calls, without tokens.
+    let log = env.json(&repo, &["remote", "audit", "control-phone"]);
+    let text = log.to_string();
+    assert!(
+        text.contains("\"control -> read\"") && text.contains("cli:"),
+        "{text}"
+    );
+    assert!(text.contains("POST /api/v1/chats -> 403"), "{text}");
+    assert!(
+        text.contains("\"paired\"") && text.contains("\"api\""),
+        "{text}"
+    );
+    assert!(!text.contains("evr_"), "{text}");
+    let all = env.json(&repo, &["remote", "audit"]).to_string();
+    assert!(all.contains("\"revoked\"") && all.contains("approve-phone"));
+
     // Failed sign-ins are rate limited.
     let mut last = 0;
     for _ in 0..12 {

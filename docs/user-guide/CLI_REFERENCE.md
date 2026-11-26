@@ -55,7 +55,7 @@ Commands:
   decisions      Decisions for the project
   search         Search the code: file names, text or regex, symbols, a file's outline
   serve          Let paired devices (a phone, another computer) follow and approve the work over HTTP: an API, an event stream, MCP over HTTP and a web companion
-  remote         Devices that may use `evyro serve`: pair a new one, list, revoke
+  remote         Devices that may use `evyro serve`: pair, list, change access or expiry, revoke, audit
   skills         Skills: reusable instructions agents load when a task needs them
   review         Review comments on the working-tree changes: leave them on files and lines, send the open ones to an agent, resolve them when addressed
   memory         Project memory
@@ -912,11 +912,13 @@ Options:
 
 ### evyro remote
 
-Devices that may sign in to `evyro serve`. `pair` makes a one-time code (it works once, for `--minutes`, 1 to 60, default 10). `devices` lists every device with its access, state and when and from where it was last seen. `revoke` takes an id, the first 6 or more characters of one, or an exact name; the device's token stops working at once.
+Devices that may sign in to `evyro serve`. `pair` makes a one-time code (it works once, for `--minutes`, 1 to 60, default 10); `--expires` (like `30d`, `12h`, `2w`, or `never`, the default) ends the device's access that long from now, after which it is refused and listed as `expired`. `devices` lists every device with its access, state, expiry and when and from where it was last seen. `set` changes a device's `--scope` or `--expires` without pairing it again (a new expiry also brings back an expired device); the change applies to its next request. `revoke` takes an id, the first 6 or more characters of one, or an exact name; the device's token stops working at once. `audit` shows, newest first, pairing, revocation, scope and expiry changes (with who made them), and every change or refused call a device made; it never records codes, tokens, query strings or request bodies.
 
 ```bash
-evyro remote pair --name "My phone" --scope approve
+evyro remote pair --name "My phone" --scope approve --expires 30d
 evyro remote devices
+evyro remote set "My phone" --scope read --expires 7d
+evyro remote audit "My phone"
 evyro remote revoke "My phone"
 ```
 
