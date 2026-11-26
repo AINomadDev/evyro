@@ -391,16 +391,21 @@ async function viewChat(current) {
     if (it.type === "chat-state") { data.info = it.info; drawHead(); updateComposer(); }
     if (it.type === "chat-item") {
       if (it.item_seq < next) return;
+      // A chat that just ended may already be gone on the server ("no such chat"): keep what is shown.
       if (it.item_seq > next) { // missed something: fetch the gap
-        const r = await api("GET", `/api/v1/chats/${encodeURIComponent(id)}?after=${next - 1}`);
-        for (const x of r.log) add(x);
-        next = r.next_seq; data.pending = r.pending; drawAsks();
+        try {
+          const r = await api("GET", `/api/v1/chats/${encodeURIComponent(id)}?after=${next - 1}`);
+          for (const x of r.log) add(x);
+          next = r.next_seq; data.pending = r.pending; drawAsks();
+        } catch { /* chat closed */ }
         return;
       }
       add(it.item); next = it.item_seq + 1;
       if (["permission", "permission_answer", "turn_end", "exit", "error"].includes(it.item.t)) {
-        const r = await api("GET", `/api/v1/chats/${encodeURIComponent(id)}?after=${next - 1}`);
-        data.pending = r.pending; drawAsks();
+        try {
+          const r = await api("GET", `/api/v1/chats/${encodeURIComponent(id)}?after=${next - 1}`);
+          data.pending = r.pending; drawAsks();
+        } catch { /* chat closed */ }
       }
     }
     window.scrollTo(0, document.body.scrollHeight);
