@@ -182,21 +182,24 @@ impl Store {
 
         let id = util::new_id("chk");
         let now = util::now();
-        self.conn.execute(
-            &format!("INSERT INTO checkpoints({CP_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)"),
-            rusqlite::params![
-                id, project_id, c.task_id, c.session_id, prev.as_ref().map(|p| p.id.clone()), trigger, summary,
-                to_json(&completed), to_json(&remaining), to_json(&blockers), next_action, to_json(&snap), fp, now
-            ],
-        )?;
-        if let Some(sid) = &c.session_id {
+        self.atomic(|| {
             self.conn.execute(
-                "UPDATE sessions SET latest_checkpoint_id = ?1 WHERE id = ?2",
-                rusqlite::params![id, sid],
+                &format!("INSERT INTO checkpoints({CP_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)"),
+                rusqlite::params![
+                    id, project_id, c.task_id, c.session_id, prev.as_ref().map(|p| p.id.clone()), trigger, summary,
+                    to_json(&completed), to_json(&remaining), to_json(&blockers), next_action, to_json(&snap), fp, now
+                ],
             )?;
-        }
-        self.emit(Some(project_id), c.task_id.as_deref(), c.session_id.as_deref(), "checkpoint.created",
-            serde_json::json!({"checkpoint_id": id, "trigger": trigger, "dirty_files": snap.files.len(), "head": snap.head}))?;
+            if let Some(sid) = &c.session_id {
+                self.conn.execute(
+                    "UPDATE sessions SET latest_checkpoint_id = ?1 WHERE id = ?2",
+                    rusqlite::params![id, sid],
+                )?;
+            }
+            self.emit(Some(project_id), c.task_id.as_deref(), c.session_id.as_deref(), "checkpoint.created",
+                serde_json::json!({"checkpoint_id": id, "trigger": trigger, "dirty_files": snap.files.len(), "head": snap.head}))?;
+            Ok(())
+        })?;
         let cp = self.get_checkpoint(&id)?;
         if let Some(t) = &task {
             let _ = crate::init::write_current_task(self, &project, t, Some(&cp));

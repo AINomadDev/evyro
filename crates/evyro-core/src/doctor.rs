@@ -72,6 +72,21 @@ pub fn run(store: &Store, cwd: &Path) -> Vec<Check> {
             Some("restore from a backup: `evyro restore <file>`"),
         )),
     }
+    match store.consistency_problems() {
+        Ok(v) if v.is_empty() => out.push(c(
+            "store consistency",
+            "ok",
+            "no dangling references",
+            None,
+        )),
+        Ok(v) => out.push(c(
+            "store consistency",
+            "warn",
+            v.join("; "),
+            Some("left by an interrupted write; restore from a backup (`evyro restore <file>`) if they cause trouble"),
+        )),
+        Err(e) => out.push(c("store consistency", "fail", e.to_string(), None)),
+    }
     match git::version() {
         Ok(v) => out.push(c("git", "ok", v, None)),
         Err(_) => out.push(c(

@@ -382,28 +382,32 @@ impl Store {
         if let Some(tid) = &s.task_id {
             self.check_claim(project_id, tid, &s.harness, None)?;
         }
-        self.conn.execute(
-            &format!("INSERT INTO sessions({SESSION_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'running',?9,NULL,NULL,?9,NULL,?10,NULL)"),
-            rusqlite::params![id, project_id, s.task_id, s.harness, s.model, s.provider, s.worktree, s.pid, now, s.handoff_id],
-        )?;
-        if let Some(pid) = s.pid {
+        // The session, its lease and its event land together or not at all.
+        self.atomic(|| {
             self.conn.execute(
-                "UPDATE sessions SET pid_started = ?1 WHERE id = ?2",
-                rusqlite::params![process_start_time(pid), id],
+                &format!("INSERT INTO sessions({SESSION_COLS}) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'running',?9,NULL,NULL,?9,NULL,?10,NULL)"),
+                rusqlite::params![id, project_id, s.task_id, s.harness, s.model, s.provider, s.worktree, s.pid, now, s.handoff_id],
             )?;
-        }
-        if let Some(tid) = &s.task_id {
-            self.conn.execute(
-                "INSERT OR REPLACE INTO leases(task_id, session_id, harness, acquired_at) VALUES (?1,?2,?3,?4)",
-                rusqlite::params![tid, id, s.harness, now],
-            )?;
-            self.conn.execute(
-                "UPDATE tasks SET assigned_agent = ?1, updated_at = ?2 WHERE id = ?3",
-                rusqlite::params![s.harness, now, tid],
-            )?;
-        }
-        self.emit(Some(project_id), s.task_id.as_deref(), Some(&id), "session.started",
-            serde_json::json!({"harness": s.harness, "model": s.model, "provider": s.provider, "handoff_id": s.handoff_id}))?;
+            if let Some(pid) = s.pid {
+                self.conn.execute(
+                    "UPDATE sessions SET pid_started = ?1 WHERE id = ?2",
+                    rusqlite::params![process_start_time(pid), id],
+                )?;
+            }
+            if let Some(tid) = &s.task_id {
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO leases(task_id, session_id, harness, acquired_at) VALUES (?1,?2,?3,?4)",
+                    rusqlite::params![tid, id, s.harness, now],
+                )?;
+                self.conn.execute(
+                    "UPDATE tasks SET assigned_agent = ?1, updated_at = ?2 WHERE id = ?3",
+                    rusqlite::params![s.harness, now, tid],
+                )?;
+            }
+            self.emit(Some(project_id), s.task_id.as_deref(), Some(&id), "session.started",
+                serde_json::json!({"harness": s.harness, "model": s.model, "provider": s.provider, "handoff_id": s.handoff_id}))?;
+            Ok(())
+        })?;
         self.get_session(&id)
     }
 
@@ -690,25 +694,28 @@ impl Store {
         } else {
             None
         };
-        self.conn.execute(
-            "UPDATE sessions SET status = ?1, ended_at = COALESCE(?2, ended_at), exit_reason = COALESCE(?3, exit_reason) WHERE id = ?4",
-            rusqlite::params![to.as_str(), ended, reason, s.id],
-        )?;
-        if to.is_ended() {
-            self.conn
-                .execute("DELETE FROM leases WHERE session_id = ?1", [&s.id])?;
-        }
-        self.emit(
-            Some(&s.project_id),
-            s.task_id.as_deref(),
-            Some(&s.id),
-            "session.status_changed",
-            serde_json::json!({"from": s.status, "to": to, "reason": reason}),
-        )?;
-        if matches!(to, SessionStatus::Failed | SessionStatus::Cancelled) {
-            // A receiver that failed must not strand the handoff it accepted.
-            self.reopen_handoff_for_failed_session(&s.id)?;
-        }
+        self.atomic(|| {
+            self.conn.execute(
+                "UPDATE sessions SET status = ?1, ended_at = COALESCE(?2, ended_at), exit_reason = COALESCE(?3, exit_reason) WHERE id = ?4",
+                rusqlite::params![to.as_str(), ended, reason, s.id],
+            )?;
+            if to.is_ended() {
+                self.conn
+                    .execute("DELETE FROM leases WHERE session_id = ?1", [&s.id])?;
+            }
+            self.emit(
+                Some(&s.project_id),
+                s.task_id.as_deref(),
+                Some(&s.id),
+                "session.status_changed",
+                serde_json::json!({"from": s.status, "to": to, "reason": reason}),
+            )?;
+            if matches!(to, SessionStatus::Failed | SessionStatus::Cancelled) {
+                // A receiver that failed must not strand the handoff it accepted.
+                self.reopen_handoff_for_failed_session(&s.id)?;
+            }
+            Ok(())
+        })?;
         self.get_session(&s.id)
     }
 
