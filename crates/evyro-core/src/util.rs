@@ -83,9 +83,11 @@ pub fn last_good_path(path: &Path) -> std::path::PathBuf {
 
 /// Replace `path` so that a crash or power loss never costs more than this
 /// write: the data goes to a temporary file in the same directory, is synced to
-/// disk and renamed over `path`. The file being replaced becomes the last good
-/// copy ([`last_good_path`]) when `is_good` accepts it, so a damaged file never
-/// overwrites a good copy. The temporary file is readable only by its owner.
+/// disk and renamed over `path`. The file being replaced is copied to the last
+/// good copy ([`last_good_path`]) when `is_good` accepts it, so a damaged file
+/// never overwrites a good copy. `path` itself exists at every moment, so a
+/// reader running at the same time never finds it missing. Both temporary
+/// files are readable only by their owner.
 pub fn write_keeping_last_good(
     path: &Path,
     data: &[u8],
@@ -97,15 +99,51 @@ pub fn write_keeping_last_good(
     let mut temp = tempfile::NamedTempFile::new_in(dir)?;
     temp.write_all(data)?;
     temp.as_file().sync_all()?;
-    if std::fs::read(path).is_ok_and(|current| is_good(&current)) {
-        // If the app stops right after this, only the last good copy is left
-        // and reading falls back to it.
-        std::fs::rename(path, last_good_path(path))?;
+    if let Ok(current) = std::fs::read(path) {
+        if is_good(&current) {
+            // Copy rather than move, so `path` is never briefly absent.
+            let mut keep = tempfile::NamedTempFile::new_in(dir)?;
+            keep.write_all(&current)?;
+            keep.as_file().sync_all()?;
+            move_into_place(keep, &last_good_path(path))?;
+        }
     }
-    temp.persist(path).map_err(|e| e.error)?;
+    move_into_place(temp, path)?;
     #[cfg(unix)]
     std::fs::File::open(dir)?.sync_all()?;
     Ok(())
+}
+
+/// Rename a finished temporary file over `to`. It is made an ordinary file
+/// first, while it still exists: on Windows that clears its temporary
+/// attribute, which cannot be done once it has been renamed away. If the
+/// rename fails, the temporary file is removed.
+fn move_into_place(temp: tempfile::NamedTempFile, to: &Path) -> std::io::Result<()> {
+    let (file, from) = temp.keep().map_err(|e| e.error)?;
+    drop(file);
+    rename_replacing(&from, to).inspect_err(|_| {
+        let _ = std::fs::remove_file(&from);
+    })
+}
+
+/// Rename `from` over `to`, replacing it. Windows answers "access denied" while
+/// another program (a reader, a virus scanner, the search indexer) briefly has
+/// `to` open, so there it tries again for up to about a second.
+pub fn rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut tries: u64 = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(e)
+                if cfg!(windows)
+                    && e.kind() == std::io::ErrorKind::PermissionDenied
+                    && tries < 20 =>
+            {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(5 * tries));
+            }
+            done => return done,
+        }
+    }
 }
 
 /// Read `path` with `parse`, falling back to its last good copy when the file
@@ -141,5 +179,41 @@ mod time_tests {
         assert!(a.ends_with('Z') && a.as_bytes()[19] == b'.');
         // Parses as RFC 3339.
         time::OffsetDateTime::parse(&a, &time::format_description::well_known::Rfc3339).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod last_good_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    /// While the file is rewritten over and over, a reader at the same time
+    /// always finds it, and the last good copy holds a complete earlier write.
+    #[test]
+    fn a_file_being_replaced_is_never_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("thread.json");
+        write_keeping_last_good(&path, b"v0", |_| true).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let watcher = {
+            let (path, stop) = (path.clone(), stop.clone());
+            std::thread::spawn(move || {
+                let mut missing = 0;
+                while !stop.load(Ordering::SeqCst) {
+                    if std::fs::metadata(&path).is_err() {
+                        missing += 1;
+                    }
+                }
+                missing
+            })
+        };
+        for i in 1..=300 {
+            write_keeping_last_good(&path, format!("v{i}").as_bytes(), |_| true).unwrap();
+        }
+        stop.store(true, Ordering::SeqCst);
+        assert_eq!(watcher.join().unwrap(), 0, "the file was briefly missing");
+        assert_eq!(std::fs::read(&path).unwrap(), b"v300");
+        assert_eq!(std::fs::read(last_good_path(&path)).unwrap(), b"v299");
     }
 }
