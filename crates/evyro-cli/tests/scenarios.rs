@@ -3236,6 +3236,81 @@ esac
     assert!(text.starts_with("The pull request for T-1"), "{text}");
 }
 
+/// `evyro pr create --dry-run` prints a body built from the task's criteria, receipts and
+/// checkpoint without pushing or calling `gh`; without `gh` a real create is refused clearly.
+#[test]
+fn pr_create_dry_run_prints_the_body_and_refuses_without_gh() {
+    let mut env = Env::new();
+    let repo = env.repo("prcreate");
+    env.init(&repo);
+    env.ok(
+        &repo,
+        &["task", "add", "Export", "--accept", "export works"],
+    );
+    sh(&repo, &["git", "checkout", "-q", "-b", "feat/export"]);
+    env.ok(
+        &repo,
+        &["verify", "--task", "T-1", "--", "git", "diff", "--check"],
+    );
+    env.ok(
+        &repo,
+        &[
+            "checkpoint",
+            "--task",
+            "T-1",
+            "--summary",
+            "Export done",
+            "--next",
+            "Open the PR",
+        ],
+    );
+    // Any call to this `gh` fails the test: a dry run must not reach it.
+    script(
+        env.bin.path(),
+        "gh",
+        "echo called > \"$PWD/.gh-called\"; exit 1\n",
+    );
+    let gh = env
+        .bin
+        .path()
+        .join(if cfg!(windows) { "gh.cmd" } else { "gh" });
+    let o = env
+        .cmd(
+            &repo,
+            &["--json", "pr", "create", "T-1", "--dry-run", "--draft"],
+        )
+        .env("EVYRO_GH_BIN", &gh)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let r: Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(r["dry_run"], true);
+    assert_eq!(r["branch"], "feat/export");
+    assert_eq!(r["base"], "main");
+    let body = r["body"].as_str().unwrap();
+    assert!(body.contains("- [ ] 1. export works"), "{body}");
+    assert!(body.contains("`git diff --check` — **passed**"), "{body}");
+    assert!(body.contains("**Next step:** Open the PR"), "{body}");
+    assert!(!repo.join(".gh-called").exists(), "gh was not called");
+    let text = env.ok(&repo, &["pr", "create", "T-1", "--print"]);
+    assert!(
+        text.starts_with("Would open a pull request from feat/export into main"),
+        "{text}"
+    );
+    // A real create with no `gh` installed stops before pushing, and says why.
+    let o = env
+        .cmd(&repo, &["pr", "create", "T-1"])
+        .env("EVYRO_GH_BIN", repo.join("no-such-gh"))
+        .output()
+        .unwrap();
+    assert!(!o.status.success());
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("GitHub CLI"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+}
+
 /// `evyro sample` makes a small real project, and the whole first-run loop works on it: a task,
 /// a checkpoint, a passing receipt from the sample's own test command, and a handoff.
 #[test]

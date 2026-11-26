@@ -48,7 +48,7 @@ Commands:
   recover        Recover sessions whose process died (quota kill, crash)
   worktrees      Git worktrees
   sample         Create a small sample project to try Evyro on (inside Evyro's own data folder) with two ready tasks and a test command that works anywhere, and print the first steps
-  pr             The pull request of a task: what is failing and what reviewers asked for, as a prompt for the AI that owns the branch. Needs the GitHub CLI (`gh`)
+  pr             The pull request of a task: open one written from the task's records, or read what is failing and what reviewers asked for. Needs the GitHub CLI (`gh`)
   plan           Plan first: an AI proposes a plan, you approve it, then it builds
   verify         Run a verification command and record a receipt: `evyro verify -- cargo test`
   decide         Record a decision. Record a decision: `evyro decide "<title>" "<decision>" [--why ...]`
@@ -1186,11 +1186,12 @@ Options:
 ### evyro pr
 
 ```text
-The pull request of a task: what is failing and what reviewers asked for, as a prompt for the AI that owns the branch. Needs the GitHub CLI (`gh`)
+The pull request of a task: open one written from the task's records, or read what is failing and what reviewers asked for. Needs the GitHub CLI (`gh`)
 
 Usage: evyro pr [OPTIONS] <COMMAND>
 
 Commands:
+  create    Push the task's branch and open a pull request whose body lists the task, its acceptance criteria (met or not, and how), the latest test receipts and the latest checkpoint. Secrets are redacted from the body
   feedback  Failing checks (with the end of their log) and unresolved review comments on the task's pull request, written as one prompt. Quoted GitHub text is fenced as data
   help      Print this message or the help of the given subcommand(s)
 
@@ -1198,6 +1199,36 @@ Options:
       --json               Machine-readable JSON output
   -q, --quiet              Suppress non-essential output
       --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro pr create
+
+Pushes the task's branch to `origin` and opens a pull request with `gh`. The body is written from
+Evyro's records: the task's title and description, each acceptance criterion with met or not met
+and how it was marked, the latest `evyro verify` receipts (command, pass or fail, when, commit),
+and the latest checkpoint's summary and next step. The body is redacted before it is sent. Use
+`--dry-run` (or `--print`) to see it without pushing or calling GitHub. Without `gh`, or when
+`gh` is not signed in, nothing is pushed. If the branch already has an open pull request, its
+address is printed instead of opening a second one.
+
+```text
+Push the task's branch and open a pull request whose body lists the task, its acceptance criteria (met or not, and how), the latest test receipts and the latest checkpoint. Secrets are redacted from the body
+
+Usage: evyro pr create [OPTIONS] [TASK]
+
+Arguments:
+  [TASK]  The task (default: the active task)
+
+Options:
+      --base <BASE>        The branch to merge into (default: the repository's default branch)
+      --json               Machine-readable JSON output
+      --draft              Open it as a draft
+  -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+      --dry-run            Print the title and body without pushing or calling GitHub
   -C, --dir <DIR>          Run as if started in this directory
       --project <PROJECT>  Target a registered project by id or alias instead of the current directory
   -h, --help               Print help
