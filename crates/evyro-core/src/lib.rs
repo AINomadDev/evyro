@@ -7,6 +7,7 @@
 
 pub mod acceptance;
 pub mod adapters;
+pub mod agent_check;
 pub mod backup;
 pub mod brand;
 pub mod checkout;

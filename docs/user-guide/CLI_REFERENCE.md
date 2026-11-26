@@ -40,7 +40,7 @@ Commands:
   resume         Accept a pending handoff as the receiving agent (validates state first)
   run            Launch an agent with session tracking (pid, exit checkpoint)
   chat           Chat with a coding agent over ACP (Agent Client Protocol): its reply, plan and tool calls in the terminal, and you approve each tool call. `evyro chat --list` shows which agents can
-  agents         Detected agents and their capabilities
+  agents         Detected agents and their capabilities. `evyro agents check <name>` tests one agent definition, built-in or custom
   targets        Switch targets: every AI you can hand work to (agent CLIs, IDEs, chat apps, API models). `evyro targets` lists them with their setup status
   models         Model selection support per agent
   sessions       Agent sessions
@@ -1071,13 +1071,39 @@ Options:
 ### evyro agents
 
 ```text
-Detected agents and their capabilities
+Detected agents and their capabilities. `evyro agents check <name>` tests one agent definition, built-in or custom
 
-Usage: evyro agents [OPTIONS]
+Usage: evyro agents [OPTIONS] [COMMAND]
+
+Commands:
+  list   List detected agents and their capabilities (the default)
+  check  Test one agent definition: it parses, the program is found, the login check, and the argv Evyro builds. Exits 1 if a check fails
+  help   Print this message or the help of the given subcommand(s)
 
 Options:
       --json               Machine-readable JSON output
   -q, --quiet              Suppress non-essential output
+      --debug              Print debug details on errors
+  -C, --dir <DIR>          Run as if started in this directory
+      --project <PROJECT>  Target a registered project by id or alias instead of the current directory
+  -h, --help               Print help
+```
+
+### evyro agents check
+
+```text
+Test one agent definition: it parses, the program is found, the login check, and the argv Evyro builds. Exits 1 if a check fails
+
+Usage: evyro agents check [OPTIONS] <NAME>
+
+Arguments:
+  <NAME>  A built-in agent, a custom agent's name, or a path to a .toml file (checked as your own file, so its login check runs)
+
+Options:
+      --json               Machine-readable JSON output
+      --smoke              Also start the agent once in an empty scratch folder with a short prompt and check that it exits 0. Uses the agent's account
+  -q, --quiet              Suppress non-essential output
+      --timeout <TIMEOUT>  Seconds to wait for the smoke run [default: 180]
       --debug              Print debug details on errors
   -C, --dir <DIR>          Run as if started in this directory
       --project <PROJECT>  Target a registered project by id or alias instead of the current directory

@@ -81,3 +81,26 @@ MY_AGENT_TELEMETRY = "0"
 Placeholders are `{prompt}`, `{cwd}` and `{model}` (only in `model_args`). No shell is used: each list item is one argument and a placeholder's value is inserted as-is, so prompt text cannot add arguments or commands. Unknown fields, unknown placeholders and a missing `{prompt}` are errors that name the file. Login checks in a project's `.evyro/agents/` are repository text, so `evyro doctor` shows them instead of running them.
 
 Custom agents are listed and checked today; starting them with `evyro run` and showing them in the desktop app are not done yet.
+
+## Testing a new agent
+
+`evyro agents check <name>` is the test kit for an agent definition. Run it on a built-in agent after changing `crates/evyro-core/src/adapters.rs`, on a custom agent by name, or on a `.toml` file by path before you install it:
+
+```sh
+evyro agents check my-agent.toml            # a file you are writing
+evyro agents check my-agent --smoke         # an installed custom agent, started once
+evyro agents check gemini --json            # a built-in agent, as JSON
+```
+
+Each step prints `pass`, `fail`, `warn` or `skip` with the reason, and the command exits 1 when any step fails:
+
+| Step | What it checks |
+|---|---|
+| definition | The file parses and validates (unknown fields, placeholders, a missing `{prompt}`), or the built-in agent exists |
+| binary | The program is on PATH, or the full path exists |
+| version | Built-in agents only: `--version` reads and meets the minimum Evyro supports |
+| login | Custom: `login_check` exits 0. Built-in: a login file or Keychain item exists |
+| argv headless / interactive / + model | The argv Evyro builds starts with the program, keeps a prompt full of quotes, `$(...)`, `;` and `{cwd}` in exactly one unchanged argument, and passes the model when one is chosen. The argv is shown with `{prompt}` and `{cwd}` in place |
+| smoke | Only with `--smoke`: runs the headless command once in an empty scratch folder with a short "reply OK, change nothing" prompt and checks it exits 0 within `--timeout` seconds (180 by default). This uses the agent's account and a little of its quota |
+
+A file in a project's `.evyro/agents/` is repository text, so its login check and smoke run are skipped there; pass the file's path to check it as your own. Automated tests must not call a real agent: the unit tests in `crates/evyro-core/src/agent_check.rs` and the `agents check` step in `scripts/cli-e2e.sh` use small shell scripts in its place.

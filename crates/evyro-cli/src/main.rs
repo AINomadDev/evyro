@@ -134,8 +134,12 @@ enum Cmd {
     /// plan and tool calls in the terminal, and you approve each tool call.
     /// `evyro chat --list` shows which agents can.
     Chat(ChatArgs),
-    /// Detected agents and their capabilities.
-    Agents,
+    /// Detected agents and their capabilities. `evyro agents check <name>`
+    /// tests one agent definition, built-in or custom.
+    Agents {
+        #[command(subcommand)]
+        cmd: Option<AgentsCmd>,
+    },
     /// Switch targets: every AI you can hand work to (agent CLIs, IDEs, chat
     /// apps, API models). `evyro targets` lists them with their setup status.
     Targets {
@@ -568,6 +572,26 @@ struct ChatArgs {
     list: bool,
     /// The first message (after Evyro's task or handoff context).
     prompt: Option<String>,
+}
+
+#[derive(Subcommand)]
+enum AgentsCmd {
+    /// List detected agents and their capabilities (the default).
+    List,
+    /// Test one agent definition: it parses, the program is found, the login
+    /// check, and the argv Evyro builds. Exits 1 if a check fails.
+    Check {
+        /// A built-in agent, a custom agent's name, or a path to a .toml file
+        /// (checked as your own file, so its login check runs).
+        name: String,
+        /// Also start the agent once in an empty scratch folder with a short
+        /// prompt and check that it exits 0. Uses the agent's account.
+        #[arg(long)]
+        smoke: bool,
+        /// Seconds to wait for the smoke run.
+        #[arg(long, default_value_t = 180)]
+        timeout: u64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1577,7 +1601,32 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 }
             }
         }
-        Cmd::Agents => {
+        Cmd::Agents {
+            cmd:
+                Some(AgentsCmd::Check {
+                    name,
+                    smoke,
+                    timeout,
+                }),
+        } => {
+            let root = store.project_for_path(&dir).ok().map(|p| p.root());
+            let opts = evyro_core::agent_check::Options {
+                smoke,
+                smoke_timeout: std::time::Duration::from_secs(timeout),
+                ..Default::default()
+            };
+            let r = evyro_core::agent_check::check(&store.paths, root.as_deref(), &name, &opts);
+            o.print(&r, || {
+                let mut s = format!("{} ({}) from {}\n", r.display_name, r.agent, r.source);
+                for st in &r.steps {
+                    s.push_str(&format!("  {:<5} {}: {}\n", st.state, st.name, st.detail));
+                }
+                s.push_str(if r.ok { "result: pass" } else { "result: FAIL" });
+                s
+            });
+            return Ok(if r.ok { 0 } else { 1 });
+        }
+        Cmd::Agents { cmd: _ } => {
             let mut ds = adapters::detect_all();
             let root = store.project_for_path(&dir).ok().map(|p| p.root());
             let custom = evyro_core::custom_agents::load(&store.paths, root.as_deref());

@@ -735,7 +735,7 @@ fn keychain_has(service: &str) -> Option<bool> {
 }
 
 /// Evidence that a harness has a signed-in app account. File existence only.
-fn login_evidence(harness: &str) -> Check {
+pub(crate) fn login_evidence(harness: &str) -> Check {
     let Some(h) = home() else {
         return ck("app sign-in", "unknown", "no home directory");
     };
