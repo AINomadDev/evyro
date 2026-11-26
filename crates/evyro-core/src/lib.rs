@@ -28,6 +28,7 @@ pub mod handoff;
 pub mod handover;
 pub mod health;
 pub mod init;
+pub mod leases;
 pub mod memory;
 pub mod ownership;
 pub mod paths;
