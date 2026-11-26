@@ -1,12 +1,12 @@
 {
   "app.js": 396,
   "appearance.js": 98,
-  "chat.js": 47,
+  "chat.js": 1,
   "comparison.js": 0,
-  "remote.js": 54,
+  "remote.js": 1,
   "review.js": 2,
   "search.js": 4,
-  "skills.js": 58,
+  "skills.js": 1,
   "threads.js": 1,
   "update.js": 0,
   "workspace.js": 180

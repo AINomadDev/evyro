@@ -16,7 +16,7 @@ async function openSavedMessage(projectId, hit) {
   await loadThreads();
   if (state.project?.id !== projectId) return;
   if (!projThreads().some((t) => t.id === hit.id && t.archived)) {
-    toast("That saved chat is no longer available.", true);
+    toast(I18N.t("chat.gone"), true);
     return;
   }
   chatData(hit.id).searchHit = hit.message_index;
@@ -42,7 +42,7 @@ async function newChatDialog() {
   if (!ready.includes(sel.value) && ready.length && [...sel.options].some((o) => ready.includes(o.value))) sel.value = [...sel.options].find((o) => ready.includes(o.value)).value;
   let tasks = [];
   try { tasks = await invoke("list_tasks", { projectId: state.project.id }); } catch { /* no tasks */ }
-  const taskSel = h("select", null, h("option", { value: "" }, "No task (let the AI ask)"),
+  const taskSel = h("select", null, h("option", { value: "" }, I18N.t("chat.noTask")),
     tasks.map((r) => h("option", { value: r.task.key }, `${r.task.key}  ${r.task.title}`)));
   const active = tasks.find((r) => r.task.status === "in_progress") || tasks.find((r) => r.task.status === "ready");
   if (active) taskSel.value = active.task.key;
@@ -52,19 +52,19 @@ async function newChatDialog() {
     const harness = (t && (t.target.harness || t.target.name)) || sel.value;
     const a = agents.find((x) => x.harness === harness);
     clear(status).append(a
-      ? (a.command ? h("span", null, "Ready: ", h("code", null, a.command)) : h("span", null, `${a.display_name} needs its ACP side: `, h("code", null, a.install)))
-      : "This AI has no chat (ACP) mode Evyro knows of. Use a terminal thread instead.");
-    const hint = { gemini: "Individual Gemini accounts should use Antigravity CLI.", cursor: "Sign in with cursor-agent login before opening a chat.", "antigravity-cli": "Sign in with agy acp --login." }[harness];
+      ? (a.command ? h("span", null, I18N.t("chat.ready"), " ", h("code", null, a.command)) : h("span", null, I18N.t("chat.needsAcp", { name: a.display_name }), " ", h("code", null, a.install)))
+      : I18N.t("chat.noAcp"));
+    const hint = { gemini: I18N.t("chat.hint.gemini"), cursor: I18N.t("chat.hint.cursor"), "antigravity-cli": I18N.t("chat.hint.agy") }[harness];
     if (hint) status.append(h("div", null, hint));
   };
   sel.addEventListener("change", showStatus);
   showStatus();
-  modal("New chat", [
-    h("p", { class: "muted small" }, "A chat talks to the agent over ACP: you see its plan and each tool call, and you approve what it runs. It works under an Evyro session like a terminal thread, with Evyro's MCP tools."),
-    field("AI", sel, status),
-    field("Task", taskSel),
+  modal(I18N.t("chat.newTitle"), [
+    h("p", { class: "muted small" }, I18N.t("chat.newIntro")),
+    field(I18N.t("thread.ai"), sel, status),
+    field(I18N.t("thread.task"), taskSel),
   ], [
-    { label: "Start chat", primary: true, run: () => (sel.value ? startChat({ target: sel.value, task: taskSel.value || null }) : false) },
+    { label: I18N.t("chat.start"), primary: true, run: () => (sel.value ? startChat({ target: sel.value, task: taskSel.value || null }) : false) },
   ]);
 }
 
@@ -83,7 +83,7 @@ function chatEvent(p) {
   d.log.push(p.item);
   if (p.item.t === "permission" && document.hidden === false && !chatBox(p.id)) {
     const t = state.threads.find((x) => x.id === p.id);
-    toast(`${t ? t.title : "An agent"} is asking for permission. It is under Needs you on the left.`);
+    toast(I18N.t("chat.asking", { name: t ? t.title : I18N.t("chat.anAgent") }));
   }
   if (["permission", "permission_answer", "turn_end", "exit"].includes(p.item.t)) {
     drawThreadList();
@@ -153,7 +153,7 @@ function chatBlocks(log) {
       }
       case "tool_call": {
         endText();
-        const b = { k: "tool", id: u.toolCallId, title: u.title || "Tool call", kind: u.kind || "other", status: u.status || "pending", content: u.content || [], locations: u.locations || [] };
+        const b = { k: "tool", id: u.toolCallId, title: u.title || I18N.t("chat.toolCall"), kind: u.kind || "other", status: u.status || "pending", content: u.content || [], locations: u.locations || [] };
         tools.set(u.toolCallId, b);
         blocks.push(b);
         break;
@@ -190,8 +190,8 @@ function diffView(c, t) {
   const rows = [];
   for (const l of old.slice(a, old.length - b).slice(0, 80)) rows.push(h("span", { class: "del" }, "- " + l));
   for (const l of neu.slice(a, neu.length - b).slice(0, 80)) rows.push(h("span", { class: "add" }, "+ " + l));
-  return h("div", { class: "chat-diff" }, h("div", { class: "muted small mono" }, relPath(c.path, t) + (c.oldText == null ? " (new file)" : "")),
-    h("pre", { class: "diff" }, rows.length ? rows : h("span", { class: "muted" }, "(no change)")));
+  return h("div", { class: "chat-diff" }, h("div", { class: "muted small mono" }, relPath(c.path, t) + (c.oldText == null ? " " + I18N.t("chat.newFile") : "")),
+    h("pre", { class: "diff" }, rows.length ? rows : h("span", { class: "muted" }, I18N.t("chat.noChange"))));
 }
 
 function toolContent(b, t) {
@@ -199,7 +199,7 @@ function toolContent(b, t) {
   for (const c of b.content || []) {
     if (c.type === "diff") out.push(diffView(c, t));
     else if (c.type === "content" && c.content && c.content.type === "text" && c.content.text) out.push(h("pre", { class: "chat-tool-out" }, c.content.text.slice(0, 4000)));
-    else if (c.type === "terminal") out.push(h("div", { class: "muted small" }, "Terminal output (shown in the agent)"));
+    else if (c.type === "terminal") out.push(h("div", { class: "muted small" }, I18N.t("chat.terminalOut")));
   }
   return out;
 }
@@ -208,13 +208,13 @@ function blockNode(b, t, id) {
   switch (b.k) {
     case "user":
       if (b.text && typeof b.text === "object" && b.text.context) {
-        return h("details", { class: "chat-context" }, h("summary", null, "Evyro gave the agent the task context"), h("pre", null, b.text.context));
+        return h("details", { class: "chat-context" }, h("summary", null, I18N.t("chat.gaveContext")), h("pre", null, b.text.context));
       }
-      return h("div", { class: "chat-msg you", "data-message-index": b.index }, h("div", { class: "chat-who" }, "You"), h("div", { class: "chat-text" }, b.text));
+      return h("div", { class: "chat-msg you", "data-message-index": b.index }, h("div", { class: "chat-who" }, I18N.t("chat.you")), h("div", { class: "chat-text" }, b.text));
     case "agent":
       return h("div", { class: "chat-msg agent", "data-message-index": b.index }, b.first ? h("div", { class: "chat-who" }, t.agent || t.target) : null, h("div", { class: "chat-text" }, b.text));
     case "thought":
-      return h("details", { class: "chat-thought" }, h("summary", null, "Thinking"), h("div", { class: "chat-text muted" }, b.text));
+      return h("details", { class: "chat-thought" }, h("summary", null, I18N.t("chat.thinking")), h("div", { class: "chat-text muted" }, b.text));
     case "tool": {
       const loc = (b.locations || []).map((l) => relPath(l.path, t)).filter(Boolean)[0];
       return h("div", { class: "chat-tool " + b.status },
@@ -226,7 +226,7 @@ function blockNode(b, t, id) {
         toolContent(b, t));
     }
     case "plan":
-      return h("div", { class: "chat-plan" }, h("div", { class: "side-label" }, "Plan"),
+      return h("div", { class: "chat-plan" }, h("div", { class: "side-label" }, I18N.t("chat.plan")),
         h("ul", null, b.entries.map((e) => h("li", { class: e.status }, h("span", { class: "chk", "aria-hidden": "true" }, e.status === "completed" ? "✓" : e.status === "in_progress" ? "◐" : "○"), e.content))));
     case "perm": {
       const tc = b.params.toolCall || {};
@@ -234,23 +234,23 @@ function blockNode(b, t, id) {
       const chosen = opts.find((o) => o.optionId === b.answer);
       const canAnswer = t.running && b.answer === undefined;
       return h("div", { class: "chat-perm" + (canAnswer ? " open" : "") },
-        h("div", null, h("strong", null, "The agent asks: "), tc.title || "run a tool", tc.kind ? h("span", { class: "muted small" }, ` (${tc.kind})`) : null),
+        h("div", null, h("strong", null, I18N.t("chat.asks")), " ", tc.title || I18N.t("chat.runTool"), tc.kind ? h("span", { class: "muted small" }, ` (${tc.kind})`) : null),
         canAnswer
           ? h("div", { class: "row" }, opts.map((o) => h("button", {
             class: "btn small" + (o.kind && o.kind.startsWith("allow") ? " primary" : ""),
             onclick: (ev) => { ev.target.disabled = true; act(() => invoke("chat_permission", { id, request: b.request, optionId: o.optionId })); },
           }, o.name)))
-          : h("div", { class: "muted small" }, chosen ? `You chose: ${chosen.name}` : b.answer === undefined ? "No answer recorded" : "Cancelled"));
+          : h("div", { class: "muted small" }, chosen ? I18N.t("chat.chose", { name: chosen.name }) : b.answer === undefined ? I18N.t("chat.noAnswer") : I18N.t("chat.cancelled")));
     }
     case "file":
-      if (b.op === "write") return h("div", { class: "chat-note" }, `✎ Wrote ${b.path}`);
-      return h("div", { class: "chat-note warn" }, `⊘ Refused ${relPath(b.path, t)}: ${b.reason}`);
+      if (b.op === "write") return h("div", { class: "chat-note" }, "✎ " + I18N.t("chat.wrote", { path: b.path }));
+      return h("div", { class: "chat-note warn" }, "⊘ " + I18N.t("chat.refused", { path: relPath(b.path, t), reason: b.reason }));
     case "turn":
-      return h("div", { class: "chat-note" }, b.reason === "end_turn" ? "Turn ended" : `Turn ended: ${String(b.reason).replace(/_/g, " ")}`);
+      return h("div", { class: "chat-note" }, b.reason === "end_turn" ? I18N.t("chat.turnEnded") : I18N.t("chat.turnEndedWhy", { reason: String(b.reason).replace(/_/g, " ") }));
     case "error":
       return h("div", { class: "banner bad" }, b.message);
     case "exit":
-      return h("div", { class: "chat-note" }, `The agent stopped${b.code != null ? ` (exit code ${b.code})` : ""}.`);
+      return h("div", { class: "chat-note" }, b.code != null ? I18N.t("chat.stoppedCode", { code: b.code }) : I18N.t("chat.stopped"));
     default:
       return null;
   }
@@ -263,8 +263,8 @@ function drawChatLog(id) {
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   const blocks = chatBlocks(chatData(id).log);
   clear(box).append(...blocks.map((b) => blockNode(b, t, id)).filter(Boolean));
-  if (t.busy) box.append(h("div", { class: "chat-working muted small" }, t.state === "starting" ? "Starting the agent…" : "Working…"));
-  if (!blocks.length && !t.busy) box.append(h("div", { class: "muted small" }, "No messages yet."));
+  if (t.busy) box.append(h("div", { class: "chat-working muted small" }, t.state === "starting" ? I18N.t("chat.starting") : I18N.t("chat.working")));
+  if (!blocks.length && !t.busy) box.append(h("div", { class: "muted small" }, I18N.t("chat.noMessages")));
   if (atBottom) box.scrollTop = box.scrollHeight;
   drawChatComposer(t);
 }
@@ -274,20 +274,20 @@ function drawChatHead(t) {
   if (!head) return;
   clear(head).append(
     h("div", { class: "pane-title" }, agentBadge(t), h("div", null, h("div", { class: "thread-name" }, h("span", { class: "thread-title" }, t.title), threadStatus(t)),
-      h("div", { class: "row muted small", title: t.session ? `Session ${t.session}` : null },
-        t.archived ? "Saved transcript · read-only" : t.agent ? `${t.agent} over ACP` : "ACP chat", chatModelPicker(t)))),
+      h("div", { class: "row muted small", title: t.session ? I18N.t("chat.session", { id: t.session }) : null },
+        t.archived ? I18N.t("chat.saved") : t.agent ? I18N.t("chat.overAcp", { agent: t.agent }) : I18N.t("chat.acpChat"), chatModelPicker(t)))),
     h("div", { class: "row" },
-      t.running ? h("button", { class: "btn small", onclick: () => sendContext(t), disabled: t.busy || t.switching_model || t.state !== "ready", title: "Send the shared context packet as a message" }, "Send context") : null,
-      t.busy && t.state !== "starting" ? h("button", { class: "btn small", onclick: () => act(() => invoke("chat_cancel", { id: t.id })) }, "Stop turn") : null,
+      t.running ? h("button", { class: "btn small", onclick: () => sendContext(t), disabled: t.busy || t.switching_model || t.state !== "ready", title: I18N.t("chat.sendContext.title") }, I18N.t("chat.sendContext")) : null,
+      t.busy && t.state !== "starting" ? h("button", { class: "btn small", onclick: () => act(() => invoke("chat_cancel", { id: t.id })) }, I18N.t("chat.stopTurn")) : null,
       continueButton(t),
-      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, t.running ? "End chat" : t.archived ? "Delete transcript" : "Close chat"),
+      h("button", { class: "btn small", onclick: () => closeThread(t.id) }, t.running ? I18N.t("chat.end") : t.archived ? I18N.t("thread.deleteAction") : I18N.t("chat.close")),
       paneRemoveBtn(t.id)));
 }
 
 function chatModelPicker(t) {
   const model = t.model_choice;
   if (!t.running || !model?.options?.length) return null;
-  const select = h("select", { class: "chat-model", "aria-label": "Chat model", title: "Change model for this chat",
+  const select = h("select", { class: "chat-model", "aria-label": I18N.t("chat.model"), title: I18N.t("chat.model.title"),
     disabled: t.busy || t.switching_model || t.state !== "ready" },
     model.options.map((item) => h("option", { value: item.value }, item.name)));
   select.value = model.current;
@@ -309,7 +309,7 @@ function drawChatComposer(t) {
   if (!send || !input) return;
   const can = t.running && !t.busy && !t.switching_model && t.state === "ready";
   send.disabled = !can;
-  input.placeholder = !t.running ? "The chat has ended." : t.busy ? "The agent is working…" : `Message ${t.agent || t.target}…  (Enter sends, Shift+Enter for a new line)`;
+  input.placeholder = !t.running ? I18N.t("chat.ph.ended") : t.busy ? I18N.t("chat.ph.busy") : I18N.t("chat.ph.ready", { name: t.agent || t.target });
 }
 
 async function loadOpeningDraft(t) {
@@ -342,7 +342,7 @@ async function drawChatPane(pane, t, takeFocus = true) {
     d.loaded = true;
   }
   if (!pane.isConnected || pane.dataset.id !== t.id) return;
-  const input = h("textarea", { class: "chat-input", "data-id": t.id, rows: "2", "aria-label": `Message to ${t.title}` });
+  const input = h("textarea", { class: "chat-input", "data-id": t.id, rows: "2", "aria-label": I18N.t("chat.msgTo", { title: t.title }) });
   input.value = d.draft || "";
   input.addEventListener("input", () => { d.draft = input.value; d.openingDraft = false; });
   const submit = async () => {
@@ -360,9 +360,9 @@ async function drawChatPane(pane, t, takeFocus = true) {
   });
   pane.append(h("div", { class: "chat" },
     h("div", { class: "thread-head chat-head", "data-id": t.id }),
-    t.history_truncated ? h("div", { class: "chat-note" }, "Earlier messages were trimmed from this transcript.") : null,
-    h("div", { class: "chat-log", "data-id": t.id, "aria-live": "polite", tabindex: "0", "aria-label": `Conversation with ${t.title}` }),
-    t.archived ? null : h("div", { class: "chat-compose" }, input, h("button", { class: "btn primary chat-send", "data-id": t.id, onclick: submit }, "Send"))));
+    t.history_truncated ? h("div", { class: "chat-note" }, I18N.t("chat.trimmed")) : null,
+    h("div", { class: "chat-log", "data-id": t.id, "aria-live": "polite", tabindex: "0", "aria-label": I18N.t("chat.convo", { title: t.title }) }),
+    t.archived ? null : h("div", { class: "chat-compose" }, input, h("button", { class: "btn primary chat-send", "data-id": t.id, onclick: submit }, I18N.t("review.send")))));
   drawChatHead(t);
   loadOpeningDraft(t);
   drawChatLog(t.id);
