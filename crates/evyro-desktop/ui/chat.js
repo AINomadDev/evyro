@@ -256,16 +256,55 @@ function blockNode(b, t, id) {
   }
 }
 
+/** What a row of the transcript shows; when it changes the row is drawn again. */
+function blockSig(b, t) {
+  return JSON.stringify(b) + (b.k === "perm" ? "|" + t.running : "") + (b.k === "agent" && b.first ? "|" + (t.agent || t.target) : "");
+}
+
+/** Tell a screen reader what arrived: a question for you, an error, or the agent's answer when its turn ends. */
+function speakNew(id, blocks) {
+  const d = chatData(id);
+  const live = chatPart("chat-live", id);
+  const from = d.spoken ?? blocks.length;
+  d.spoken = blocks.length;
+  if (!live) return;
+  const said = [];
+  for (let i = from; i < blocks.length; i++) {
+    const b = blocks[i];
+    if (b.k === "perm") said.push(I18N.t("chat.asks") + " " + ((b.params.toolCall || {}).title || I18N.t("chat.runTool")));
+    else if (b.k === "error") said.push(b.message);
+    else if (b.k === "turn") {
+      const last = blocks.slice(0, i).reverse().find((x) => x.k === "agent" || x.k === "user");
+      if (last && last.k === "agent") said.push(last.text);
+    }
+  }
+  if (said.length) live.textContent = said.join("\n");
+}
+
+/** Draw a chat's transcript. Only the messages near the view are in the page (see vlist.js). */
 function drawChatLog(id) {
   const box = chatBox(id);
   const t = state.threads.find((x) => x.id === id);
   if (!box || !t) return;
+  const d = chatData(id);
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-  const blocks = chatBlocks(chatData(id).log);
-  clear(box).append(...blocks.map((b) => blockNode(b, t, id)).filter(Boolean));
-  if (t.busy) box.append(h("div", { class: "chat-working muted small" }, t.state === "starting" ? I18N.t("chat.starting") : I18N.t("chat.working")));
-  if (!blocks.length && !t.busy) box.append(h("div", { class: "muted small" }, I18N.t("chat.noMessages")));
-  if (atBottom) box.scrollTop = box.scrollHeight;
+  const blocks = chatBlocks(d.log);
+  if (!box._chat) {
+    const view = { blocks, t, tail: h("div") };
+    view.list = vlist({ scroller: box, count: 0, role: "feed", estimate: 60, anchor: true, heights: (d.heights ||= new Map()),
+      render: (i) => blockNode(view.blocks[i], view.t, id), sig: (i) => blockSig(view.blocks[i], view.t) });
+    box.append(view.list.el, view.tail);
+    box._chat = view;
+  }
+  const view = box._chat;
+  view.blocks = blocks;
+  view.t = t;
+  view.list.update(blocks.length);
+  clear(view.tail);
+  if (t.busy) view.tail.append(h("div", { class: "chat-working muted small" }, t.state === "starting" ? I18N.t("chat.starting") : I18N.t("chat.working")));
+  if (!blocks.length && !t.busy) view.tail.append(h("div", { class: "muted small" }, I18N.t("chat.noMessages")));
+  if (atBottom) view.list.scrollToEnd();
+  speakNew(id, blocks);
   drawChatComposer(t);
 }
 
@@ -361,14 +400,22 @@ async function drawChatPane(pane, t, takeFocus = true) {
   pane.append(h("div", { class: "chat" },
     h("div", { class: "thread-head chat-head", "data-id": t.id }),
     t.history_truncated ? h("div", { class: "chat-note" }, I18N.t("chat.trimmed")) : null,
-    h("div", { class: "chat-log", "data-id": t.id, "aria-live": "polite", tabindex: "0", "aria-label": I18N.t("chat.convo", { title: t.title }) }),
+    h("div", { class: "chat-log", "data-id": t.id, tabindex: "0", "aria-label": I18N.t("chat.convo", { title: t.title }) }),
+    h("div", { class: "sr-only chat-live", "data-id": t.id, "aria-live": "polite" }),
     t.archived ? null : h("div", { class: "chat-compose" }, input, h("button", { class: "btn primary chat-send", "data-id": t.id, onclick: submit }, I18N.t("review.send")))));
   drawChatHead(t);
   loadOpeningDraft(t);
+  d.spoken = undefined;
   drawChatLog(t.id);
   const box = chatBox(t.id);
-  if (box) box.scrollTop = box.scrollHeight;
-  const hit = d.searchHit == null ? null : box?.querySelector(`[data-message-index="${d.searchHit}"]`);
+  const view = box?._chat;
+  // A search hit may be far from the end: bring in the message that holds it, then find it there.
+  let hit = null;
+  if (view && d.searchHit != null) {
+    let bi = -1;
+    view.blocks.forEach((b, i) => { if (b.index != null && b.index <= d.searchHit) bi = i; });
+    hit = bi < 0 ? null : view.list.scrollToIndex(bi, "center")?.querySelector("[data-message-index]");
+  }
   delete d.searchHit;
   if (hit) {
     hit.classList.add("chat-search-hit");
