@@ -4,7 +4,7 @@
 "use strict";
 
 const invoke = (cmd, args = {}) => {
-  if (!window.__TAURI__) return Promise.reject({ code: "no_backend", message: "Evyro backend not available" });
+  if (!window.__TAURI__) return Promise.reject({ code: "no_backend", message: I18N.t("app.noBackend") });
   return window.__TAURI__.core.invoke(cmd, args);
 };
 
@@ -60,7 +60,7 @@ function toast(msg, bad = false) {
   setTimeout(() => t.remove(), bad ? 7000 : 3500);
 }
 function errMsg(e) {
-  if (!e) return "Unknown error";
+  if (!e) return I18N.t("app.unknownError");
   if (typeof e === "string") return e;
   return e.message || JSON.stringify(e);
 }
@@ -74,9 +74,9 @@ async function act(fn, okMsg) {
     throw e;
   }
 }
-async function copy(text, what = "Copied") {
+async function copy(text, what = I18N.t("app.copied")) {
   try { await navigator.clipboard.writeText(text); toast(what); }
-  catch { toast("Could not copy to the clipboard", true); }
+  catch { toast(I18N.t("app.copyFailed"), true); }
 }
 
 const STATUS_PILL = {
@@ -87,7 +87,11 @@ const STATUS_PILL = {
   incompatible: "bad", unknown_version: "warn", not_installed: "", fallback_only: "warn",
   needs_setup: "warn", missing: "bad", unknown: "",
 };
-const PROV = { human_recorded: "checked by you", evyro_verified: "backed by a passing test receipt", agent_reported: "reported by an agent" };
+const PROV = {
+  get human_recorded() { return I18N.t("app.prov.human"); },
+  get evyro_verified() { return I18N.t("app.prov.receipt"); },
+  get agent_reported() { return I18N.t("app.prov.agent"); },
+};
 const pill = (s, label) => h("span", { class: "pill " + (STATUS_PILL[s] ?? "") }, label ?? String(s).replace(/_/g, " "));
 
 // ---------- modal ----------
@@ -109,7 +113,7 @@ function modal(title, bodyNodes, actions) {
     h("div", { class: "modal", role: "dialog", "aria-label": title },
       h("h2", null, title), bodyNodes,
       h("div", { class: "actions" },
-        h("button", { class: "btn", onclick: close }, actions.length ? "Cancel" : "Close"),
+        h("button", { class: "btn", onclick: close }, actions.length ? I18N.t("common.cancel") : I18N.t("frame.close")),
         actions.map((a) => h("button", {
           class: "btn " + (a.primary ? "primary" : ""), onclick: async (ev) => {
             ev.target.disabled = true;
@@ -145,7 +149,13 @@ const state = {
   agents: null,
   targets: null,
 };
-const KIND_LABEL = { harness: "Coding agent", api: "API key", ide: "AI IDE", chat: "Chat app" };
+// Getters, so labels follow the language and comparisons like `g.label === KIND_LABEL.harness` still match.
+const KIND_LABEL = {
+  get harness() { return I18N.t("app.kind.harness"); },
+  get api() { return I18N.t("app.kind.api"); },
+  get ide() { return I18N.t("app.kind.ide"); },
+  get chat() { return I18N.t("app.kind.chat"); },
+};
 
 /** Switch targets with readiness, cached until something changes. */
 async function loadTargets(force) {
@@ -183,7 +193,7 @@ async function handTo(target, taskKey, el, acceptDrift = false, handoffId = null
     } catch (e) {
       if (e && e.code === "conflict" && !handoffId) {
         // The task is still with another AI: pass it on with a handoff instead.
-        toast("This task is still with another AI. Write a short handoff and Evyro passes it on.");
+        toast(I18N.t("app.hand.conflict"));
         handoffDialog(taskKey, target);
         return false;
       }
@@ -192,8 +202,8 @@ async function handTo(target, taskKey, el, acceptDrift = false, handoffId = null
     }
     if (r.drift) { showDrift(el, r.drift, () => handTo(target, taskKey, el, true, handoffId)); return false; }
     const x = r.handover;
-    const where = kind === "ide" ? "Paste it into the IDE's AI chat." : "Paste it into a new chat.";
-    toast(`${x.opened ? "Opened " + x.display + ". " : ""}${x.copied_to_clipboard ? "Hand-over text copied. " + where : "Hand-over text saved to " + x.file + ". Copy it from there."}`);
+    const where = kind === "ide" ? I18N.t("app.hand.pasteIde") : I18N.t("app.hand.pasteChat");
+    toast((x.opened ? I18N.t("app.hand.opened", { name: x.display }) + " " : "") + (x.copied_to_clipboard ? I18N.t("app.hand.copied") + " " + where : I18N.t("app.hand.saved", { file: x.file })));
     render();
     return true;
   }
@@ -203,8 +213,8 @@ async function handTo(target, taskKey, el, acceptDrift = false, handoffId = null
 /** Start `evyro run --to <target>` in a separate Terminal window instead of a thread. */
 async function openInTerminal(target, taskKey, handoffId = null) {
   const r = await act(() => invoke("open_in_terminal", { projectId: state.project.id, target, task: taskKey || null, handoffId }));
-  if (r.opened) toast(`Started ${target} in Terminal. It picks up the handoff there.`);
-  else { await copy(r.command, "This computer has no Terminal hook. Command copied; run it in a terminal."); }
+  if (r.opened) toast(I18N.t("app.term.started", { name: target }));
+  else { await copy(r.command, I18N.t("app.term.noHook")); }
   return true;
 }
 
@@ -218,7 +228,7 @@ async function loadProjects(selectId) {
     return;
   }
   const nav = clear($("#project-list"));
-  if (!state.projects.length) nav.append(h("div", { class: "muted small", style: "padding:8px 10px" }, "No projects yet."));
+  if (!state.projects.length) nav.append(h("div", { class: "muted small", style: "padding:8px 10px" }, I18N.t("app.noProjects")));
   for (const p of state.projects) {
     nav.append(h("button", {
       class: "project-item" + (state.project && state.project.id === p.id ? " active" : ""),
@@ -250,20 +260,20 @@ function selectProject(id, silent) {
 }
 
 function addProjectDialog() {
-  const input = h("input", { type: "text", placeholder: "/Users/you/Developer/my-app" });
+  const input = h("input", { type: "text", placeholder: I18N.t("app.add.ph") });
   const choose = h("button", {
     class: "btn small", type: "button", onclick: async () => {
       try { const p = await invoke("pick_folder"); if (p) input.value = p; }
       catch (e) { toast(errMsg(e), true); }
     },
-  }, "Choose folder…");
-  modal("Add a project", [
-    field("Repository folder", h("div", { class: "row" }, input, choose), "Choose a Git repository, or paste its path. Evyro creates .evyro/ there and adds an Evyro section to agent instruction files only where none exists."),
+  }, I18N.t("app.add.choose"));
+  modal(I18N.t("app.add.title"), [
+    field(I18N.t("app.add.folder"), h("div", { class: "row" }, input, choose), I18N.t("app.add.hint")),
   ], [{
-    label: "Add project", primary: true, run: async () => {
+    label: I18N.t("app.add.button"), primary: true, run: async () => {
       const path = input.value.trim();
-      if (!path) { toast("Enter a folder path", true); return false; }
-      const r = await act(() => invoke("add_project", { path }), "Project added");
+      if (!path) { toast(I18N.t("app.add.empty"), true); return false; }
+      const r = await act(() => invoke("add_project", { path }), I18N.t("app.add.done"));
       await loadProjects(r.project.id);
     },
   }]);
@@ -304,7 +314,7 @@ function render() {
 
 function renderBackendError(e) {
   const v = clear($("#view"));
-  v.append(h("div", { class: "banner bad" }, "Could not open the Evyro database: ", errMsg(e)));
+  v.append(h("div", { class: "banner bad" }, I18N.t("app.dbError") + " ", errMsg(e)));
 }
 
 // ---------- overview ----------
@@ -317,55 +327,55 @@ async function viewOverview(v) {
     if (!v.isConnected || state.project.id !== pid) return;
     clear(v);
     if (o.recovered && o.recovered.length) {
-      v.append(h("div", { class: "banner warn" }, `${o.recovered.length} session(s) had exited and were closed out with a recovery checkpoint.`));
+      v.append(h("div", { class: "banner warn" }, I18N.t("app.ov.recovered", { count: o.recovered.length })));
     }
     if (o.pending_handoff) {
       const hd = o.pending_handoff;
       v.append(h("div", { class: "banner info" },
-        h("strong", null, "Handoff waiting"), ` for ${hd.to_harness} (quality ${hd.quality.met}/${hd.quality.total}), prepared ${ago(hd.created_at)}.`,
+        h("strong", null, I18N.t("app.ov.handoff")), " " + I18N.t("app.ov.handoffFor", { name: hd.to_harness, met: hd.quality.met, total: hd.quality.total, when: ago(hd.created_at) }),
         h("span", { class: "spacer" }),
-        h("button", { class: "btn small", onclick: () => openHandoff(hd.id) }, "Review")));
+        h("button", { class: "btn small", onclick: () => openHandoff(hd.id) }, I18N.t("ws.ctx.review"))));
     }
     if (!o.project.commands.test.length) {
-      v.append(h("div", { class: "banner warn" }, "No test command is configured, so agents cannot record verification receipts.",
-        h("span", { class: "spacer" }), h("button", { class: "btn small", onclick: () => setTab("settings") }, "Set one up")));
+      v.append(h("div", { class: "banner warn" }, I18N.t("app.ov.noTest"),
+        h("span", { class: "spacer" }), h("button", { class: "btn small", onclick: () => setTab("settings") }, I18N.t("app.ov.setUp"))));
     }
 
     const grid = h("div", { class: "grid" });
     // Active task
     const t = o.active_task;
     grid.append(h("div", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", null, "Active task"), t ? pill(t.status) : null),
+      h("div", { class: "card-head" }, h("h2", null, I18N.t("ws.ctx.active")), t ? pill(t.status) : null),
       t ? [
         h("div", null, h("span", { class: "key" }, t.key), " ", h("strong", null, t.title)),
         h("dl", { class: "kv", style: "margin-top:10px" },
-          h("dt", null, "Owner"), h("dd", null, o.owner ? `${o.owner.harness} · session ${short(o.owner.id, 12)}` : "nobody"),
-          h("dt", null, "Last checkpoint"), h("dd", null, o.latest_checkpoint ? `${ago(o.latest_checkpoint.created_at)} (${o.latest_checkpoint.trigger})` : "none"),
-          h("dt", null, "Next step"), h("dd", null, (o.latest_checkpoint && o.latest_checkpoint.next_action) || "-")),
+          h("dt", null, I18N.t("ws.ctx.owner")), h("dd", null, o.owner ? I18N.t("app.ov.ownerSession", { name: o.owner.harness, id: short(o.owner.id, 12) }) : I18N.t("ws.ctx.nobody")),
+          h("dt", null, I18N.t("app.ov.lastCp")), h("dd", null, o.latest_checkpoint ? `${ago(o.latest_checkpoint.created_at)} (${o.latest_checkpoint.trigger})` : I18N.t("app.none")),
+          h("dt", null, I18N.t("app.ov.nextStep")), h("dd", null, (o.latest_checkpoint && o.latest_checkpoint.next_action) || "-")),
         h("div", { class: "row", style: "margin-top:12px" },
-          h("button", { class: "btn small", onclick: () => openTask(t.key) }, "Open task"),
-          h("button", { class: "btn small", onclick: () => handoffDialog(t.key) }, "Hand off"),
-          h("button", { class: "btn small", onclick: () => copyContext(t.key) }, "Copy context for an agent")),
-      ] : h("div", { class: "empty" }, "Nothing in progress. ", h("button", { class: "btn small", onclick: () => setTab("tasks") }, "Pick a task"))));
+          h("button", { class: "btn small", onclick: () => openTask(t.key) }, I18N.t("ws.ctx.openTask")),
+          h("button", { class: "btn small", onclick: () => handoffDialog(t.key) }, I18N.t("app.ov.handOff")),
+          h("button", { class: "btn small", onclick: () => copyContext(t.key) }, I18N.t("app.ov.copyContext"))),
+      ] : h("div", { class: "empty" }, I18N.t("ws.ctx.idle") + " ", h("button", { class: "btn small", onclick: () => setTab("tasks") }, I18N.t("ws.ctx.pickTask")))));
 
     // Repository
     const g = o.git;
     grid.append(h("div", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", null, "Repository"), g ? (g.dirty ? pill("warn", `${g.files.length} changed`) : pill("ok", "clean")) : pill("bad", "not readable")),
+      h("div", { class: "card-head" }, h("h2", null, I18N.t("app.ov.repo")), g ? (g.dirty ? pill("warn", I18N.t("app.ov.changed", { count: g.files.length })) : pill("ok", I18N.t("ws.bar.clean"))) : pill("bad", I18N.t("app.ov.unreadable"))),
       g ? [
         h("dl", { class: "kv" },
-          h("dt", null, "Branch"), h("dd", null, g.branch || "(detached)"),
+          h("dt", null, I18N.t("app.ov.branch")), h("dd", null, g.branch || I18N.t("app.ov.detached")),
           h("dt", null, "HEAD"), h("dd", { class: "mono" }, short(g.head, 10)),
-          g.upstream ? [h("dt", null, "Upstream"), h("dd", null, `${g.upstream} (+${g.ahead ?? 0} / -${g.behind ?? 0})`)] : null),
+          g.upstream ? [h("dt", null, I18N.t("app.ov.upstream")), h("dd", null, `${g.upstream} (+${g.ahead ?? 0} / -${g.behind ?? 0})`)] : null),
         g.files.length ? h("ul", { class: "list", style: "margin-top:8px" },
           g.files.slice(0, 8).map((f) => h("li", null, h("code", null, f.status), h("span", { class: "mono" }, f.path))),
-          g.files.length > 8 ? h("li", { class: "muted" }, `and ${g.files.length - 8} more`) : null) : null,
-      ] : h("div", { class: "muted" }, "Git could not read this folder.")));
+          g.files.length > 8 ? h("li", { class: "muted" }, I18N.t("app.ov.more", { count: g.files.length - 8 })) : null) : null,
+      ] : h("div", { class: "muted" }, I18N.t("app.ov.gitError"))));
 
     // Health
     const counts = o.health.task_counts || {};
     grid.append(h("div", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", null, "Health"), o.health.findings.length ? pill("warn", `${o.health.findings.length} finding(s)`) : pill("ok", "all clear")),
+      h("div", { class: "card-head" }, h("h2", null, I18N.t("app.ov.health")), o.health.findings.length ? pill("warn", I18N.t("app.ov.findings", { count: o.health.findings.length })) : pill("ok", I18N.t("app.ov.allClear"))),
       h("div", { class: "stat-row" },
         ["in_progress", "ready", "blocked", "verified", "done"].map((k) => h("div", { class: "stat" }, h("span", { class: "n" }, counts[k] || 0), h("span", { class: "l" }, k.replace("_", " "))))),
       o.health.findings.length ? h("ul", { class: "list", style: "margin-top:10px" },
@@ -373,11 +383,11 @@ async function viewOverview(v) {
 
     // Activity
     grid.append(h("div", { class: "card wide" },
-      h("div", { class: "card-head" }, h("h2", null, "Recent activity"), h("span", { class: "muted small" }, "refreshes every few seconds")),
-      o.events.length ? h("ul", { class: "timeline" }, o.events.slice().reverse().map((e) => h("li", null, h("span", { class: "when" }, ago(e.created_at)), h("span", null, describeEvent(e))))) : h("div", { class: "empty" }, "No activity yet.")));
+      h("div", { class: "card-head" }, h("h2", null, I18N.t("app.ov.activity")), h("span", { class: "muted small" }, I18N.t("app.ov.refreshes"))),
+      o.events.length ? h("ul", { class: "timeline" }, o.events.slice().reverse().map((e) => h("li", null, h("span", { class: "when" }, ago(e.created_at)), h("span", null, describeEvent(e))))) : h("div", { class: "empty" }, I18N.t("ws.ctx.noActivity"))));
     v.append(grid);
   };
-  v.append(h("div", { class: "muted" }, "Loading…"));
+  v.append(h("div", { class: "muted" }, I18N.t("app.loading")));
   await draw();
   state.timer = setInterval(draw, 4000);
 }
@@ -385,32 +395,32 @@ async function viewOverview(v) {
 function describeEvent(e) {
   const p = e.payload || {};
   switch (e.kind) {
-    case "task.created": return `Task created: ${p.title || ""}`;
-    case "task.status_changed": return `Task moved ${p.from} → ${p.to} by ${p.actor || "?"}${p.override_reason ? " (override: " + p.override_reason + ")" : ""}`;
-    case "task.criterion_checked": return `Acceptance criterion ${p.index} marked ${p.met ? "met" : "not met"} (${p.provenance})`;
-    case "handoff.prepared": return `Handoff prepared ${p.from || "?"} → ${p.to} (quality ${p.quality})`;
-    case "handoff.accepted": return `Handoff accepted by ${p.agent}${p.drift ? " with drift accepted" : ""}`;
-    case "handoff.reopened": return `Handoff reopened: ${p.reason}`;
-    case "handoff.drift_detected": return `Resume blocked by drift: ${p.summary}`;
-    case "verification.completed": return `Verification ${p.passed ? "passed" : "failed"}: ${(p.command || []).join(" ")}`;
-    case "checkpoint.created": return `Checkpoint (${p.trigger || "manual"})`;
-    case "session.status_changed": return `Session ${p.from} → ${p.to}${p.reason ? " (" + p.reason + ")" : ""}`;
-    case "agent.started": return `Agent launched (${p.mode})`;
-    case "agent.handed_to_app": return `Handed to ${p.target || "an app"}${p.opened ? " (app opened)" : ""}`;
-    case "agent.stopped": return `Agent exited (code ${p.exit_code ?? "signal"})`;
+    case "task.created": return I18N.t("app.ev.created", { title: p.title || "" });
+    case "task.status_changed": return I18N.t("app.ev.moved", { from: p.from, to: p.to, actor: p.actor || "?" }) + (p.override_reason ? " " + I18N.t("app.ev.override", { reason: p.override_reason }) : "");
+    case "task.criterion_checked": return p.met ? I18N.t("app.ev.critMet", { index: p.index, how: p.provenance }) : I18N.t("app.ev.critNotMet", { index: p.index, how: p.provenance });
+    case "handoff.prepared": return I18N.t("app.ev.handoff", { from: p.from || "?", to: p.to, quality: p.quality });
+    case "handoff.accepted": return p.drift ? I18N.t("app.ev.acceptedDrift", { name: p.agent }) : I18N.t("app.ev.accepted", { name: p.agent });
+    case "handoff.reopened": return I18N.t("app.ev.reopened", { reason: p.reason });
+    case "handoff.drift_detected": return I18N.t("app.ev.drift", { summary: p.summary });
+    case "verification.completed": return p.passed ? I18N.t("app.ev.passed", { command: (p.command || []).join(" ") }) : I18N.t("app.ev.failed", { command: (p.command || []).join(" ") });
+    case "checkpoint.created": return I18N.t("app.ev.checkpoint", { trigger: p.trigger || "manual" });
+    case "session.status_changed": return I18N.t("app.ev.session", { from: p.from, to: p.to }) + (p.reason ? " (" + p.reason + ")" : "");
+    case "agent.started": return I18N.t("app.ev.launched", { mode: p.mode });
+    case "agent.handed_to_app": return p.opened ? I18N.t("app.ev.handedOpened", { name: p.target || I18N.t("app.ev.anApp") }) : I18N.t("app.ev.handed", { name: p.target || I18N.t("app.ev.anApp") });
+    case "agent.stopped": return I18N.t("app.ev.exited", { code: p.exit_code ?? "signal" });
     default: return e.kind.replace(/[._]/g, " ");
   }
 }
 
 async function copyContext(taskKey) {
   const r = await act(() => invoke("context_packet", { projectId: state.project.id, task: taskKey, budget: "large" }));
-  copy(r.text, `Context copied (about ${r.packet.approx_tokens} tokens)`);
+  copy(r.text, I18N.t("app.contextCopied", { tokens: r.packet.approx_tokens }));
 }
 
 // ---------- tasks ----------
-const COLUMNS = [
-  ["backlog", "Backlog"], ["ready", "Ready"], ["in_progress", "In progress"], ["blocked", "Blocked"],
-  ["in_review", "In review"], ["verified", "Verified"], ["done", "Done"],
+const columns = () => [
+  ["backlog", I18N.t("app.col.backlog")], ["ready", I18N.t("app.col.ready")], ["in_progress", I18N.t("app.col.inProgress")], ["blocked", I18N.t("app.col.blocked")],
+  ["in_review", I18N.t("app.col.inReview")], ["verified", I18N.t("app.col.verified")], ["done", I18N.t("app.col.done")],
 ];
 
 /** Start the most important ready task on a free AI. Nothing to pick or set up. */
@@ -421,7 +431,7 @@ async function workOnNext(button = null) {
     const next = await act(() => invoke("next_work", { projectId }));
     if (state.project?.id !== projectId) return;
     await startThread({ kind: "agent", target: next.agent, task: next.task.key });
-    toast(`Started ${next.task.key} with ${next.agent}.`);
+    toast(I18N.t("app.next.started", { task: next.task.key, name: next.agent }));
   } catch { /* act reported the reason */ }
   finally { if (button?.isConnected) button.disabled = false; }
 }
@@ -435,7 +445,7 @@ const isSample = (p) => !!p && p.name === "Evyro sample" && /[\\/]samples[\\/]ev
 /** Create (or reopen) the sample project, open it, and show the tour. */
 async function trySample() {
   let r;
-  try { r = await act(() => invoke("create_sample"), "Sample project ready"); }
+  try { r = await act(() => invoke("create_sample"), I18N.t("app.sampleReady")); }
   catch { return; }
   setTourDismissed(false);
   await loadProjects(r.project.id);
@@ -471,11 +481,11 @@ async function drawTour(box, pid, again) {
 async function viewTasks(v) {
   const pid = state.project.id;
   const head = h("div", { class: "row", style: "margin-bottom:14px" },
-    h("button", { class: "btn primary", onclick: newTaskDialog }, "+ New task"),
+    h("button", { class: "btn primary", onclick: newTaskDialog }, "+ " + I18N.t("app.task.new")),
     h("button", { class: "btn", onclick: (e) => workOnNext(e.currentTarget),
-      title: "Evyro picks the most important ready task and an AI that is free, and uses a separate worktree only when another AI's work could collide" }, "Work on next task"),
+      title: I18N.t("app.next.title") }, I18N.t("app.next.button")),
     h("span", { class: "spacer" }),
-    h("span", { class: "muted small" }, "Cards show the AIs working on them live. Click a task for criteria, checkpoints and receipts."));
+    h("span", { class: "muted small" }, I18N.t("app.board.hint")));
   v.append(head);
   const tourBox = h("div");
   v.append(tourBox);
@@ -491,14 +501,15 @@ async function viewTasks(v) {
     if (!canRefresh()) return;
     drawTour(tourBox, pid, draw);
     clear(board);
-    for (const [st, label] of COLUMNS) {
+    const cols = columns();
+    for (const [st, label] of cols) {
       const items = rows.filter((r) => r.task.status === st);
       board.append(h("div", { class: "column" },
         h("div", { class: "column-head" }, h("span", null, label), h("span", null, items.length)),
         items.map(taskCard)));
     }
-    const other = rows.filter((r) => !COLUMNS.some(([s]) => s === r.task.status));
-    if (other.length) board.append(h("div", { class: "column" }, h("div", { class: "column-head" }, h("span", null, "Closed"), h("span", null, other.length)), other.map(taskCard)));
+    const other = rows.filter((r) => !cols.some(([s]) => s === r.task.status));
+    if (other.length) board.append(h("div", { class: "column" }, h("div", { class: "column-head" }, h("span", null, I18N.t("app.col.closed")), h("span", null, other.length)), other.map(taskCard)));
   };
   await draw();
   if (board.isConnected) state.timer = setInterval(draw, 5000);
@@ -517,16 +528,16 @@ function taskCard(r) {
     t.files && t.files.length ? h("div", { class: "muted small mono card-files", title: t.files.join(", ") }, I18N.t("board.files", { files: t.files.length > 2 ? I18N.t("board.filesMore", { files: t.files.slice(0, 2).join(", "), n: t.files.length - 2 }) : t.files.join(", ") })) : null,
     r.file_blocked_by ? h("div", { class: "card-wait" }, h("span", { class: "pill warn", title: I18N.t("board.waits.title", { file: r.file_blocked_by.file, task: r.file_blocked_by.task }) }, I18N.t("board.waits", { task: r.file_blocked_by.task, owner: r.file_blocked_by.owner })))
       : r.file_overlaps && r.file_overlaps.length ? h("div", { class: "muted small", title: I18N.t("board.overlaps.title") }, I18N.t("board.overlaps", { tasks: r.file_overlaps.join(", ") })) : null,
-    r.criteria_total ? [h("div", { class: "progress", title: `${r.criteria_met}/${r.criteria_total} criteria met` }, h("span", { style: `width:${pct}%` })),
-      h("div", { class: "muted small" }, `${r.criteria_met}/${r.criteria_total} criteria met`)] : h("div", { class: "muted small" }, "No acceptance criteria"),
+    r.criteria_total ? [h("div", { class: "progress", title: I18N.t("app.card.criteria", { met: r.criteria_met, total: r.criteria_total }) }, h("span", { style: `width:${pct}%` })),
+      h("div", { class: "muted small" }, I18N.t("app.card.criteria", { met: r.criteria_met, total: r.criteria_total }))] : h("div", { class: "muted small" }, I18N.t("app.card.noCriteria")),
     live.map((x) => h("div", { class: "card-ai" },
       h("div", { class: "row" }, agentBadge(x, true), h("span", { class: "small card-ai-name" }, x.title), h("span", { class: "spacer" }), threadStatus(x)),
       liveLine(x) ? h("div", { class: "card-ai-line mono" }, liveLine(x)) : null,
-      h("button", { class: "btn small", onclick: stop(() => { placeThread(x.id); setTab("workspace"); }) }, needsYou(x) ? "Answer" : "Open"))),
+      h("button", { class: "btn small", onclick: stop(() => { placeThread(x.id); setTab("workspace"); }) }, needsYou(x) ? I18N.t("app.card.answer") : I18N.t("app.card.open")))),
     h("div", { class: "meta" },
       r.owner && !live.length ? pill("running", r.owner) : null,
-      r.blocked_by.length ? pill("blocked", "blocked by " + r.blocked_by.join(", ")) : null,
-      open && !live.length && state.project ? h("button", { class: "btn small", onclick: stop(() => newThreadDialog(t.key)), title: "Start an AI on this task" }, "Start with…") : null));
+      r.blocked_by.length ? pill("blocked", I18N.t("app.card.blockedBy", { tasks: r.blocked_by.join(", ") })) : null,
+      open && !live.length && state.project ? h("button", { class: "btn small", onclick: stop(() => newThreadDialog(t.key)), title: I18N.t("app.card.startTitle") }, I18N.t("app.card.start")) : null));
 }
 
 /** The last line an AI wrote: the bottom of its terminal, or its latest chat message. */
@@ -552,25 +563,25 @@ function liveLine(t) {
 }
 
 function newTaskDialog() {
-  const title = h("input", { type: "text", placeholder: "Add rate limiting to the API" });
-  const desc = h("textarea", { placeholder: "What and why (optional)" });
-  const acc = h("textarea", { placeholder: "One criterion per line, e.g.\n429 returned after 100 requests/min\nIntegration test covers the limit" });
+  const title = h("input", { type: "text", placeholder: I18N.t("app.task.titlePh") });
+  const desc = h("textarea", { placeholder: I18N.t("app.task.descPh") });
+  const acc = h("textarea", { placeholder: I18N.t("app.task.accPh") });
   const kind = h("select", null, ["task", "feature", "bug", "tech_debt", "spike", "docs", "security", "maintenance"].map((k) => h("option", { value: k }, k)));
   const prio = h("select", null, [0, 1, 2, 3, 4].map((p) => h("option", { value: p, selected: p === 2 }, "P" + p)));
   const ready = h("input", { type: "checkbox", checked: true });
-  modal("New task", [
-    field("Title", title),
-    field("Description", desc),
-    field("Acceptance criteria", acc, "The task can only reach Verified once every criterion is checked off and a test run passes."),
-    h("div", { class: "row" }, field("Kind", kind), field("Priority", prio)),
-    h("label", { class: "row small" }, ready, "Mark as ready to pick up"),
+  modal(I18N.t("app.task.new"), [
+    field(I18N.t("app.task.title"), title),
+    field(I18N.t("app.task.desc"), desc),
+    field(I18N.t("app.task.acc"), acc, I18N.t("app.task.accHint")),
+    h("div", { class: "row" }, field(I18N.t("app.task.kind"), kind), field(I18N.t("app.task.priority"), prio)),
+    h("label", { class: "row small" }, ready, I18N.t("app.task.ready")),
   ], [{
-    label: "Create task", primary: true, run: async () => {
-      if (!title.value.trim()) { toast("Give the task a title", true); return false; }
+    label: I18N.t("app.task.create"), primary: true, run: async () => {
+      if (!title.value.trim()) { toast(I18N.t("app.task.noTitle"), true); return false; }
       const t = await act(() => invoke("create_task", {
         projectId: state.project.id,
         input: { title: title.value.trim(), description: desc.value.trim(), kind: kind.value, priority: Number(prio.value), acceptance: lines(acc.value), ready: ready.checked },
-      }), "Task created");
+      }), I18N.t("app.task.created"));
       if (state.view === "tasks") render();
       openTask(t.key);
     },
@@ -721,7 +732,7 @@ async function openTask(key) {
   body.append(h("div", { class: "row" },
     h("button", { class: "btn small", onclick: () => runVerify(t.key, refresh) }, "Run tests"),
     h("button", { class: "btn small", onclick: () => openComparison(t) }, "Compare agents"),
-    h("button", { class: "btn small", onclick: () => handoffDialog(t.key) }, "Hand off"),
+    h("button", { class: "btn small", onclick: () => handoffDialog(t.key) }, I18N.t("app.ov.handOff")),
     h("button", { class: "btn small", onclick: () => prFeedbackDialog(t) }, "PR feedback…"),
     h("button", { class: "btn small", onclick: () => copyContext(t.key) }, "Copy context"),
     h("button", { class: "btn small", onclick: () => copy(`evyro run --agent claude-code --task ${t.key}`, "Command copied") }, "Copy run command")));
@@ -933,7 +944,7 @@ async function viewKnowledge(v) {
     const title = h("input", { type: "text", placeholder: "Storage engine" });
     const decision = h("input", { type: "text", placeholder: "Use SQLite with WAL" });
     const why = h("textarea", { placeholder: "Rationale" });
-    modal("Record a decision", [field("Title", title), field("Decision", decision), field("Why", why)], [{
+    modal("Record a decision", [field(I18N.t("app.task.title"), title), field("Decision", decision), field("Why", why)], [{
       label: "Record", primary: true, run: async () => {
         if (!title.value.trim() || !decision.value.trim()) { toast("Title and decision are required", true); return false; }
         await act(() => invoke("add_decision", { projectId: pid, title: title.value.trim(), decision: decision.value.trim(), rationale: why.value.trim(), task: null }), "Decision recorded");
