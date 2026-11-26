@@ -3,12 +3,12 @@
 // turns it on or off here or everywhere, and writes skill references into an
 // agent's own instruction files without overwriting what someone wrote.
 
-const SOURCE_LABEL = { builtin: "Built in", global: "Yours (all projects)", project: "This project" };
+const sourceLabel = (src) => ({ builtin: t("skills.src.builtin"), global: t("skills.src.global"), project: t("skills.src.project") })[src] || src;
 
 async function viewSkills(v) {
   const pid = state.project.id;
   const card = h("div", { class: "card" });
-  const q = h("input", { type: "text", placeholder: "Filter skills, or describe a task to see which fit" });
+  const q = h("input", { type: "text", placeholder: t("skills.filter") });
   const listEl = h("div");
   v.append(card);
   let data = { skills: [], sync_targets: [] };
@@ -30,8 +30,8 @@ async function viewSkills(v) {
     const on = data.skills.filter((k) => stateOf(k) === "on").length;
     clear(listEl).append(
       h("div", { class: "muted small", style: "margin:6px 0 10px" },
-        `${on} of ${data.skills.length} on. Agents see only the names and one-line descriptions, and load a skill's text when the task needs it.`),
-      shown.length ? h("ul", { class: "list skills-list" }, shown.map(skillRow)) : h("div", { class: "empty" }, "No skill matches."));
+        t("skills.summary", { on, total: data.skills.length })),
+      shown.length ? h("ul", { class: "list skills-list" }, shown.map(skillRow)) : h("div", { class: "empty" }, t("skills.none")));
   };
 
   const skillRow = (k) => {
@@ -41,18 +41,18 @@ async function viewSkills(v) {
       disabled: st === "problem",
       title: st === "problem" ? k.problems.join("; ") : "",
       onclick: (ev) => { ev.stopPropagation(); toggleDialog(k); },
-    }, st === "on" ? "Turn off" : "Turn on");
+    }, st === "on" ? t("skills.turnOff") : t("skills.turnOn"));
     return h("li", { class: "skill-row", ...opens(() => openSkill(k.name)) },
       h("div", { class: "skill-main" },
         h("div", { class: "row" },
           h("strong", null, k.name),
-          h("span", { class: "pill " + (st === "on" ? "ok" : st === "problem" ? "bad" : "") }, st),
-          h("span", { class: "pill" }, SOURCE_LABEL[k.source] || k.source),
-          k.overrides ? h("span", { class: "pill accent", title: `Replaces the ${k.overrides} skill with the same name` }, "replaces " + k.overrides) : null,
-          k.enabled_by !== "default" ? h("span", { class: "muted small" }, k.enabled_by === "global" ? "set for every project" : "set for this project") : null,
+          h("span", { class: "pill " + (st === "on" ? "ok" : st === "problem" ? "bad" : "") }, st === "on" ? t("skills.st.on") : st === "problem" ? t("skills.st.problem") : t("skills.st.off")),
+          h("span", { class: "pill" }, sourceLabel(k.source)),
+          k.overrides ? h("span", { class: "pill accent", title: t("skills.replaces.title", { name: k.overrides }) }, t("skills.replaces", { name: k.overrides })) : null,
+          k.enabled_by !== "default" ? h("span", { class: "muted small" }, k.enabled_by === "global" ? t("skills.setGlobal") : t("skills.setProject")) : null,
           h("span", { class: "spacer" }),
           h("span", { class: "muted small" }, "v" + k.version)),
-        h("div", { class: "small" }, k.description || "(no description)"),
+        h("div", { class: "small" }, k.description || t("skills.noDesc")),
         k.problems.length ? h("div", { class: "small bad-text" }, k.problems.join("; ")) : null),
       toggle);
   };
@@ -60,11 +60,11 @@ async function viewSkills(v) {
   const toggleDialog = (k) => {
     const turnOn = !k.enabled;
     const where = h("select", null,
-      h("option", { value: "project" }, "In this project only"),
-      h("option", { value: "global" }, "In every project"));
-    modal(`${turnOn ? "Turn on" : "Turn off"} ${k.name}`, [field("Where", where, turnOn ? "Agents will see this skill in the list and can load it." : "Agents will no longer see this skill.")], [{
-      label: turnOn ? "Turn on" : "Turn off", primary: true, run: async () => {
-        await act(() => invoke("set_skill_enabled", { projectId: pid, name: k.name, enabled: turnOn, global: where.value === "global" }), turnOn ? "Turned on" : "Turned off");
+      h("option", { value: "project" }, t("skills.where.project")),
+      h("option", { value: "global" }, t("skills.where.global")));
+    modal(turnOn ? t("skills.turnOnTitle", { name: k.name }) : t("skills.turnOffTitle", { name: k.name }), [field(t("skills.where"), where, turnOn ? t("skills.onHint") : t("skills.offHint"))], [{
+      label: turnOn ? t("skills.turnOn") : t("skills.turnOff"), primary: true, run: async () => {
+        await act(() => invoke("set_skill_enabled", { projectId: pid, name: k.name, enabled: turnOn, global: where.value === "global" }), turnOn ? t("skills.turnedOn") : t("skills.turnedOff"));
         load();
       },
     }]);
@@ -76,11 +76,11 @@ async function viewSkills(v) {
     const k = r.skill;
     modal(k.name, [
       h("div", { class: "row", style: "margin-bottom:8px" },
-        h("span", { class: "pill" }, SOURCE_LABEL[k.source] || k.source), h("span", { class: "pill" }, "v" + k.version),
+        h("span", { class: "pill" }, sourceLabel(k.source)), h("span", { class: "pill" }, "v" + k.version),
         k.tags.slice(0, 6).map((t) => h("span", { class: "pill accent" }, t))),
       h("p", { class: "small" }, k.description),
       k.path ? h("div", { class: "muted small", style: "margin-bottom:8px" }, k.path) : null,
-      k.problems.length ? h("div", { class: "bad-text small" }, "Cannot be used: " + k.problems.join("; ")) : h("pre", { class: "skill-text" }, r.text),
+      k.problems.length ? h("div", { class: "bad-text small" }, t("skills.cannotUse", { problems: k.problems.join("; ") })) : h("pre", { class: "skill-text" }, r.text),
     ], []);
   };
 
@@ -88,34 +88,34 @@ async function viewSkills(v) {
     const name = h("input", { type: "text", placeholder: "api-conventions" });
     const desc = h("input", { type: "text", placeholder: "Use when adding or changing an HTTP endpoint" });
     const where = h("select", null,
-      h("option", { value: "project" }, "This project (.evyro/skills, kept with the code)"),
-      h("option", { value: "global" }, "All my projects"));
-    modal("New skill", [
-      field("Name", name, "Lowercase letters, digits and hyphens."),
-      field("When to use it", desc, "Agents decide from this line whether to load the skill."),
-      field("Where", where)], [{
-      label: "Create", primary: true, run: async () => {
-        if (!name.value.trim()) { toast("Give the skill a name", true); return false; }
-        const r = await act(() => invoke("new_skill", { projectId: pid, name: name.value.trim(), description: desc.value.trim(), global: where.value === "global" }), "Created. Edit the file to write the steps.");
-        if (r && r.path) copy(r.path, "Path copied");
+      h("option", { value: "project" }, t("skills.new.project")),
+      h("option", { value: "global" }, t("skills.new.global")));
+    modal(t("skills.new.title"), [
+      field(t("skills.new.name"), name, t("skills.new.nameHint")),
+      field(t("skills.new.when"), desc, t("skills.new.whenHint")),
+      field(t("skills.where"), where)], [{
+      label: t("skills.create"), primary: true, run: async () => {
+        if (!name.value.trim()) { toast(t("skills.new.needName"), true); return false; }
+        const r = await act(() => invoke("new_skill", { projectId: pid, name: name.value.trim(), description: desc.value.trim(), global: where.value === "global" }), t("skills.created"));
+        if (r && r.path) copy(r.path, t("skills.pathCopied"));
         load();
       },
     }]);
   };
 
   const importDialog = async () => {
-    const path = h("input", { type: "text", placeholder: "Folder with SKILL.md, or a folder of skill folders" });
-    const browse = h("button", { class: "btn small", onclick: async () => { const p = await invoke("pick_skill_folder").catch(() => null); if (p) path.value = p; } }, "Choose…");
-    const where = h("select", null, h("option", { value: "project" }, "This project"), h("option", { value: "global" }, "All my projects"));
-    modal("Import skills", [
-      field("From", h("div", { class: "row" }, path, browse), "Only SKILL.md is copied. Skills that hold secrets or have problems are skipped, and an installed version that is the same or newer is kept."),
-      field("Into", where)], [{
-      label: "Import", primary: true, run: async () => {
-        if (!path.value.trim()) { toast("Choose a folder", true); return false; }
+    const path = h("input", { type: "text", placeholder: t("skills.imp.ph") });
+    const browse = h("button", { class: "btn small", onclick: async () => { const p = await invoke("pick_skill_folder").catch(() => null); if (p) path.value = p; } }, t("skills.imp.choose"));
+    const where = h("select", null, h("option", { value: "project" }, t("skills.imp.project")), h("option", { value: "global" }, t("skills.imp.global")));
+    modal(t("skills.imp.title"), [
+      field(t("skills.imp.from"), h("div", { class: "row" }, path, browse), t("skills.imp.fromHint")),
+      field(t("skills.imp.into"), where)], [{
+      label: t("skills.imp.do"), primary: true, run: async () => {
+        if (!path.value.trim()) { toast(t("skills.imp.need"), true); return false; }
         const r = await invoke("import_skills", { projectId: pid, path: path.value.trim(), global: where.value === "global", force: false }).catch((e) => { toast(errMsg(e), true); return null; });
         if (!r) return false;
-        const lines = [...r.imported.map((i) => `Imported ${i.name} ${i.version}${i.replaced ? ` (replaced ${i.replaced})` : ""}`), ...r.skipped.map((s) => `Skipped ${s.name}: ${s.reason}`)];
-        toast(lines.join("\n") || "Nothing to import", !r.imported.length);
+        const lines = [...r.imported.map((i) => (i.replaced ? t("skills.imp.replaced", { name: i.name, version: i.version, old: i.replaced }) : t("skills.imp.done", { name: i.name, version: i.version }))), ...r.skipped.map((s) => t("skills.skipped", { name: s.name, reason: s.reason }))];
+        toast(lines.join("\n") || t("skills.imp.nothing"), !r.imported.length);
         load();
       },
     }]);
@@ -125,20 +125,20 @@ async function viewSkills(v) {
     const target = h("select", null, data.sync_targets.map((t) => h("option", { value: t.harness }, `${t.harness}  →  ${t.file}`)));
     const append = h("input", { type: "checkbox" });
     const out = h("div");
-    modal("Add skills to an agent's own files", [
-      h("p", { class: "small" }, "For agents that read their own instruction files. Claude Code gets one file per skill. Other agents get a short list of skills, between Evyro's markers, in the file they read."),
-      field("Agent", target),
-      h("label", { class: "check small" }, append, " If the file already has instructions, add the list at its end"),
-      h("div", { class: "hint" }, "Evyro never replaces a file or text someone wrote. Files it wrote before are updated."),
+    modal(t("skills.sync.title"), [
+      h("p", { class: "small" }, t("skills.sync.intro")),
+      field(t("skills.sync.agent"), target),
+      h("label", { class: "check small" }, append, " " + t("skills.sync.append")),
+      h("div", { class: "hint" }, t("skills.sync.hint")),
       out], [{
-      label: "Write files", primary: true, run: async () => {
+      label: t("skills.sync.write"), primary: true, run: async () => {
         const r = await invoke("sync_skills", { projectId: pid, harness: target.value, append: append.checked }).catch((e) => { toast(errMsg(e), true); return null; });
         if (!r) return false;
         clear(out).append(h("ul", { class: "list small" },
-          r.written.map((w) => h("li", null, "Wrote " + w)),
-          r.removed.map((w) => h("li", null, "Removed " + w + " (the skill is off)")),
-          r.unchanged.length ? h("li", null, `${r.unchanged.length} file(s) already up to date`) : null,
-          r.skipped.map((s) => h("li", { class: "bad-text" }, `Skipped ${s.name}: ${s.reason}`))));
+          r.written.map((w) => h("li", null, t("skills.sync.wrote", { file: w }))),
+          r.removed.map((w) => h("li", null, t("skills.sync.removed", { file: w }))),
+          r.unchanged.length ? h("li", null, t("skills.sync.upToDate", { count: r.unchanged.length })) : null,
+          r.skipped.map((s) => h("li", { class: "bad-text" }, t("skills.skipped", { name: s.name, reason: s.reason })))));
         return false;
       },
     }]);
@@ -146,11 +146,11 @@ async function viewSkills(v) {
 
   q.addEventListener("input", () => { clearTimeout(q._t); q._t = setTimeout(draw, 150); });
   card.append(
-    h("div", { class: "card-head" }, h("h2", null, "Skills"),
+    h("div", { class: "card-head" }, h("h2", null, t("skills.title")),
       h("span", { class: "spacer" }),
-      h("button", { class: "btn small", onclick: syncDialog }, "Add to agent files…"),
-      h("button", { class: "btn small", onclick: importDialog }, "Import…"),
-      h("button", { class: "btn small primary", onclick: newDialog }, "+ New skill")),
+      h("button", { class: "btn small", onclick: syncDialog }, t("skills.sync.btn")),
+      h("button", { class: "btn small", onclick: importDialog }, t("skills.imp.btn")),
+      h("button", { class: "btn small primary", onclick: newDialog }, t("skills.new.btn"))),
     q, listEl);
   await load();
 }
