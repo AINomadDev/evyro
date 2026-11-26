@@ -981,9 +981,9 @@ async function viewKnowledge(v) {
 // ---------- AI targets ----------
 async function viewAgents(v) {
   v.append(h("div", { class: "muted", style: "margin-bottom:12px" },
-    "Every AI you can switch to: coding agents (signed in or with an API key), API keys through an agent, AI IDEs and chat apps. Evyro stores which environment variable or Keychain item holds a key, never the key itself."));
-  const tcard = h("div", { class: "card" }, h("div", { class: "muted" }, "Checking AI targets…"));
-  const dcard = h("div", { class: "card", style: "margin-top:16px" }, h("div", { class: "muted" }, "Checking installed agents…"));
+    I18N.t("app.tg.intro")));
+  const tcard = h("div", { class: "card" }, h("div", { class: "muted" }, I18N.t("app.tg.checking")));
+  const dcard = h("div", { class: "card", style: "margin-top:16px" }, h("div", { class: "muted" }, I18N.t("app.tg.checkingAgents")));
   v.append(tcard, dcard);
 
   let ts;
@@ -991,14 +991,14 @@ async function viewAgents(v) {
   if (ts) {
     const groups = ["harness", "api", "ide", "chat"].map((k) => [k, ts.filter((t) => t.target.kind === k)]).filter(([, g]) => g.length);
     clear(tcard).append(
-      h("div", { class: "card-head" }, h("h2", null, "AI targets"),
+      h("div", { class: "card-head" }, h("h2", null, I18N.t("app.tg.title")),
         h("div", { class: "row" },
-          h("button", { class: "btn small", onclick: () => render() }, "Re-check"),
-          h("button", { class: "btn small primary", onclick: () => addTargetDialog() }, "+ Add target"))),
+          h("button", { class: "btn small", onclick: () => render() }, I18N.t("app.tg.recheck")),
+          h("button", { class: "btn small primary", onclick: () => addTargetDialog() }, "+ " + I18N.t("app.tg.add")))),
       ...groups.flatMap(([k, g]) => [
         h("h3", null, KIND_LABEL[k]),
         h("table", null,
-          h("thead", null, h("tr", null, ["Target", "Status", "Uses", "Next step", ""].map((x) => h("th", null, x)))),
+          h("thead", null, h("tr", null, [I18N.t("app.tg.col.target"), I18N.t("app.ho.col.status"), I18N.t("app.tg.col.uses"), I18N.t("app.ov.nextStep"), ""].map((x) => h("th", null, x)))),
           h("tbody", null, g.map((t) => h("tr", { class: "clickable", ...opens(() => targetDialog(t)) },
             h("td", null, h("strong", { class: "mono" }, t.target.name), t.target.description ? h("div", { class: "muted small" }, t.target.description) : null),
             h("td", null, targetPill(t.state)),
@@ -1006,15 +1006,15 @@ async function viewAgents(v) {
             h("td", { class: "small" }, t.next_step || "-"),
             h("td", null, state.project ? h("button", {
               class: "btn small", style: "white-space:nowrap", onclick: (e) => { e.stopPropagation(); handTo(t.target.name, null, h("div")); },
-            }, "Switch to") : null))))),
+            }, I18N.t("app.tg.switchTo")) : null))))),
       ]));
   }
 
   let ds;
   try { ds = state.agents || (state.agents = await invoke("detect_agents")); } catch (e) { clear(dcard).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
-  clear(dcard).append(h("div", { class: "card-head" }, h("h2", null, "Coding agents on this computer"), h("button", { class: "btn small", onclick: () => { state.agents = null; render(); } }, "Re-check")),
+  clear(dcard).append(h("div", { class: "card-head" }, h("h2", null, I18N.t("app.tg.agents")), h("button", { class: "btn small", onclick: () => { state.agents = null; render(); } }, I18N.t("app.tg.recheck"))),
     h("table", null,
-      h("thead", null, h("tr", null, ["Agent", "Status", "Version", "Can do", "Instruction file"].map((x) => h("th", null, x)))),
+      h("thead", null, h("tr", null, [I18N.t("app.ss.col.agent"), I18N.t("app.ho.col.status"), I18N.t("app.tg.col.version"), I18N.t("app.tg.col.can"), I18N.t("app.tg.col.instr")].map((x) => h("th", null, x)))),
       h("tbody", null, ds.map((d) => h("tr", null,
         h("td", null, h("strong", null, d.display_name), h("div", { class: "muted small mono" }, d.id)),
         h("td", null, pill(d.compatibility), d.diagnostic ? h("div", { class: "muted small" }, d.diagnostic) : null),
@@ -1025,26 +1025,26 @@ async function viewAgents(v) {
 
 function targetDialog(t) {
   const x = t.target;
-  const rows = [["Kind", KIND_LABEL[x.kind]], ["Uses", t.display], ["Sign-in", x.auth.replace(/_/g, " ")],
-    ["Provider", x.provider], ["Model", x.model], ["Key variable", x.key_env], ["Keychain item", x.key_keychain], ["Base URL", x.base_url]]
+  const rows = [[I18N.t("app.task.kind"), KIND_LABEL[x.kind]], [I18N.t("app.tg.col.uses"), t.display], [I18N.t("app.tg.signIn"), x.auth.replace(/_/g, " ")],
+    [I18N.t("app.tg.provider"), x.provider], [I18N.t("app.tg.model"), x.model], [I18N.t("app.tg.keyVar"), x.key_env], [I18N.t("app.tg.keychainItem"), x.key_keychain], [I18N.t("app.tg.baseUrl"), x.base_url]]
     .filter(([, val]) => val);
   const actions = [];
-  if (state.project) actions.push({ label: "Switch to this AI", primary: true, run: () => handTo(x.name, null, h("div")) });
+  if (state.project) actions.push({ label: I18N.t("app.tg.switchThis"), primary: true, run: () => handTo(x.name, null, h("div")) });
   if (!t.builtin) actions.push({
-    label: "Remove", run: async () => {
-      if (!confirmInline.has(x.name)) { confirmInline.add(x.name); toast(`Press Remove again to delete target ${x.name}.`); return false; }
+    label: I18N.t("app.tg.remove"), run: async () => {
+      if (!confirmInline.has(x.name)) { confirmInline.add(x.name); toast(I18N.t("app.tg.removeAgain", { name: x.name })); return false; }
       confirmInline.delete(x.name);
-      await act(() => invoke("remove_target", { name: x.name }), `Removed ${x.name}`);
+      await act(() => invoke("remove_target", { name: x.name }), I18N.t("app.tg.removed", { name: x.name }));
       state.targets = null; render(); return true;
     },
   });
-  modal("Target " + x.name, [
+  modal(I18N.t("app.tg.modal", { name: x.name }), [
     h("div", { class: "row" }, targetPill(t.state)),
     h("table", null, h("tbody", null, rows.map(([k, val]) => h("tr", null, h("td", { class: "muted" }, k), h("td", { class: "mono small" }, val))))),
-    h("h3", null, "Checks"),
+    h("h3", null, I18N.t("app.tg.checks")),
     h("ul", { class: "list" }, t.checks.map((c) => h("li", null, pill(c.state === "ok" ? "ok" : c.state), h("span", null, c.name), h("span", { class: "muted small" }, c.detail)))),
     t.next_step ? h("div", { class: "banner warn", style: "margin-top:10px" }, t.next_step) : null,
-    t.builtin ? h("div", { class: "hint" }, "Built-in target. Add your own to pick a model, provider or key.") : null,
+    t.builtin ? h("div", { class: "hint" }, I18N.t("app.tg.builtin")) : null,
   ], actions);
 }
 const confirmInline = new Set();
@@ -1052,26 +1052,26 @@ const confirmInline = new Set();
 async function addTargetDialog() {
   let opt;
   try { opt = await invoke("target_options"); } catch (e) { toast(errMsg(e), true); return; }
-  const name = h("input", { type: "text", placeholder: "e.g. claude-work, gpt5-key, my-cursor" });
+  const name = h("input", { type: "text", placeholder: I18N.t("app.tg.namePh") });
   const kind = h("select", null, Object.entries(KIND_LABEL).map(([k, l]) => h("option", { value: k }, l)));
   const harness = h("select", null, opt.harnesses.map((a) => h("option", { value: a.id }, a.display_name)));
   const app = h("select");
-  const auth = h("select", null, [["auto", "The tool's own setup"], ["app_login", "Signed-in app account (no API key)"], ["api_key", "API key"], ["local", "Local model (Ollama, LM Studio)"]]
+  const auth = h("select", null, [["auto", I18N.t("app.tg.auth.auto")], ["app_login", I18N.t("app.tg.auth.app")], ["api_key", I18N.t("app.kind.api")], ["local", I18N.t("app.tg.auth.local")]]
     .map(([k, l]) => h("option", { value: k }, l)));
-  const provider = h("select", null, h("option", { value: "" }, "(tool default)"), opt.providers.map((p) => h("option", { value: p.id }, p.display_name)));
-  const model = h("input", { type: "text", placeholder: "Model id, optional" });
-  const keyEnv = h("input", { type: "text", placeholder: "Variable name, e.g. OPENROUTER_API_KEY (not the key)" });
-  const keychain = h("input", { type: "text", placeholder: "Keychain service name, optional (macOS)" });
-  const baseUrl = h("input", { type: "text", placeholder: "https://… (only for compatible or self-hosted endpoints)" });
-  const desc = h("input", { type: "text", placeholder: "Optional note" });
-  const fHarness = field("Coding agent", harness, "The CLI that does the work. API-key targets default to OpenCode, which supports most providers.");
-  const fApp = field("App", app);
-  const fAuth = field("Sign-in", auth);
-  const fProvider = field("Provider", provider);
-  const fModel = field("Model", model);
-  const fKey = field("API key from", keyEnv, "Put the key in your shell profile or the Keychain. Evyro reads it only when it starts the agent, and never saves it.");
-  const fKeychain = field("Or from the Keychain", keychain, "Store it with: security add-generic-password -s <name> -a evyro -w");
-  const fBase = field("Base URL", baseUrl);
+  const provider = h("select", null, h("option", { value: "" }, I18N.t("app.tg.toolDefault")), opt.providers.map((p) => h("option", { value: p.id }, p.display_name)));
+  const model = h("input", { type: "text", placeholder: I18N.t("app.tg.modelPh") });
+  const keyEnv = h("input", { type: "text", placeholder: I18N.t("app.tg.keyEnvPh") });
+  const keychain = h("input", { type: "text", placeholder: I18N.t("app.tg.keychainPh") });
+  const baseUrl = h("input", { type: "text", placeholder: I18N.t("app.tg.baseUrlPh") });
+  const desc = h("input", { type: "text", placeholder: I18N.t("app.tg.notePh") });
+  const fHarness = field(I18N.t("app.kind.harness"), harness, I18N.t("app.tg.harnessHint"));
+  const fApp = field(I18N.t("app.tg.app"), app);
+  const fAuth = field(I18N.t("app.tg.signIn"), auth);
+  const fProvider = field(I18N.t("app.tg.provider"), provider);
+  const fModel = field(I18N.t("app.tg.model"), model);
+  const fKey = field(I18N.t("app.tg.keyFrom"), keyEnv, I18N.t("app.tg.keyHint"));
+  const fKeychain = field(I18N.t("app.tg.keychainFrom"), keychain, I18N.t("app.tg.keychainHint"));
+  const fBase = field(I18N.t("app.tg.baseUrl"), baseUrl);
   const sync = () => {
     const k = kind.value;
     const show = (el, on) => { el.style.display = on ? "" : "none"; };
@@ -1085,15 +1085,15 @@ async function addTargetDialog() {
     show(fHarness, agentKind); show(fApp, !agentKind); show(fAuth, agentKind); show(fProvider, agentKind);
     show(fModel, agentKind); show(fKey, needsKey); show(fKeychain, needsKey); show(fBase, agentKind && auth.value !== "app_login");
     const p = opt.providers.find((x) => x.id === provider.value);
-    model.placeholder = p ? `e.g. ${p.example_model}` : "Model id, optional";
-    keyEnv.placeholder = p && p.key_env ? `e.g. ${p.key_env} (the variable name, not the key)` : "Variable name (not the key)";
+    model.placeholder = p ? I18N.t("app.tg.eg", { example: p.example_model }) : I18N.t("app.tg.modelPh");
+    keyEnv.placeholder = p && p.key_env ? I18N.t("app.tg.keyEnvEg", { name: p.key_env }) : I18N.t("app.tg.keyEnvPlain");
   };
   [kind, auth, provider, harness].forEach((el) => el.addEventListener("change", sync));
   sync();
-  modal("Add an AI target", [
-    field("Name", name), field("Kind", kind), fHarness, fApp, fAuth, fProvider, fModel, fKey, fKeychain, fBase, field("Note", desc),
+  modal(I18N.t("app.tg.addTitle"), [
+    field(I18N.t("app.tg.name"), name), field(I18N.t("app.task.kind"), kind), fHarness, fApp, fAuth, fProvider, fModel, fKey, fKeychain, fBase, field(I18N.t("app.tg.note"), desc),
   ], [{
-    label: "Add target", primary: true, run: async () => {
+    label: I18N.t("app.tg.add"), primary: true, run: async () => {
       const k = kind.value;
       const agentKind = k === "harness" || k === "api";
       const blank = (x) => (x.trim() ? x.trim() : null);
@@ -1107,7 +1107,7 @@ async function addTargetDialog() {
         base_url: agentKind ? blank(baseUrl.value) : null,
         description: desc.value.trim(), builtin: false,
       };
-      await act(() => invoke("add_target", { target }), `Added ${target.name}`);
+      await act(() => invoke("add_target", { target }), I18N.t("app.tg.added", { name: target.name }));
       state.targets = null; render(); return true;
     },
   }]);
@@ -1116,7 +1116,7 @@ async function addTargetDialog() {
 // ---------- settings ----------
 /** Limits on how many ended threads and chats stay saved, and a way to delete them now. */
 function historyCard() {
-  const card = h("div", { class: "card" }, h("h2", null, "Saved history"), h("div", { class: "muted" }, "Loading…"));
+  const card = h("div", { class: "card" }, h("h2", null, I18N.t("app.hist.title")), h("div", { class: "muted" }, I18N.t("app.loading")));
   const forgetGone = async () => {
     await loadThreads();
     for (const [id, x] of [...XTERMS]) {
@@ -1131,38 +1131,38 @@ function historyCard() {
   const draw = async () => {
     let st;
     try { st = await invoke("history_status_cmd"); }
-    catch (e) { clear(card).append(h("h2", null, "Saved history"), h("div", { class: "banner bad" }, errMsg(e))); return; }
+    catch (e) { clear(card).append(h("h2", null, I18N.t("app.hist.title")), h("div", { class: "banner bad" }, errMsg(e))); return; }
     const number = (id, value) => h("input", { type: "number", id, min: "0", max: String(st.max), step: "1", value: String(value) });
     const threads = number("keep-threads", st.keep.threads);
     const chats = number("keep-chats", st.keep.chats);
     const save = async () => {
       const t = Number(threads.value), c = Number(chats.value);
       const ok = (n) => Number.isInteger(n) && n >= 0 && n <= st.max;
-      if (!ok(t) || !ok(c)) { toast(`Enter whole numbers from 0 to ${st.max}.`, true); return; }
+      if (!ok(t) || !ok(c)) { toast(I18N.t("app.hist.range", { max: st.max }), true); return; }
       const r = await act(() => invoke("history_set", { threadsKeep: t, chatsKeep: c }));
       const gone = r.removed.threads + r.removed.chats;
-      toast(gone ? `Saved. Deleted ${plural(gone, "older item", "older items")}.` : "Saved.");
+      toast(gone ? I18N.t("app.hist.savedDeleted", { count: gone }) : I18N.t("app.hist.saved"));
       await forgetGone();
       draw();
     };
     const clearBtn = (what, label, count) => h("button", { class: "btn small danger", disabled: !count, onclick: async () => {
-      const noun = what === "threads" ? "thread" : "chat";
-      if (!(await confirmDialog(`Delete ${plural(count, "saved " + noun, "saved " + noun + "s")}?`,
-        `Evyro permanently deletes the saved ${noun} output from this computer. ${what === "threads" ? "Threads that are still running are not affected." : "Chats that are still running keep going."}`, "Delete"))) return;
+            const threads = what === "threads";
+      if (!(await confirmDialog(threads ? I18N.t("app.hist.delThreads", { count }) : I18N.t("app.hist.delChats", { count }),
+        threads ? I18N.t("app.hist.delThreadsText") : I18N.t("app.hist.delChatsText"), I18N.t("app.hist.delete")))) return;
       const r = await act(() => invoke("history_clear", { what }));
-      toast(`Deleted ${plural(r.removed[what], "saved " + noun, "saved " + noun + "s")}.`);
+      toast(threads ? I18N.t("app.hist.deletedThreads", { count: r.removed[what] }) : I18N.t("app.hist.deletedChats", { count: r.removed[what] }));
       await forgetGone();
       draw();
     } }, label);
     clear(card).append(
-      h("h2", null, "Saved history"),
-      h("div", { class: "muted small", style: "margin-bottom:10px" }, "Ended threads and chats are saved on this computer so you can reopen them. When you go over a limit the oldest are deleted. Use 0 to keep none."),
-      field("Saved threads to keep", threads, `${st.saved.threads} saved now`),
-      field("Saved chats to keep", chats, `${st.saved.chats} saved now`),
-      h("div", { class: "row" }, h("button", { class: "btn primary", onclick: save }, "Save limits")),
+      h("h2", null, I18N.t("app.hist.title")),
+      h("div", { class: "muted small", style: "margin-bottom:10px" }, I18N.t("app.hist.intro")),
+      field(I18N.t("app.hist.keepThreads"), threads, I18N.t("app.hist.savedNow", { count: st.saved.threads })),
+      field(I18N.t("app.hist.keepChats"), chats, I18N.t("app.hist.savedNow", { count: st.saved.chats })),
+      h("div", { class: "row" }, h("button", { class: "btn primary", onclick: save }, I18N.t("app.hist.saveLimits"))),
       h("div", { class: "row", style: "margin-top:12px" },
-        clearBtn("threads", "Clear saved threads", st.saved.threads),
-        clearBtn("chats", "Clear saved chats", st.saved.chats)));
+        clearBtn("threads", I18N.t("app.hist.clearThreads"), st.saved.threads),
+        clearBtn("chats", I18N.t("app.hist.clearChats"), st.saved.chats)));
   };
   draw();
   return card;
@@ -1180,45 +1180,45 @@ async function viewSettings(v) {
     const lint = h("textarea", { value: toText(p.commands.lint), placeholder: "cargo clippy -- -D warnings" });
     const build = h("textarea", { value: toText(p.commands.build), placeholder: "cargo build" });
     grid.append(h("div", { class: "card" },
-      h("h2", null, "Verification commands"),
-      h("div", { class: "muted small", style: "margin-bottom:10px" }, "Saved to .evyro/project.toml. One command per line. Commands run directly, without a shell."),
-      field("Test", test), field("Lint", lint), field("Build", build),
+      h("h2", null, I18N.t("app.set.commands")),
+      h("div", { class: "muted small", style: "margin-bottom:10px" }, I18N.t("app.set.commandsHint")),
+      field(I18N.t("app.set.test"), test), field(I18N.t("app.set.lint"), lint), field(I18N.t("app.set.build"), build),
       h("div", { class: "row" }, h("button", {
         class: "btn primary", onclick: async () => {
-          const updated = await act(() => invoke("save_commands", { projectId: p.id, commands: { test: parse(test.value), lint: parse(lint.value), build: parse(build.value) } }), "Commands saved");
+          const updated = await act(() => invoke("save_commands", { projectId: p.id, commands: { test: parse(test.value), lint: parse(lint.value), build: parse(build.value) } }), I18N.t("app.set.saved"));
           state.project = updated;
           const i = state.projects.findIndex((x) => x.id === updated.id);
           if (i >= 0) state.projects[i] = updated;
         },
-      }, "Save"))));
+      }, I18N.t("app.kn.save")))));
     grid.append(h("div", { class: "card" },
-      h("h2", null, "This project"),
-      h("dl", { class: "kv" }, h("dt", null, "Name"), h("dd", null, p.name), h("dt", null, "Folder"), h("dd", { class: "mono" }, p.root_path),
-        h("dt", null, "Main branch"), h("dd", null, p.main_branch || "-"), h("dt", null, "Project id"), h("dd", { class: "mono" }, p.id)),
+      h("h2", null, I18N.t("app.set.project")),
+      h("dl", { class: "kv" }, h("dt", null, I18N.t("app.tg.name")), h("dd", null, p.name), h("dt", null, I18N.t("app.set.folder")), h("dd", { class: "mono" }, p.root_path),
+        h("dt", null, I18N.t("app.set.mainBranch")), h("dd", null, p.main_branch || "-"), h("dt", null, I18N.t("app.set.projectId")), h("dd", { class: "mono" }, p.id)),
       h("div", { class: "row", style: "margin-top:12px" }, h("button", {
-        class: "btn danger small", onclick: () => modal(`Archive ${p.name}?`, [h("p", null, "The project is hidden from the list. Its tasks and history stay in the database, and you can register the folder again later.")], [{
-          label: "Archive", primary: true, run: async () => {
-            await act(() => invoke("set_project_archived", { projectId: p.id, archived: true }), "Archived");
+        class: "btn danger small", onclick: () => modal(I18N.t("app.set.archiveTitle", { name: p.name }), [h("p", null, I18N.t("app.set.archiveText"))], [{
+          label: I18N.t("app.set.archive"), primary: true, run: async () => {
+            await act(() => invoke("set_project_archived", { projectId: p.id, archived: true }), I18N.t("app.set.archived"));
             state.project = null;
             loadProjects();
           },
         }]),
-      }, "Archive project"))));
+      }, I18N.t("app.set.archiveProject")))));
   }
-  const info = h("div", { class: "card" }, h("h2", null, "Evyro"), h("div", { class: "muted" }, "Loading…"));
-  const doc = h("div", { class: "card wide" }, h("h2", null, "Doctor"), h("div", { class: "muted" }, "Running checks…"));
+  const info = h("div", { class: "card" }, h("h2", null, "Evyro"), h("div", { class: "muted" }, I18N.t("app.loading")));
+  const doc = h("div", { class: "card wide" }, h("h2", null, I18N.t("app.set.doctor")), h("div", { class: "muted" }, I18N.t("app.set.running")));
   grid.prepend(appearanceCard());
   grid.append(info, updatesCard(), historyCard(), doc, remoteCard());
   invoke("app_info").then((a) => {
     clear(info).append(h("h2", null, "Evyro"), h("dl", { class: "kv" },
-      h("dt", null, "Version"), h("dd", null, a.version), h("dt", null, "Data folder"), h("dd", { class: "mono" }, a.data_dir),
-      h("dt", null, "Schema"), h("dd", null, "v" + a.schema_version), h("dt", null, "Git"), h("dd", null, a.git || "not found")),
+      h("dt", null, I18N.t("app.tg.col.version")), h("dd", null, a.version), h("dt", null, I18N.t("app.set.dataFolder")), h("dd", { class: "mono" }, a.data_dir),
+      h("dt", null, I18N.t("app.set.schema")), h("dd", null, "v" + a.schema_version), h("dt", null, "Git"), h("dd", null, a.git || I18N.t("app.set.notFound"))),
       h("div", { class: "row", style: "margin-top:12px" }, h("button", {
-        class: "btn small", onclick: async () => { const r = await act(() => invoke("backup_now")); toast("Backup saved to " + r.path); },
-      }, "Back up database")));
+        class: "btn small", onclick: async () => { const r = await act(() => invoke("backup_now")); toast(I18N.t("app.set.backupSaved", { path: r.path })); },
+      }, I18N.t("app.set.backup"))));
   }).catch((e) => clear(info).append(h("div", { class: "banner bad" }, errMsg(e))));
   invoke("run_doctor", { projectId: state.project ? state.project.id : null }).then((cs) => {
-    clear(doc).append(h("h2", null, "Doctor"), h("ul", { class: "list" }, cs.map((c) => h("li", null, pill(c.status), h("strong", null, c.name), h("span", null, c.detail),
+    clear(doc).append(h("h2", null, I18N.t("app.set.doctor")), h("ul", { class: "list" }, cs.map((c) => h("li", null, pill(c.status), h("strong", null, c.name), h("span", null, c.detail),
       c.remediation ? h("span", { class: "muted small" }, "· " + c.remediation) : null))));
   }).catch((e) => clear(doc).append(h("div", { class: "banner bad" }, errMsg(e))));
 }
@@ -1253,8 +1253,8 @@ async function updateLiveBadge() {
     const ss = await invoke("list_sessions", { projectId: state.project.id, activeOnly: true });
     const running = ss.filter((x) => x.status === "running");
     b.className = "live-badge" + (running.length ? " on" : "");
-    b.textContent = running.length ? `With ${[...new Set(running.map((x) => x.harness))].join(", ")}` : "No AI working";
-    b.title = running.length ? "Sessions in progress for this project" : "";
+    b.textContent = running.length ? I18N.t("app.live.with", { names: [...new Set(running.map((x) => x.harness))].join(", ") }) : I18N.t("app.live.none");
+    b.title = running.length ? I18N.t("app.live.title") : "";
   } catch { b.textContent = ""; }
 }
 
@@ -1302,55 +1302,55 @@ const tabList = () => [["workspace", t("tab.workspace")], ["tasks", t("tab.tasks
 async function paletteActions() {
   const acts = tabList().map(([v, l], i) => ({ label: t("palette.goto", { screen: l }), hint: i < 9 ? `${MOD} ${i + 1}` : "", run: () => setTab(v) }));
   acts.push({ label: t("keys.title"), hint: "?", run: shortcutSheet });
-  acts.push({ label: "Add a project", run: addProjectDialog });
-  acts.push({ label: "Try the sample project", run: trySample });
-  if (isSample(state.project)) acts.push({ label: "Show the guided tour", run: () => { setTourDismissed(false); setTab("tasks"); } });
+  acts.push({ label: I18N.t("app.add.title"), run: addProjectDialog });
+  acts.push({ label: I18N.t("app.pal.sample"), run: trySample });
+  if (isSample(state.project)) acts.push({ label: I18N.t("app.pal.tour"), run: () => { setTourDismissed(false); setTab("tasks"); } });
   if (state.project) {
-    acts.push({ label: "New task", hint: `${MOD} N`, run: () => { setTab("tasks"); newTaskDialog(); } });
-    acts.push({ label: "New handoff", run: () => handoffDialog(null) });
-    acts.push({ label: "New agent thread", run: () => { setTab("threads"); newThreadDialog(); } });
-    acts.push({ label: "New shell thread", run: () => startThread({ kind: "shell" }) });
-    acts.push({ label: "Go to file", hint: `${MOD} P`, run: () => openSearch("files") });
-    acts.push({ label: "Search in code", hint: `${MOD} ⇧ F`, run: () => openSearch("text") });
-    acts.push({ label: "Go to symbol", hint: `${MOD} ⇧ O`, run: () => openSearch("symbols") });
-    acts.push({ label: "Search saved chats", run: () => openSearch("chats") });
-    acts.push({ label: "Work on the next ready task", run: () => workOnNext() });
-    acts.push({ label: "New chat with an AI (ACP)", run: () => { setTab("threads"); newChatDialog(); } });
-    acts.push({ label: "Copy context for an agent", run: () => copyContext(null) });
-    acts.push({ label: "Layout: one pane", run: () => { setTab("workspace"); setLayout(1); } });
-    acts.push({ label: "Layout: two panes side by side", run: () => { setTab("workspace"); setLayout(2); } });
-    acts.push({ label: "Layout: grid of four panes", run: () => { setTab("workspace"); setLayout(4); } });
-    acts.push({ label: state.ctxOpen ? "Hide shared context" : "Show shared context", hint: `${MOD} .`, run: () => setCtxOpen(!state.ctxOpen) });
-    acts.push({ label: "Toggle terminal drawer", hint: "Ctrl `", run: () => toggleTermDrawer() });
-    acts.push({ label: state.focusMode ? "Leave focus mode" : "Focus on one pane", run: () => { setTab("workspace"); toggleFocusMode(); } });
-    acts.push({ label: "Next pane", run: () => { setTab("workspace"); const n = Math.max(1, panes().length); focusPane(((state.focus ?? -1) + 1) % n, true); } });
-    acts.push({ label: "Previous pane", run: () => { setTab("workspace"); const n = Math.max(1, panes().length); focusPane(((state.focus ?? 0) - 1 + n) % n, true); } });
+    acts.push({ label: I18N.t("app.task.new"), hint: `${MOD} N`, run: () => { setTab("tasks"); newTaskDialog(); } });
+    acts.push({ label: I18N.t("app.ho.new"), run: () => handoffDialog(null) });
+    acts.push({ label: I18N.t("app.pal.agentThread"), run: () => { setTab("threads"); newThreadDialog(); } });
+    acts.push({ label: I18N.t("app.pal.shellThread"), run: () => startThread({ kind: "shell" }) });
+    acts.push({ label: I18N.t("app.pal.file"), hint: `${MOD} P`, run: () => openSearch("files") });
+    acts.push({ label: I18N.t("app.pal.code"), hint: `${MOD} ⇧ F`, run: () => openSearch("text") });
+    acts.push({ label: I18N.t("app.pal.symbol"), hint: `${MOD} ⇧ O`, run: () => openSearch("symbols") });
+    acts.push({ label: I18N.t("app.pal.chats"), run: () => openSearch("chats") });
+    acts.push({ label: I18N.t("app.pal.next"), run: () => workOnNext() });
+    acts.push({ label: I18N.t("app.pal.chat"), run: () => { setTab("threads"); newChatDialog(); } });
+    acts.push({ label: I18N.t("app.ov.copyContext"), run: () => copyContext(null) });
+    acts.push({ label: I18N.t("app.pal.layout1"), run: () => { setTab("workspace"); setLayout(1); } });
+    acts.push({ label: I18N.t("app.pal.layout2"), run: () => { setTab("workspace"); setLayout(2); } });
+    acts.push({ label: I18N.t("app.pal.layout4"), run: () => { setTab("workspace"); setLayout(4); } });
+    acts.push({ label: state.ctxOpen ? I18N.t("app.pal.hideCtx") : I18N.t("app.pal.showCtx"), hint: `${MOD} .`, run: () => setCtxOpen(!state.ctxOpen) });
+    acts.push({ label: I18N.t("app.pal.drawer"), hint: "Ctrl `", run: () => toggleTermDrawer() });
+    acts.push({ label: state.focusMode ? I18N.t("app.pal.leaveFocus") : I18N.t("app.pal.focus"), run: () => { setTab("workspace"); toggleFocusMode(); } });
+    acts.push({ label: I18N.t("app.pal.nextPane"), run: () => { setTab("workspace"); const n = Math.max(1, panes().length); focusPane(((state.focus ?? -1) + 1) % n, true); } });
+    acts.push({ label: I18N.t("app.pal.prevPane"), run: () => { setTab("workspace"); const n = Math.max(1, panes().length); focusPane(((state.focus ?? 0) - 1 + n) % n, true); } });
     const live = (state.threads || []).find((x) => x.id === state.thread && x.running && x.kind !== "shell");
     if (live) {
-      acts.push({ label: `Send the shared context to ${live.title}`, run: () => sendContext(live) });
-      acts.push({ label: `Stop ${live.title}`, run: () => closeThread(live.id) });
+      acts.push({ label: I18N.t("app.pal.sendCtx", { name: live.title }), run: () => sendContext(live) });
+      acts.push({ label: I18N.t("app.pal.stop", { name: live.title }), run: () => closeThread(live.id) });
     }
-    acts.push({ label: "Recover sessions whose AI has gone", run: async () => { try { const r = await act(() => invoke("recover_sessions", { projectId: state.project.id, includeUnknown: false })); toast(r.length ? `Recovered ${r.length} session(s).` : "No stale sessions."); } catch { /* toast shown */ } } });
-    acts.push({ label: "Settings: appearance, themes and motion", run: () => setTab("settings") });
+    acts.push({ label: I18N.t("app.pal.recover"), run: async () => { try { const r = await act(() => invoke("recover_sessions", { projectId: state.project.id, includeUnknown: false })); toast(r.length ? I18N.t("app.ss.recovered", { count: r.length }) : I18N.t("app.ss.noStale")); } catch { /* toast shown */ } } });
+    acts.push({ label: I18N.t("app.pal.settings"), run: () => setTab("settings") });
     try {
       const rows = await invoke("list_tasks", { projectId: state.project.id });
       const active = rows.find((r) => r.task.status === "in_progress") || null;
       if (active) {
         const t = active.task;
-        acts.push({ label: `Run tests for ${t.key}`, run: () => runVerify(t.key, () => render()) });
-        acts.push({ label: `Hand off ${t.key}`, run: () => handoffDialog(t.key) });
-        acts.push({ label: `Switch ${t.key} to another AI…`, run: () => switchOwnerDialog(t.key, {}) });
-        acts.push({ label: `Compare agents on ${t.key}`, run: () => openComparison(t) });
-        acts.push({ label: `PR feedback for ${t.key}`, run: () => prFeedbackDialog(t) });
+        acts.push({ label: I18N.t("app.pal.runTests", { task: t.key }), run: () => runVerify(t.key, () => render()) });
+        acts.push({ label: I18N.t("app.ho.title", { task: t.key }), run: () => handoffDialog(t.key) });
+        acts.push({ label: I18N.t("app.pal.switchTask", { task: t.key }), run: () => switchOwnerDialog(t.key, {}) });
+        acts.push({ label: I18N.t("app.pal.compare", { task: t.key }), run: () => openComparison(t) });
+        acts.push({ label: I18N.t("app.pr.title", { task: t.key }), run: () => prFeedbackDialog(t) });
       }
-      for (const r of rows.slice(0, 40)) acts.push({ label: `Open task ${r.task.key} ${r.task.title}`, run: () => { setTab("tasks"); openTask(r.task.key); } });
+      for (const r of rows.slice(0, 40)) acts.push({ label: I18N.t("app.pal.openTask", { task: r.task.key, title: r.task.title }), run: () => { setTab("tasks"); openTask(r.task.key); } });
     } catch { /* tasks unavailable */ }
-    acts.push({ label: "Add an AI target", run: () => { setTab("agents"); addTargetDialog(); } });
+    acts.push({ label: I18N.t("app.tg.addTitle"), run: () => { setTab("agents"); addTargetDialog(); } });
     try {
-      for (const t of await loadTargets()) acts.push({ label: `Switch to ${t.target.name}`, hint: KIND_LABEL[t.target.kind], run: () => handTo(t.target.name, null, h("div")) });
+      for (const t of await loadTargets()) acts.push({ label: I18N.t("app.pal.switchTo", { name: t.target.name }), hint: KIND_LABEL[t.target.kind], run: () => handTo(t.target.name, null, h("div")) });
     } catch { /* targets unavailable */ }
   }
-  for (const p of state.projects) acts.push({ label: `Open project ${p.alias || p.name}`, run: () => selectProject(p.id) });
+  for (const p of state.projects) acts.push({ label: I18N.t("app.pal.openProject", { name: p.alias || p.name }), run: () => selectProject(p.id) });
   return acts;
 }
 /** Close the command palette and give focus back to whatever had it. */
@@ -1366,7 +1366,7 @@ async function openPalette() {
   if (root.firstChild) { closePalette(); return; }
   root._opener = document.activeElement;
   const acts = await paletteActions();
-  const input = h("input", { type: "text", placeholder: "Type a command, a screen, an AI or a project…", "aria-label": "Command" });
+  const input = h("input", { type: "text", placeholder: I18N.t("app.pal.ph"), "aria-label": I18N.t("app.pal.label") });
   const list = h("ul", { class: "palette-list", role: "listbox" });
   let sel = 0, shown = acts;
   const close = () => closePalette();
@@ -1377,7 +1377,7 @@ async function openPalette() {
     clear(list).append(...shown.slice(0, 40).map((a, i) => h("li", {
       class: i === sel ? "sel" : "", role: "option", onmousedown: (e) => { e.preventDefault(); close(); a.run(); },
     }, h("span", null, a.label), a.hint ? h("span", { class: "muted small" }, a.hint) : null)));
-    if (!shown.length) list.append(h("li", { class: "muted" }, "No matching command"));
+    if (!shown.length) list.append(h("li", { class: "muted" }, I18N.t("app.pal.none")));
   };
   input.addEventListener("input", () => { sel = 0; draw(); });
   input.addEventListener("keydown", (e) => {
@@ -1387,7 +1387,7 @@ async function openPalette() {
     else if (e.key === "Escape") { close(); e.stopPropagation(); }
   });
   root.append(h("div", { class: "modal-back palette-back", onclick: (e) => { if (e.target.classList.contains("palette-back")) close(); } },
-    h("div", { class: "palette", role: "dialog", "aria-label": "Command palette" }, input, list)));
+    h("div", { class: "palette", role: "dialog", "aria-label": I18N.t("app.pal.title") }, input, list)));
   draw();
   input.focus();
 }
@@ -1421,7 +1421,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#ctx-btn").addEventListener("click", () => setCtxOpen(!state.ctxOpen));
   $("#ctx-close").addEventListener("click", () => setCtxOpen(false));
   for (const b of document.querySelectorAll(".ctx-tab")) b.addEventListener("click", () => setCtxPane(b.dataset.pane));
-  $("#search-btn").textContent = `Search  ${MOD} P`;
+  $("#search-btn").textContent = I18N.t("app.searchBtn", { keys: `${MOD} P` });
   if (window.__TAURI__ && window.__TAURI__.event) {
     window.__TAURI__.event.listen("evyro-events", (ev) => onLiveEvents(ev.payload || []));
     window.__TAURI__.event.listen("term-output", (ev) => threadOutput(ev.payload));
