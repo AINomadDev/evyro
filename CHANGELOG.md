@@ -39,6 +39,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ### Fixed
 
+- Saved chat transcripts and agent thread records are synced to disk before they replace the old file, and the previous version is kept as a last good copy. If a file is cut short or damaged anyway, loading falls back to that copy instead of dropping the chat or thread; other saved chats and threads are unaffected.
 - A desktop dialog whose action finished late (sending a prompt to an AI, for instance) no longer closes a newer dialog that was opened in the meantime.
 - Two AIs running `evyro` at the same moment no longer fail with "database is locked": writes that read first now take the write lock when they begin and wait their turn.
 - Clicking anywhere in a terminal pane now focuses it, so Enter reaches prompts such as a workspace-trust question; a pane redraw no longer drops focus.

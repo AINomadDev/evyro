@@ -74,6 +74,48 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::rename(&tmp, path)
 }
 
+/// The last good copy kept beside `path` (`<name>.bak`).
+pub fn last_good_path(path: &Path) -> std::path::PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".bak");
+    path.with_file_name(name)
+}
+
+/// Replace `path` so that a crash or power loss never costs more than this
+/// write: the data goes to a temporary file in the same directory, is synced to
+/// disk and renamed over `path`. The file being replaced becomes the last good
+/// copy ([`last_good_path`]) when `is_good` accepts it, so a damaged file never
+/// overwrites a good copy. The temporary file is readable only by its owner.
+pub fn write_keeping_last_good(
+    path: &Path,
+    data: &[u8],
+    is_good: impl Fn(&[u8]) -> bool,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    std::fs::create_dir_all(dir)?;
+    let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+    temp.write_all(data)?;
+    temp.as_file().sync_all()?;
+    if std::fs::read(path).is_ok_and(|current| is_good(&current)) {
+        // If the app stops right after this, only the last good copy is left
+        // and reading falls back to it.
+        std::fs::rename(path, last_good_path(path))?;
+    }
+    temp.persist(path).map_err(|e| e.error)?;
+    #[cfg(unix)]
+    std::fs::File::open(dir)?.sync_all()?;
+    Ok(())
+}
+
+/// Read `path` with `parse`, falling back to its last good copy when the file
+/// is missing, unreadable or rejected by `parse` (for example cut short).
+pub fn read_or_last_good<T>(path: &Path, parse: impl Fn(&[u8]) -> Option<T>) -> Option<T> {
+    [path.to_path_buf(), last_good_path(path)]
+        .iter()
+        .find_map(|p| std::fs::read(p).ok().and_then(|bytes| parse(&bytes)))
+}
+
 /// Normalise a path for storage: canonicalised when it exists, with forward
 /// slashes kept as-is on Unix and the Windows verbatim prefix stripped.
 pub fn canonical(path: &Path) -> std::io::Result<std::path::PathBuf> {
