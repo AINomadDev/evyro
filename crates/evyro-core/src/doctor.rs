@@ -108,6 +108,57 @@ pub fn run(store: &Store, cwd: &Path) -> Vec<Check> {
         };
         out.push(c(&format!("agent: {}", d.id), st, detail, fix));
     }
+    let root = store.project_for_path(cwd).ok().map(|p| p.root());
+    let custom = crate::custom_agents::load(&store.paths, root.as_deref());
+    for e in &custom.errors {
+        out.push(c(
+            &format!("agent file: {}", e.path.display()),
+            "fail",
+            e.message.clone(),
+            Some("fix or remove the file; see Custom agents in docs/AGENT_COMPATIBILITY.md"),
+        ));
+    }
+    for a in &custom.agents {
+        let name = format!("agent: {}", a.name);
+        if a.binary().is_none() {
+            out.push(c(
+                &name,
+                "warn",
+                format!("`{}` not found ({})", a.command, a.source.display()),
+                Some("install it or set `command` to its full path"),
+            ));
+            continue;
+        }
+        any_agent = true;
+        if a.scope == crate::custom_agents::Scope::Project && a.login_check.is_some() {
+            // Repository text: do not run its commands unasked.
+            out.push(c(
+                &name,
+                "ok",
+                format!(
+                    "custom ({}); login check not run for project files: run `{}` yourself",
+                    a.source.display(),
+                    a.login_check.as_deref().unwrap_or_default().join(" ")
+                ),
+                None,
+            ));
+            continue;
+        }
+        match a.check_login(std::time::Duration::from_secs(10)) {
+            None | Some(Ok(())) => out.push(c(
+                &name,
+                "ok",
+                format!("custom ({})", a.source.display()),
+                None,
+            )),
+            Some(Err(why)) => out.push(c(
+                &name,
+                "warn",
+                format!("login check failed: {why}"),
+                Some("sign in to the agent, then run `evyro doctor` again"),
+            )),
+        }
+    }
     if !any_agent {
         out.push(c(
             "agents",

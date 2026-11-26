@@ -1578,7 +1578,13 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
             }
         }
         Cmd::Agents => {
-            let ds = adapters::detect_all();
+            let mut ds = adapters::detect_all();
+            let root = store.project_for_path(&dir).ok().map(|p| p.root());
+            let custom = evyro_core::custom_agents::load(&store.paths, root.as_deref());
+            ds.extend(custom.agents.iter().map(|a| a.detect()));
+            for e in &custom.errors {
+                eprintln!("skipped {}: {}", e.path.display(), e.message);
+            }
             o.print(&ds, || {
                 ds.iter()
                     .map(|d| {

@@ -15,6 +15,7 @@ pub mod comparison;
 pub mod context;
 pub mod contract;
 pub mod crash;
+pub mod custom_agents;
 pub mod db;
 pub mod decisions;
 pub mod doctor;
