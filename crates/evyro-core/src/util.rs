@@ -105,13 +105,37 @@ pub fn write_keeping_last_good(
             let mut keep = tempfile::NamedTempFile::new_in(dir)?;
             keep.write_all(&current)?;
             keep.as_file().sync_all()?;
-            keep.persist(last_good_path(path)).map_err(|e| e.error)?;
+            let keep = keep.into_temp_path();
+            rename_replacing(&keep, &last_good_path(path))?;
+            keep.keep().map_err(|e| e.error)?;
         }
     }
-    temp.persist(path).map_err(|e| e.error)?;
+    let temp = temp.into_temp_path();
+    rename_replacing(&temp, path)?;
+    temp.keep().map_err(|e| e.error)?;
     #[cfg(unix)]
     std::fs::File::open(dir)?.sync_all()?;
     Ok(())
+}
+
+/// Rename `from` over `to`, replacing it. Windows answers "access denied" while
+/// another program (a reader, a virus scanner, the search indexer) briefly has
+/// `to` open, so there it tries again for up to about a second.
+pub fn rename_replacing(from: &Path, to: &Path) -> std::io::Result<()> {
+    let mut tries: u64 = 0;
+    loop {
+        match std::fs::rename(from, to) {
+            Err(e)
+                if cfg!(windows)
+                    && e.kind() == std::io::ErrorKind::PermissionDenied
+                    && tries < 20 =>
+            {
+                tries += 1;
+                std::thread::sleep(std::time::Duration::from_millis(5 * tries));
+            }
+            done => return done,
+        }
+    }
 }
 
 /// Read `path` with `parse`, falling back to its last good copy when the file

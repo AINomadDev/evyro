@@ -752,10 +752,10 @@ fn replace_file(
             let bak = last_good(path);
             let keep = bak.with_extension("bak.tmp");
             write_private(&keep, &current)?;
-            std::fs::rename(&keep, &bak)?;
+            evyro_core::util::rename_replacing(&keep, &bak)?;
         }
     }
-    std::fs::rename(&tmp, path)?;
+    evyro_core::util::rename_replacing(&tmp, path)?;
     #[cfg(unix)]
     if let Some(dir) = path.parent() {
         std::fs::File::open(dir)?.sync_all()?;
