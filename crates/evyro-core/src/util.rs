@@ -105,17 +105,25 @@ pub fn write_keeping_last_good(
             let mut keep = tempfile::NamedTempFile::new_in(dir)?;
             keep.write_all(&current)?;
             keep.as_file().sync_all()?;
-            let keep = keep.into_temp_path();
-            rename_replacing(&keep, &last_good_path(path))?;
-            keep.keep().map_err(|e| e.error)?;
+            move_into_place(keep, &last_good_path(path))?;
         }
     }
-    let temp = temp.into_temp_path();
-    rename_replacing(&temp, path)?;
-    temp.keep().map_err(|e| e.error)?;
+    move_into_place(temp, path)?;
     #[cfg(unix)]
     std::fs::File::open(dir)?.sync_all()?;
     Ok(())
+}
+
+/// Rename a finished temporary file over `to`. It is made an ordinary file
+/// first, while it still exists: on Windows that clears its temporary
+/// attribute, which cannot be done once it has been renamed away. If the
+/// rename fails, the temporary file is removed.
+fn move_into_place(temp: tempfile::NamedTempFile, to: &Path) -> std::io::Result<()> {
+    let (file, from) = temp.keep().map_err(|e| e.error)?;
+    drop(file);
+    rename_replacing(&from, to).inspect_err(|_| {
+        let _ = std::fs::remove_file(&from);
+    })
 }
 
 /// Rename `from` over `to`, replacing it. Windows answers "access denied" while
