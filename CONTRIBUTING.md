@@ -23,6 +23,7 @@ cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 bash scripts/cli-e2e.sh
+node crates/evyro-desktop/tests/css-token-lint.cjs
 cargo build -p evyro-cli && node crates/evyro-desktop/tests/ui-smoke.cjs
 ```
 

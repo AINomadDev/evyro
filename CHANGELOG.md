@@ -63,6 +63,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 ### Changed
 
 - Desktop screens: Overview and Threads became **Workspace**, Handoffs and Sessions became **History**, and Decisions & memory is now **Knowledge**.
+- The desktop app's colors, spacing, type sizes, radii and line widths now come from one token file, `ui/tokens.css`; a lint (run in CI) fails on raw colors or px values anywhere else in the UI stylesheets, with justified exceptions in `tests/css-token-allow.json`. The app looks the same.
 
 ## [0.2.0-rc.1] - 2026-11-23
 

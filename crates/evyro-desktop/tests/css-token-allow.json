@@ -1,0 +1,12 @@
+[
+  {
+    "file": "style.css",
+    "text": "hsl(var(--hue) 62% 38%)",
+    "why": "Each agent badge sets its own --hue inline; the saturation and lightness are what keep white text readable on every hue."
+  },
+  {
+    "file": "style.css",
+    "text": "calc(var(--ui-size) - 1px)",
+    "why": "The font sample follows the person's chosen UI size, one pixel smaller; a fixed type-scale step would not."
+  }
+]
