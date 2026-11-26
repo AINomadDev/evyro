@@ -414,6 +414,9 @@ enum TaskCmd {
         #[arg(long)]
         human_override: Option<String>,
     },
+    /// Undo the latest release of a task's lease (its session ended or its AI went quiet):
+    /// the same AI holds the task again. Refused once another AI has claimed it.
+    UndoRelease { task: String },
     /// Add a dependency: TASK depends on --on.
     Dep {
         task: String,
@@ -3282,6 +3285,15 @@ fn task_cmd(
             store.add_dependency(&a.id, &b.id, if related { "related" } else { "blocks" })?;
             o.print(&json!({"task": a.key, "depends_on": b.key}), || {
                 format!("{} now depends on {}", a.key, b.key)
+            });
+        }
+        TaskCmd::UndoRelease { task } => {
+            let r = store.undo_lease_release(&p.id, &task)?;
+            o.print(&r, || {
+                format!(
+                    "{} is held by {} again (session {}).",
+                    r.task, r.harness, r.session.id
+                )
             });
         }
     }

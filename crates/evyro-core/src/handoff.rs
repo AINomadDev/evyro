@@ -899,7 +899,7 @@ impl Store {
         self.recover_one(project_id, s)
     }
 
-    fn recover_one(
+    pub(crate) fn recover_one(
         &self,
         project_id: &str,
         s: crate::sessions::Session,

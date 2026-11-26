@@ -3600,3 +3600,45 @@ TEAM_TOKEN = "{token}"
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(err.contains("1 agent file(s) could not be read"), "{err}");
 }
+
+/// A task held by an AI whose process is gone is freed, logged and can be given back with
+/// `evyro task undo-release`; once another AI has claimed it, the undo is refused.
+#[test]
+fn a_dead_ais_lease_is_freed_and_the_release_can_be_undone() {
+    let mut env = Env::new();
+    let repo = env.repo("lease-undo");
+    env.init(&repo);
+    env.ok(&repo, &["task", "add", "Work"]);
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "claude"]);
+    let dead_pid = || {
+        let mut child = if cfg!(windows) {
+            Command::new("cmd")
+                .args(["/c", "exit", "0"])
+                .spawn()
+                .unwrap()
+        } else {
+            Command::new("true").spawn().unwrap()
+        };
+        let pid = child.id();
+        child.wait().unwrap();
+        pid
+    };
+    let db = env.home.path().join("data/evyro.db");
+    assert!(rusqlite_free_update(&db, dead_pid()));
+    env.ok(&repo, &["recover"]);
+    let out = env.ok(&repo, &["task", "undo-release", "T-1"]);
+    assert!(out.contains("held by claude-code again"), "{out}");
+    let o = env.run(&repo, &["task", "undo-release", "T-1"]);
+    assert!(!o.status.success(), "a release is undone only once");
+
+    // Its process is gone again: another AI simply starts the task, and may keep it.
+    assert!(rusqlite_free_update(&db, dead_pid()));
+    env.ok(&repo, &["task", "start", "T-1", "--agent", "codex"]);
+    let o = env.run(&repo, &["task", "undo-release", "T-1"]);
+    assert!(!o.status.success());
+    assert!(
+        String::from_utf8_lossy(&o.stderr).contains("claimed by codex"),
+        "{}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+}
