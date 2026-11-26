@@ -12,8 +12,9 @@ The desktop app reads its words from `locales/<code>.js`. `en.js` is the source.
 5. Choose the language in Settings, Appearance, Language. **Pseudo-language** shows which words on a
    screen still come from outside a catalog.
 
-Not everything is in a catalog yet: the lint prints how many literal strings each file still holds, and
-that number may only go down.
+Every word a person reads comes from a catalog, and the lint fails on any new hard-coded text with its
+file and line. A literal that only looks like text (a key name such as `"Enter"`, a command line, a font
+name, the product name) goes in `crates/evyro-desktop/tests/i18n-allow.json` under its file instead.
 
 ## A variable named `t`
 

@@ -332,6 +332,7 @@ I18N.catalogs.en = {
   "skills.new.name": "Name",
   "skills.new.nameHint": "Lowercase letters, digits and hyphens.",
   "skills.new.when": "When to use it",
+  "skills.new.whenPh": "Use when adding or changing an HTTP endpoint",
   "skills.new.whenHint": "Agents decide from this line whether to load the skill.",
   "skills.new.needName": "Give the skill a name",
   "skills.create": "Create",
