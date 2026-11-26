@@ -121,6 +121,7 @@ const FIX = {
         invoke: async (cmd, args) => {
           window.__mockLog(cmd);
           if (cmd === "list_sessions" && window.__sessions) return window.__sessions;
+          if (cmd === "list_tasks" && window.__bigTasks) return window.__bigTasks;
           if (cmd in fix) return JSON.parse(JSON.stringify(fix[cmd]));
           if (cmd === "comparison_list") return window.__comparisons || [];
           if (cmd === "comparison_create") {
@@ -1605,6 +1606,76 @@ const FIX = {
       // A failure above must not leave every later step in the test language.
       await page.evaluate(() => { saveAppearance({ language: "system" }); delete I18N.catalogs.en["test.n"]; });
     }
+  });
+  await step("a huge transcript and board stay small in the page and still reach every item", async () => {
+    // 5,000 transcript rows and 2,000 task cards; only the ones near the view are drawn.
+    await page.evaluate((pid) => {
+      const log = [];
+      for (let i = 0; i < 2500; i++) {
+        log.push({ t: "user", text: `Question ${i}` });
+        log.push({ t: "update", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: `Answer ${i}\n`.repeat(1 + (i % 4)) } } });
+      }
+      window.__chats.chat_big = { info: { id: "chat_big", kind: "chat", title: "Long chat", target: "codex", task: "T-1", project_id: pid,
+        started_at: Math.floor(Date.now() / 1000), running: true, busy: false, state: "ready", agent: "Codex", exit_code: null, command: "ACP chat" }, log };
+      const statuses = ["backlog", "ready", "in_progress", "blocked", "in_review"];
+      window.__bigTasks = Array.from({ length: 2000 }, (_, i) => ({ task: { id: "tsk_big" + i, key: `T-${1000 + i}`, title: `Generated task ${i}`,
+        status: statuses[i % 5], kind: "task", priority: 2, acceptance: [], description: "", constraints: [], files: [], created_at: new Date().toISOString() },
+      criteria_met: 0, criteria_total: 1, owner: null, blocked_by: [] }));
+    }, project.id);
+    await page.evaluate(() => loadThreads().then(() => { placeThread("chat_big"); setTab("workspace"); }));
+    const log = page.locator('.chat-log[data-id="chat_big"]');
+    const feed = log.locator('[role="feed"]');
+    // Opens at the end, with the newest answer on screen.
+    await feed.locator('[aria-posinset="5000"]').getByText("Answer 2499").first().waitFor();
+    const inView = (row, scroller) => page.waitForFunction(([row, scroller]) => {
+      const el = document.querySelector(row), box = document.querySelector(scroller);
+      if (!el) return false;
+      const r = el.getBoundingClientRect(), b = box.getBoundingClientRect();
+      // The item's end is on screen (a pane can be shorter than one long message).
+      return r.bottom > b.top && r.bottom <= b.bottom + 1;
+    }, [row, scroller], { timeout: 3000 }).catch(async (e) => {
+      throw new Error(e.message + " " + await page.evaluate(([row, scroller]) => JSON.stringify([document.querySelector(row)?.getBoundingClientRect(), document.querySelector(scroller).getBoundingClientRect()]), [row, scroller]));
+    });
+    await inView('.chat-log[data-id="chat_big"] [aria-posinset="5000"]', '.chat-log[data-id="chat_big"]');
+    const drawn = () => feed.locator("[aria-posinset]").count();
+    if (await drawn() > 150) throw new Error(`the transcript drew ${await drawn()} of 5000 rows`);
+    if (await feed.locator('[aria-posinset]').first().getAttribute("aria-setsize") !== "5000") throw new Error("rows do not give the transcript's size");
+    // A live message keeps a chat that is at the bottom stuck to it.
+    await page.evaluate(() => { const item = { t: "user", text: "Newest question" }; window.__chats.chat_big.log.push(item); window.__emit("chat-event", { id: "chat_big", item }); });
+    await feed.locator('[aria-posinset="5001"]').getByText("Newest question").waitFor();
+    await page.waitForFunction(() => { const b = document.querySelector('.chat-log[data-id="chat_big"]'); return b.scrollHeight - b.scrollTop - b.clientHeight < 2; });
+    // Scrolling to the top brings in the first message; the page stays small.
+    await log.evaluate((b) => { b.scrollTop = 0; });
+    await feed.locator('[aria-posinset="1"]').getByText("Question 0", { exact: true }).waitFor();
+    if (await drawn() > 150) throw new Error("scrolling up kept the rows it passed");
+    // Page Down moves between messages, bringing in ones not drawn yet.
+    await feed.locator('[aria-posinset="1"]').focus();
+    for (let i = 0; i < 40; i++) await page.keyboard.press("PageDown");
+    if (await page.evaluate(() => document.activeElement.getAttribute("aria-posinset")) !== "41") throw new Error("Page Down did not reach message 41");
+    // A search hit far from the end is drawn, scrolled to and focused.
+    await page.evaluate(() => { chatData("chat_big").searchHit = 2001; const p = document.querySelector('.pane[data-id="chat_big"]'); clear(p); return drawChatPane(p, state.threads.find((x) => x.id === "chat_big"), true); });
+    await page.waitForSelector('.chat-search-hit:focus >> text="Answer 1000"');
+
+    await tab("tasks");
+    await page.waitForSelector(".task-card >> text=Generated task 0");
+    const cards = await page.locator(".task-card").count();
+    if (cards > 300) throw new Error(`the board drew ${cards} of 2000 cards`);
+    const first = page.getByRole("list", { name: "Backlog" });
+    if (await first.locator('[role="listitem"]').first().getAttribute("aria-setsize") !== "400") throw new Error("cards do not give their column's size");
+    // Tab from the last drawn card's last control goes to the next card in the column, not the next column.
+    const last = await first.locator('[role="listitem"]').last();
+    const pos = Number(await last.getAttribute("aria-posinset"));
+    await last.locator("button").last().focus();
+    await page.keyboard.press("Tab");
+    const now = await page.evaluate(() => { const r = document.activeElement.closest('[role="listitem"]'); return r && [r.parentElement.getAttribute("aria-label"), r.getAttribute("aria-posinset")]; });
+    if (!now || now[0] !== "Backlog" || Number(now[1]) !== pos + 1) throw new Error("Tab left the column early: " + JSON.stringify(now));
+    await page.evaluate(() => document.activeElement.blur());
+    // Scrolling to the end shows the last card of the last full column (columns wrap onto rows).
+    await page.locator("#view").evaluate((v) => { v.scrollTop = v.scrollHeight; });
+    await page.locator('[role="list"][aria-label="In review"] [aria-posinset="400"]').getByText("Generated task 1999").waitFor();
+    await inView('[role="list"][aria-label="In review"] [aria-posinset="400"]', "#view");
+    if (await page.locator(".task-card").count() > 300) throw new Error("scrolling the board kept every card it passed");
+    await page.evaluate(() => { delete window.__bigTasks; delete window.__chats.chat_big; return loadThreads(); });
   });
   await step("first-run setup when there are no projects", async () => {
     await page.evaluate(() => { state.projects = []; state.project = null; setTab("overview"); });

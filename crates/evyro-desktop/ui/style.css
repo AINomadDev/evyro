@@ -610,3 +610,7 @@ label.check.ap-row { display: flex; }
 .ks dd { margin: 0; text-align: right; white-space: nowrap; }
 .card-files { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-wait { margin-top: 6px; }
+
+/* Windowed lists (vlist.js): rows stand alone so a row's own alignment still applies. */
+.vlist { display: flex; flex-direction: column; gap: inherit; overflow-anchor: none; }
+.vlist > * { display: flex; flex-direction: column; }

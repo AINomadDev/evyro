@@ -56,6 +56,11 @@
   "threads.js": [
     "ui-monospace, Menlo, Consolas, monospace"
   ],
+  "vlist.js": [
+    "PageDown",
+    "PageUp",
+    "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])"
+  ],
   "workspace.js": [
     "Enter",
     "Unlimited"

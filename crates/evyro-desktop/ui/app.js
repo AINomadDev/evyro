@@ -491,6 +491,7 @@ async function viewTasks(v) {
   v.append(tourBox);
   const board = h("div", { class: "board" });
   v.append(board);
+  let lists = [];
   const canRefresh = () => board.isConnected && state.project?.id === pid && !board.contains(document.activeElement);
   const draw = async () => {
     if (!canRefresh()) return;
@@ -500,20 +501,30 @@ async function viewTasks(v) {
     catch (e) { if (canRefresh()) clear(board).append(h("div", { class: "banner bad" }, errMsg(e))); return; }
     if (!canRefresh()) return;
     drawTour(tourBox, pid, draw);
+    const y = v.scrollTop;
+    for (const list of lists) list.stop();
+    lists = [];
     clear(board);
     const cols = columns();
-    for (const [st, label] of cols) {
-      const items = rows.filter((r) => r.task.status === st);
-      board.append(h("div", { class: "column" },
-        h("div", { class: "column-head" }, h("span", null, label), h("span", null, items.length)),
-        items.map(taskCard)));
-    }
+    // Each column draws only the cards near the view (see vlist.js), so a board of thousands stays quick.
+    const column = (label, items) => {
+      const list = vlist({ scroller: v, count: items.length, role: "list", label, estimate: 120, heights: CARD_HEIGHTS,
+        key: (i) => items[i].task.key, render: (i) => taskCard(items[i]) });
+      lists.push(list);
+      return h("div", { class: "column" }, h("div", { class: "column-head" }, h("span", null, label), h("span", null, items.length)), list.el);
+    };
+    for (const [st, label] of cols) board.append(column(label, rows.filter((r) => r.task.status === st)));
     const other = rows.filter((r) => !cols.some(([s]) => s === r.task.status));
-    if (other.length) board.append(h("div", { class: "column" }, h("div", { class: "column-head" }, h("span", null, I18N.t("app.col.closed")), h("span", null, other.length)), other.map(taskCard)));
+    if (other.length) board.append(column(I18N.t("app.col.closed"), other));
+    for (const list of lists) list.update();
+    // Columns start short until they are measured; put the board back where it was.
+    if (v.scrollTop !== y) { v.scrollTop = y; for (const list of lists) list.update(); }
   };
   await draw();
   if (board.isConnected) state.timer = setInterval(draw, 5000);
 }
+
+const CARD_HEIGHTS = new Map(); // task key -> measured card height, kept across board redraws
 
 function taskCard(r) {
   const t = r.task;
