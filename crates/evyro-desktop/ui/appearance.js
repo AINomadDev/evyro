@@ -27,38 +27,39 @@ const APPEARANCE_DEFAULTS = {
   grouping: "state", // state: Needs you / Working / Your turn / Ended; time: newest first
 };
 
+// [id, name, scheme]. A name is a function so it follows the chosen language.
 const THEMES = [
-  ["system", "System", null],
-  ["light", "Light", "light"],
-  ["dark", "Dark", "dark"],
-  ["midnight", "Midnight", "dark"],
-  ["paper", "Paper", "light"],
-  ["contrast-light", "High contrast light", "light"],
-  ["contrast-dark", "High contrast dark", "dark"],
+  ["system", () => t("ap.theme.system"), null],
+  ["light", () => t("ap.theme.light"), "light"],
+  ["dark", () => t("ap.theme.dark"), "dark"],
+  ["midnight", () => t("ap.theme.midnight"), "dark"],
+  ["paper", () => t("ap.theme.paper"), "light"],
+  ["contrast-light", () => t("ap.theme.contrastLight"), "light"],
+  ["contrast-dark", () => t("ap.theme.contrastDark"), "dark"],
 ];
 // Each accent has a light-scheme and a dark-scheme shade, both readable as text (WCAG AA) on panels.
 const ACCENTS = {
-  indigo: ["Relay indigo", "#4f46e5", "#8b85ff"],
-  cyan: ["Signal cyan", "#0e7490", "#22d3ee"],
-  emerald: ["Emerald", "#047857", "#34d399"],
-  amber: ["Amber", "#9a5b00", "#fbbf24"],
-  rose: ["Rose", "#be123c", "#fb7185"],
-  violet: ["Violet", "#7c3aed", "#b69cff"],
-  slate: ["Graphite", "#3f4a5a", "#c3ccd9"],
+  indigo: [() => t("ap.accent.indigo"), "#4f46e5", "#8b85ff"],
+  cyan: [() => t("ap.accent.cyan"), "#0e7490", "#22d3ee"],
+  emerald: [() => t("ap.accent.emerald"), "#047857", "#34d399"],
+  amber: [() => t("ap.accent.amber"), "#9a5b00", "#fbbf24"],
+  rose: [() => t("ap.accent.rose"), "#be123c", "#fb7185"],
+  violet: [() => t("ap.accent.violet"), "#7c3aed", "#b69cff"],
+  slate: [() => t("ap.accent.slate"), "#3f4a5a", "#c3ccd9"],
 };
 const UI_FONTS = {
-  system: ["System", '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif'],
-  inter: ["Inter", 'Inter, "Inter Display", -apple-system, "Segoe UI", Roboto, sans-serif'],
-  hyperlegible: ["Atkinson Hyperlegible", '"Atkinson Hyperlegible", "Atkinson Hyperlegible Next", -apple-system, "Segoe UI", sans-serif'],
-  rounded: ["Rounded", 'ui-rounded, "SF Pro Rounded", "Nunito", -apple-system, sans-serif'],
-  serif: ["Serif", 'ui-serif, "New York", Georgia, "Times New Roman", serif'],
+  system: [() => t("ap.font.system"), '-apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif'],
+  inter: [() => "Inter", 'Inter, "Inter Display", -apple-system, "Segoe UI", Roboto, sans-serif'],
+  hyperlegible: [() => "Atkinson Hyperlegible", '"Atkinson Hyperlegible", "Atkinson Hyperlegible Next", -apple-system, "Segoe UI", sans-serif'],
+  rounded: [() => t("ap.font.rounded"), 'ui-rounded, "SF Pro Rounded", "Nunito", -apple-system, sans-serif'],
+  serif: [() => t("ap.font.serif"), 'ui-serif, "New York", Georgia, "Times New Roman", serif'],
 };
 const MONO_FONTS = {
-  jetbrains: ["JetBrains Mono", '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace'],
-  system: ["System mono", 'ui-monospace, "SF Mono", Menlo, Consolas, monospace'],
-  fira: ["Fira Code", '"Fira Code", ui-monospace, Menlo, Consolas, monospace'],
-  cascadia: ["Cascadia Code", '"Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace'],
-  iosevka: ["Iosevka", 'Iosevka, "Iosevka Term", ui-monospace, Menlo, monospace'],
+  jetbrains: [() => "JetBrains Mono", '"JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace'],
+  system: [() => t("ap.font.systemMono"), 'ui-monospace, "SF Mono", Menlo, Consolas, monospace'],
+  fira: [() => "Fira Code", '"Fira Code", ui-monospace, Menlo, Consolas, monospace'],
+  cascadia: [() => "Cascadia Code", '"Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace'],
+  iosevka: [() => "Iosevka", 'Iosevka, "Iosevka Term", ui-monospace, Menlo, monospace'],
 };
 
 let APPEARANCE = null;
@@ -206,7 +207,7 @@ function appearanceCard() {
     const check = (label, key) => h("label", { class: "check ap-row" }, h("input", { type: "checkbox", checked: a[key], onchange: (e) => set({ [key]: e.target.checked }) }), label);
     const custom = (key, placeholder) => {
       const i = h("input", { type: "text", value: a[key], placeholder, "aria-label": placeholder });
-      i.addEventListener("change", () => { saveAppearance({ [key]: i.value }); if (appearance()[key] !== i.value) toast("Use a font name, like \"Berkeley Mono\".", true); });
+      i.addEventListener("change", () => { saveAppearance({ [key]: i.value }); if (appearance()[key] !== i.value) toast(t("ap.fontError"), true); });
       return i;
     };
     const acc = accentColor();
@@ -214,62 +215,62 @@ function appearanceCard() {
     const ratio = /^#[0-9a-f]{6}$/i.test(panel) ? contrast(acc, panel) : 5;
 
     clear(card).append(
-      h("div", { class: "card-head" }, h("h2", null, "Appearance"), h("div", { class: "row" },
-        h("button", { class: "btn small", onclick: () => copy(JSON.stringify(appearance(), null, 2), "Appearance settings copied") }, "Copy settings"),
-        h("button", { class: "btn small", onclick: importAppearance }, "Paste settings"),
-        h("button", { class: "btn small", onclick: () => { try { localStorage.removeItem("evyro.appearance"); } catch { /* none */ } APPEARANCE = null; applyAppearance(); draw(); toast("Appearance reset"); } }, "Reset"))),
-      h("p", { class: "muted small" }, "Changes apply at once and are kept on this computer. Fonts must be installed on this computer; Evyro falls back to the system font."),
+      h("div", { class: "card-head" }, h("h2", null, t("ap.title")), h("div", { class: "row" },
+        h("button", { class: "btn small", onclick: () => copy(JSON.stringify(appearance(), null, 2), t("ap.copied")) }, t("ap.copy")),
+        h("button", { class: "btn small", onclick: importAppearance }, t("ap.paste")),
+        h("button", { class: "btn small", onclick: () => { try { localStorage.removeItem("evyro.appearance"); } catch { /* none */ } APPEARANCE = null; applyAppearance(); draw(); toast(t("ap.resetDone")); } }, t("ap.reset")))),
+      h("p", { class: "muted small" }, t("ap.intro")),
       h("div", { class: "ap-grid" },
-        h("section", null, h("h3", null, "Theme and color"),
-          h("div", { class: "ap-themes", role: "group", "aria-label": "Theme" }, THEMES.map(([v, l]) => h("button", {
+        h("section", null, h("h3", null, t("ap.section.theme")),
+          h("div", { class: "ap-themes", role: "group", "aria-label": t("ap.theme") }, THEMES.map(([v, l]) => h("button", {
             class: "ap-theme" + (a.theme === v ? " active" : ""), "data-theme-preview": v, "aria-pressed": String(a.theme === v), onclick: () => set({ theme: v }),
-          }, h("span", { class: "ap-swatch", "aria-hidden": "true" }), l))),
-          h("div", { class: "ap-row" }, h("span", { class: "ap-label", id: "ap-accent" }, "Accent"),
+          }, h("span", { class: "ap-swatch", "aria-hidden": "true" }), l()))),
+          h("div", { class: "ap-row" }, h("span", { class: "ap-label", id: "ap-accent" }, t("ap.accent")),
             h("div", { class: "ap-accents", role: "group", "aria-labelledby": "ap-accent" },
-              Object.entries(ACCENTS).map(([k, [l, light, dark]]) => h("button", {
+              Object.entries(ACCENTS).map(([k, [name, light, dark]]) => { const l = name(); return h("button", {
                 class: "ap-accent" + (a.accent === k ? " active" : ""), style: `--sw:${colorScheme() === "dark" ? dark : light}`, title: l, "aria-label": l, "aria-pressed": String(a.accent === k), onclick: () => set({ accent: k }),
-              })),
-              h("label", { class: "ap-accent custom" + (a.accent === "custom" ? " active" : ""), title: "Your own color" },
-                h("input", { type: "color", value: a.customAccent, "aria-label": "Custom accent color", onchange: (e) => set({ accent: "custom", customAccent: e.target.value }) })))),
-          ratio < 4.5 ? h("div", { class: "hint bad-text" }, `This accent reads at ${ratio.toFixed(1)}:1 on panels, below the 4.5:1 that text needs. Pick a ${colorScheme() === "dark" ? "lighter" : "darker"} shade.`) : null,
-          a.theme.startsWith("contrast") ? h("div", { class: "hint" }, "High-contrast themes use their own accent so every text pair keeps at least 7:1.") : null,
-          seg("Density", "density", [["comfortable", "Comfortable"], ["compact", "Compact"]]),
-          seg("Motion", "motion", [["system", "Follow system"], ["reduce", "Reduce always"]]),
+              }); }),
+              h("label", { class: "ap-accent custom" + (a.accent === "custom" ? " active" : ""), title: t("ap.customColor") },
+                h("input", { type: "color", value: a.customAccent, "aria-label": t("ap.customAccent"), onchange: (e) => set({ accent: "custom", customAccent: e.target.value }) })))),
+          ratio < 4.5 ? h("div", { class: "hint bad-text" }, (colorScheme() === "dark" ? t("ap.lowContrast.lighter", { ratio: ratio.toFixed(1) }) : t("ap.lowContrast.darker", { ratio: ratio.toFixed(1) }))) : null,
+          a.theme.startsWith("contrast") ? h("div", { class: "hint" }, t("ap.contrastNote")) : null,
+          seg(t("ap.density"), "density", [["comfortable", t("ap.density.comfortable")], ["compact", t("ap.density.compact")]]),
+          seg(t("ap.motion"), "motion", [["system", t("language.system")], ["reduce", t("ap.motion.reduce")]]),
           h("div", { class: "ap-row" }, h("label", { class: "ap-label", for: "ap-language" }, t("language.label")),
             h("select", { id: "ap-language", onchange: (e) => set({ language: e.target.value }) },
               [["system", t("language.system")], ...I18N.available().map((c) => [c, I18N.names[c]])].map(([v, l]) => h("option", { value: v, selected: a.language === v }, l)))),
-          range("Corners", "radius", 0, 16)),
-        h("section", null, h("h3", null, "Typography"),
-          select("Interface font", "uiFont", [...Object.entries(UI_FONTS).map(([k, [l]]) => [k, l]), ["custom", "Other…"]]),
-          a.uiFont === "custom" ? custom("customUiFont", "Font name, e.g. IBM Plex Sans") : null,
-          range("Text size", "uiSize", 12, 18),
-          select("Code and terminal font", "monoFont", [...Object.entries(MONO_FONTS).map(([k, [l]]) => [k, l]), ["custom", "Other…"]]),
-          a.monoFont === "custom" ? custom("customMonoFont", "Font name, e.g. Berkeley Mono") : null,
-          range("Terminal size", "termSize", 10, 20),
-          h("div", { class: "ap-sample" }, h("div", null, "The quick brown fox hands off to the next AI."), h("div", { class: "mono" }, "evyro run --to codex  # 0Oo 1lI {}"))),
-        h("section", null, h("h3", null, "Layout"),
-          range("Initial pane count", "panes", 1, 24, ""),
-          seg("Shared context side", "inspectorSide", [["left", "Left"], ["right", "Right"]]),
-          check("Open the shared context on start", "inspector"),
-          range("Sidebar width", "sidebarWidth", 180, 360),
-          range("Context width", "inspectorWidth", 260, 520),
-          range("Terminal drawer height", "drawerHeight", 120, 480),
-          select("Sidebar threads", "grouping", [["state", "By state"], ["time", "Newest first"]]),
-          check("Show the status bar", "statusBar"))));
+          range(t("ap.corners"), "radius", 0, 16)),
+        h("section", null, h("h3", null, t("ap.section.type")),
+          select(t("ap.uiFont"), "uiFont", [...Object.entries(UI_FONTS).map(([k, [l]]) => [k, l()]), ["custom", t("ap.other")]]),
+          a.uiFont === "custom" ? custom("customUiFont", t("ap.fontName.ui")) : null,
+          range(t("ap.textSize"), "uiSize", 12, 18),
+          select(t("ap.monoFont"), "monoFont", [...Object.entries(MONO_FONTS).map(([k, [l]]) => [k, l()]), ["custom", t("ap.other")]]),
+          a.monoFont === "custom" ? custom("customMonoFont", t("ap.fontName.mono")) : null,
+          range(t("ap.termSize"), "termSize", 10, 20),
+          h("div", { class: "ap-sample" }, h("div", null, t("ap.sample")), h("div", { class: "mono" }, "evyro run --to codex  # 0Oo 1lI {}"))),
+        h("section", null, h("h3", null, t("ap.section.layout")),
+          range(t("ap.panes"), "panes", 1, 24, ""),
+          seg(t("ap.ctxSide"), "inspectorSide", [["left", t("ap.left")], ["right", t("ap.right")]]),
+          check(t("ap.ctxOpen"), "inspector"),
+          range(t("ap.sidebarW"), "sidebarWidth", 180, 360),
+          range(t("ap.ctxW"), "inspectorWidth", 260, 520),
+          range(t("ap.drawerH"), "drawerHeight", 120, 480),
+          select(t("ap.grouping"), "grouping", [["state", t("ap.grouping.state")], ["time", t("ap.grouping.time")]]),
+          check(t("ap.statusBar"), "statusBar"))));
   };
   draw();
   return card;
 }
 
 function importAppearance() {
-  const ta = h("textarea", { placeholder: '{ "theme": "midnight", "accent": "cyan" }', rows: "8", "aria-label": "Appearance settings" });
-  modal("Paste appearance settings", [field("Settings (JSON)", ta, "Unknown keys and bad values are ignored.")], [{
-    label: "Apply", primary: true, run: () => {
+  const ta = h("textarea", { placeholder: '{ "theme": "midnight", "accent": "cyan" }', rows: "8", "aria-label": t("ap.paste.label") });
+  modal(t("ap.paste.title"), [field(t("ap.paste.field"), ta, t("ap.paste.hint"))], [{
+    label: t("ap.apply"), primary: true, run: () => {
       let o;
-      try { o = JSON.parse(ta.value); } catch { toast("That is not valid JSON.", true); return false; }
+      try { o = JSON.parse(ta.value); } catch { toast(t("ap.badJson"), true); return false; }
       saveAppearance(o);
       if (state.view === "settings") render();
-      toast("Appearance applied");
+      toast(t("ap.applied"));
     },
   }]);
 }
