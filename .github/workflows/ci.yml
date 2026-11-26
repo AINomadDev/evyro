@@ -80,6 +80,16 @@ jobs:
         shell: bash
         run: bash scripts/release/selftest.sh
 
+  # Startup and large-repository budgets from docs/PERFORMANCE.md.
+  perf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --release --locked -p evyro-cli
+      - name: performance budgets
+        run: python3 scripts/perf-check.py target/release/evyro
+
   ui-smoke:
     strategy:
       fail-fast: false
