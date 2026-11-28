@@ -107,7 +107,15 @@ Ended threads and chat transcripts are saved on this computer so you can reopen 
 - **Saved threads to keep** and **Saved chats to keep** take a whole number from 0 to 500 (default 60 each). When you go over a limit the oldest ended ones are deleted at once; 0 keeps none.
 - **Clear saved threads** and **Clear saved chats** delete every ended one after you confirm. Threads and chats that are still running are never touched.
 
-Saved output has secrets redacted and is readable only by you. Deleting is permanent: the files are removed from disk.
+Saved output has secrets redacted and is readable only by you.
+
+### Undo
+
+Destructive actions offer an **Undo** in a toast for 10 seconds:
+
+- **Deleting** saved threads or chats (Clear saved threads/chats, a lower keep limit, **Close** on an ended thread, **Delete transcript**) first moves the files, as they are, into `trash/` in Evyro's data folder. Undo puts them back; encrypted files stay encrypted and their last good copies come back with them. After a minute the trash is emptied for good (and on the next start, if the app closed sooner).
+- **Stopping** a running thread keeps the thread and its output. A killed program cannot carry on where it was, so the toast offers **Restart** (**Restart shell** for a shell), which starts it again in the same thread after its saved output. **End chat** offers **Start a new chat** with the same AI and task; the ended chat's transcript stays saved.
+- **Recover stale sessions** frees the tasks of AIs that are gone. Undo gives each task back to the AI that had it, the same as `evyro task undo-release`; it is refused, and says why, once another AI has claimed the task.
 
 ### Encrypting saved history (optional, macOS)
 

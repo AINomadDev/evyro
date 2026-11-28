@@ -59,6 +59,39 @@ function toast(msg, bad = false) {
   $("#toast-root").append(t);
   setTimeout(() => t.remove(), bad ? 7000 : 3500);
 }
+/** A toast with one button, such as Undo, offered for `secs` seconds. */
+function actionToast(msg, label, run, secs = 10) {
+  let done = false;
+  const el = h("div", { class: "toast has-action", role: "status" }, h("span", null, msg));
+  const close = () => { done = true; el.remove(); };
+  el.append(h("button", { class: "btn small", onclick: async () => {
+    if (done) return;
+    close();
+    try { await run(); } catch (e) { toast(errMsg(e), true); }
+  } }, label));
+  $("#toast-root").append(el);
+  setTimeout(close, secs * 1000);
+}
+/** After a delete that went to the trash: offer to put it back, then `after()` redraws. */
+function undoDeleteToast(msg, undo, after) {
+  if (!undo) { toast(msg); return; }
+  actionToast(msg, I18N.t("undo.undo"), async () => {
+    await invoke("trash_restore", { id: undo.id });
+    toast(I18N.t("undo.restored"));
+    await after();
+  }, undo.secs);
+}
+/** After stale sessions were recovered: offer to give their tasks back to the AIs that had them. */
+function recoveredToast(projectId, recovered, after = () => {}) {
+  if (!recovered.length) { toast(I18N.t("app.ss.noStale")); return; }
+  actionToast(I18N.t("app.ss.recovered", { count: recovered.length }), I18N.t("undo.undo"), async () => {
+    const r = await invoke("release_undo", { projectId, sessionIds: recovered.map((x) => x.session_id) });
+    if (r.refused.length) toast(I18N.t("undo.releaseRefused", { reason: r.refused[0].message }), true);
+    if (r.restored.length) toast(I18N.t("undo.releaseRestored", { count: r.restored.length }));
+    else if (!r.refused.length) toast(I18N.t("undo.releaseNone"));
+    after();
+  });
+}
 function errMsg(e) {
   if (!e) return I18N.t("app.unknownError");
   if (typeof e === "string") return e;
@@ -908,7 +941,7 @@ async function viewSessions(v) {
     h("button", {
       class: "btn", onclick: async () => {
         const r = await act(() => invoke("recover_sessions", { projectId: pid, includeUnknown: true }));
-        toast(r.length ? I18N.t("app.ss.recovered", { count: r.length }) : I18N.t("app.ss.noStale"));
+        recoveredToast(pid, r, render);
         render();
       },
     }, I18N.t("app.ss.recover")),
@@ -1139,9 +1172,15 @@ function historyCard() {
       const t = Number(threads.value), c = Number(chats.value);
       const ok = (n) => Number.isInteger(n) && n >= 0 && n <= st.max;
       if (!ok(t) || !ok(c)) { toast(I18N.t("app.hist.range", { max: st.max }), true); return; }
+      const before = st.keep;
       const r = await act(() => invoke("history_set", { threadsKeep: t, chatsKeep: c }));
       const gone = r.removed.threads + r.removed.chats;
-      toast(gone ? I18N.t("app.hist.savedDeleted", { count: gone }) : I18N.t("app.hist.saved"));
+      // Undo puts the old limits back first, so the restored items are not trimmed again.
+      undoDeleteToast(gone ? I18N.t("app.hist.savedDeleted", { count: gone }) : I18N.t("app.hist.saved"), r.undo, async () => {
+        await invoke("history_set", { threadsKeep: before.threads, chatsKeep: before.chats });
+        await forgetGone();
+        draw();
+      });
       await forgetGone();
       draw();
     };
@@ -1150,7 +1189,7 @@ function historyCard() {
       if (!(await confirmDialog(threads ? I18N.t("app.hist.delThreads", { count }) : I18N.t("app.hist.delChats", { count }),
         threads ? I18N.t("app.hist.delThreadsText") : I18N.t("app.hist.delChatsText"), I18N.t("app.hist.delete")))) return;
       const r = await act(() => invoke("history_clear", { what }));
-      toast(threads ? I18N.t("app.hist.deletedThreads", { count: r.removed[what] }) : I18N.t("app.hist.deletedChats", { count: r.removed[what] }));
+      undoDeleteToast(threads ? I18N.t("app.hist.deletedThreads", { count: r.removed[what] }) : I18N.t("app.hist.deletedChats", { count: r.removed[what] }), r.undo, async () => { await forgetGone(); draw(); });
       await forgetGone();
       draw();
     } }, label);
@@ -1330,7 +1369,7 @@ async function paletteActions() {
       acts.push({ label: I18N.t("app.pal.sendCtx", { name: live.title }), run: () => sendContext(live) });
       acts.push({ label: I18N.t("app.pal.stop", { name: live.title }), run: () => closeThread(live.id) });
     }
-    acts.push({ label: I18N.t("app.pal.recover"), run: async () => { try { const r = await act(() => invoke("recover_sessions", { projectId: state.project.id, includeUnknown: false })); toast(r.length ? I18N.t("app.ss.recovered", { count: r.length }) : I18N.t("app.ss.noStale")); } catch { /* toast shown */ } } });
+    acts.push({ label: I18N.t("app.pal.recover"), run: async () => { try { const pid = state.project.id; const r = await act(() => invoke("recover_sessions", { projectId: pid, includeUnknown: false })); recoveredToast(pid, r); } catch { /* toast shown */ } } });
     acts.push({ label: I18N.t("app.pal.settings"), run: () => setTab("settings") });
     try {
       const rows = await invoke("list_tasks", { projectId: state.project.id });

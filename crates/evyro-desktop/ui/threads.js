@@ -165,7 +165,10 @@ async function closeThread(id) {
   if (t && t.kind === "chat") {
     if (t.running && !(await confirmDialog(I18N.t("thread.endChatTitle", { agent: t.agent || t.target }), I18N.t("thread.endChatBody")))) return;
     if (t.archived && !(await confirmDialog(I18N.t("thread.deleteTitle"), I18N.t("thread.deleteBody"), I18N.t("thread.deleteAction")))) return;
-    await act(() => invoke("chat_close", { id, forget: !!t.archived }));
+    const r = await act(() => invoke("chat_close", { id, forget: !!t.archived }));
+    if (t.archived) undoDeleteToast(I18N.t("undo.chatDeleted"), r && r.undo, async () => { await loadThreads(); render(); });
+    // An ended chat cannot be continued; offer a new one with the same AI and task instead.
+    else if (t.target && state.project?.id === t.project_id) actionToast(I18N.t("undo.chatEnded"), I18N.t("undo.newChat"), () => startChat({ target: t.target, task: t.task || null }));
     if (state.project?.id === t.project_id) {
       const slots = panes();
       const index = slots.indexOf(id);
@@ -178,13 +181,21 @@ async function closeThread(id) {
     render();
     return;
   }
-  if (t && t.running && !(await confirmDialog(I18N.t("thread.stopTitle", { title: t.title }), I18N.t("thread.stopBody")))) return;
-  await act(() => invoke("term_close", { id }));
+  if (t && t.running) {
+    // Stop keeps the thread and its output. A killed program cannot carry on where it was, so
+    // the undo is a restart in the same thread, after its saved output.
+    if (!(await confirmDialog(I18N.t("thread.stopTitle", { title: t.title }), I18N.t("thread.stopBody")))) return;
+    await act(() => invoke("term_stop", { id }));
+    actionToast(I18N.t("undo.stopped", { title: t.title }), t.kind === "shell" ? I18N.t("ws.restart.shell") : I18N.t("undo.restart"), () => resumeThread(t));
+    return;
+  }
+  const r = await act(() => invoke("term_close", { id }));
   const x = XTERMS.get(id);
   if (x) { x.term.dispose(); XTERMS.delete(id); }
   state.threads = state.threads.filter((t) => t.id !== id);
   if (state.thread === id) state.thread = null;
   render();
+  undoDeleteToast(I18N.t("undo.threadDeleted", { title: t ? t.title : I18N.t("thread.word") }), r && r.undo, async () => { await loadThreads(); render(); });
 }
 
 function confirmDialog(title, text, action = t("thread.stopIt")) {

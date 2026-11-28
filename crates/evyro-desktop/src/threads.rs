@@ -244,10 +244,12 @@ pub fn term_snapshot(terms: State<'_, Terms>, id: String, attach: Option<bool>) 
     Ok(json!({"data": data, "end": end}))
 }
 
+/// Forget a thread. Its saved output goes to the trash; the result says how to undo that.
 #[tauri::command]
 pub fn term_close(terms: State<'_, Terms>, id: String) -> CmdResult {
-    terms.close(&id).map_err(bad)?;
-    Ok(Value::Null)
+    let del = crate::undo::Deleting::start()?;
+    terms.close(&id, Some(&del.threads())).map_err(bad)?;
+    Ok(json!({"undo": del.finish()}))
 }
 
 #[cfg(test)]

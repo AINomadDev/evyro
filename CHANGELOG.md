@@ -6,6 +6,7 @@ All notable changes to Evyro are listed here. Versions follow [Semantic Versioni
 
 ### Added
 
+- Undo for destructive actions in the desktop: deleting saved threads and chat transcripts (clearing, lower keep limits, closing one) moves them to a trash folder for a minute and the toast offers **Undo** for 10 seconds; stopping a thread keeps its output and offers **Restart**, since a killed program cannot continue; **Recover stale sessions** offers to give the freed tasks back unless another AI has claimed them since.
 - Remote access: paired devices can expire (`evyro remote pair --expires 30d`), their scope or expiry can change without pairing again (`evyro remote set`), and an audit log of pairing, revocation, scope and expiry changes and each device's actions and refused calls is shown by `evyro remote audit` and in the desktop's Remote access card.
 - A task held by an AI whose process is gone, or that went quiet past the 30-minute heartbeat timeout, is freed as soon as another AI starts it; every lease freed when a session ends is logged (`lease.auto_released`), and `evyro task undo-release T-1` gives the task back to the same AI unless another one has claimed it since. A live AI's lease is never touched.
 - Optional encryption at rest for saved terminal output and chat transcripts (`evyro saved-output encrypt`, off by default): ChaCha20-Poly1305 with a data key in the macOS Keychain; plaintext files still load, and output whose key is missing or different is left untouched, never deleted.

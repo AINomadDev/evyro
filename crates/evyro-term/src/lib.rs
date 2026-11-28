@@ -15,7 +15,7 @@ use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, Pt
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -154,16 +154,18 @@ impl Terminals {
     }
 
     /// Change how many ended threads are kept and delete the surplus now. Returns how many went.
-    pub fn set_keep(&self, keep: usize) -> usize {
+    /// With `into`, the deleted files are moved into that folder instead (see `evyro_core::trash`).
+    pub fn set_keep(&self, keep: usize, into: Option<&Path>) -> usize {
         let _guard = self.lifecycle.lock().unwrap();
         self.keep.store(keep, Ordering::SeqCst);
-        self.remove_ended(keep)
+        self.remove_ended(keep, into)
     }
 
     /// Delete every ended thread and its saved output. Running threads stay. Returns how many.
-    pub fn clear_saved(&self) -> usize {
+    /// With `into`, the files are moved into that folder instead.
+    pub fn clear_saved(&self, into: Option<&Path>) -> usize {
         let _guard = self.lifecycle.lock().unwrap();
-        self.remove_ended(0)
+        self.remove_ended(0, into)
     }
 
     /// How many ended threads are saved.
@@ -173,7 +175,7 @@ impl Terminals {
 
     /// Keep the newest `keep` ended threads (this run's and earlier runs') and delete the rest
     /// from memory and disk. The caller holds the lifecycle lock.
-    fn remove_ended(&self, keep: usize) -> usize {
+    fn remove_ended(&self, keep: usize, into: Option<&Path>) -> usize {
         let mut ended: Vec<(u64, String)> = self
             .terms
             .lock()
@@ -197,17 +199,8 @@ impl Terminals {
         ended.sort_by_key(|(started, _)| std::cmp::Reverse(*started));
         let doomed: Vec<String> = ended.into_iter().skip(keep).map(|(_, id)| id).collect();
         for id in &doomed {
-            if let Some(t) = self.terms.lock().unwrap().remove(id) {
-                let _info = t.info.lock().unwrap();
-                t.forgotten.store(true, Ordering::SeqCst);
-            }
-            if let Some(dir) = &self.store {
-                for ext in ["json", "json.bak", "log", "usage.json"] {
-                    if let Ok(p) = saved_path(dir, id, ext) {
-                        let _ = std::fs::remove_file(p);
-                    }
-                }
-            }
+            let removed = self.terms.lock().unwrap().remove(id);
+            self.forget(removed.as_deref(), id, into);
         }
         doomed.len()
     }
@@ -411,7 +404,7 @@ impl Terminals {
         let store = self.store.clone();
         if let Some(dir) = &store {
             save_term(dir, &term);
-            self.remove_ended(self.keep.load(Ordering::SeqCst));
+            self.remove_ended(self.keep.load(Ordering::SeqCst), None);
         }
 
         // Reader: stream output, keep scrollback. Ends at EOF (program exit).
@@ -560,31 +553,54 @@ impl Terminals {
     }
 
     /// Stop the program if it is still running and forget the terminal.
-    /// A saved thread from an earlier run is deleted from disk.
-    pub fn close(&self, id: &str) -> Result<()> {
+    /// Its saved files are deleted, or with `into` moved into that folder.
+    pub fn close(&self, id: &str, into: Option<&Path>) -> Result<()> {
         let _guard = self.lifecycle.lock().unwrap();
         let removed = self.terms.lock().unwrap().remove(id);
-        if let Some(t) = &removed {
-            let _info = t.info.lock().unwrap();
-            t.forgotten.store(true, Ordering::SeqCst);
-        }
         if let Some(dir) = &self.store {
             let json = saved_path(dir, id, "json")?;
-            let bak = saved_path(dir, id, "json.bak")?;
-            let had = json.exists() || bak.exists();
-            let _ = std::fs::remove_file(json);
-            let _ = std::fs::remove_file(bak);
-            let _ = std::fs::remove_file(saved_path(dir, id, "log")?);
-            let _ = std::fs::remove_file(saved_path(dir, id, "usage.json")?);
+            let had = json.exists() || last_good(&json).exists();
+            self.forget(removed.as_deref(), id, into);
             if removed.is_none() && had {
                 return Ok(());
             }
+        } else {
+            self.forget(removed.as_deref(), id, into);
         }
         let t = removed.ok_or_else(|| anyhow!("no terminal {id}"))?;
         if t.info.lock().unwrap().running {
             let _ = t.killer.lock().unwrap().kill();
         }
         Ok(())
+    }
+
+    /// Never save `t` again and delete its saved files, or move them into `into`. A thread
+    /// moved away is saved first, so restoring it brings back its latest output.
+    /// The caller holds the lifecycle lock.
+    fn forget(&self, t: Option<&Term>, id: &str, into: Option<&Path>) {
+        if let Some(t) = t {
+            let info = t.info.lock().unwrap();
+            if let (Some(dir), Some(_)) = (&self.store, into) {
+                save_term_locked(dir, t, &info);
+            }
+            t.forgotten.store(true, Ordering::SeqCst);
+        }
+        let Some(dir) = &self.store else { return };
+        for ext in ["json", "json.bak", "log", "usage.json"] {
+            let Ok(p) = saved_path(dir, id, ext) else {
+                return;
+            };
+            match into {
+                Some(to) => {
+                    if let Err(e) = evyro_core::trash::move_into(&p, to) {
+                        eprintln!("evyro: could not move {} to the trash: {e}", p.display());
+                    }
+                }
+                None => {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
+        }
     }
 
     /// Running and ended terminals of this run, then saved ones from earlier runs.
@@ -1044,7 +1060,7 @@ mod tests {
         let after = terms.info(&info.id).unwrap();
         assert!(!after.running);
         assert_eq!(terms.list().len(), 1);
-        terms.close(&info.id).unwrap();
+        terms.close(&info.id, None).unwrap();
         assert!(terms.list().is_empty());
     }
 
@@ -1117,20 +1133,20 @@ mod tests {
         };
         assert_eq!(terms.saved_count(), 3);
         // Keep two: exactly one ended thread goes, from memory and from disk.
-        assert_eq!(terms.set_keep(2), 1);
+        assert_eq!(terms.set_keep(2, None), 1);
         assert_eq!(terms.saved_count(), 2);
         assert_eq!(
             ended.iter().filter(|id| files(id) == (true, true)).count(),
             2
         );
         // Clearing removes every ended thread but leaves the running one and its files.
-        assert_eq!(terms.clear_saved(), 2);
+        assert_eq!(terms.clear_saved(None), 2);
         assert_eq!(terms.saved_count(), 0);
         assert!(ended.iter().all(|id| files(id) == (false, false)));
         assert_eq!(files(&live.id), (true, true));
         assert!(terms.list().iter().any(|t| t.id == live.id && t.running));
         // Nothing ended is left to clear.
-        assert_eq!(terms.clear_saved(), 0);
+        assert_eq!(terms.clear_saved(None), 0);
         terms.close_all();
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1149,6 +1165,47 @@ mod tests {
             terms.snapshot(&info.id).is_ok(),
             "its output is still readable"
         );
+        // The killed program cannot continue, but the desktop's undo restarts it in the same
+        // thread, after its saved output.
+        let (o, e, _, rx) = collect();
+        let again = terms.resume(&info.id, spec("/bin/cat", &[]), o, e).unwrap();
+        assert_eq!(again.id, info.id);
+        assert!(again.running);
+        terms.stop(&info.id).unwrap();
+        rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleared_threads_go_to_the_trash_and_come_back() {
+        let tmp = std::env::temp_dir().join(format!("evyro-term-trash-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let dir = tmp.join("threads");
+        let trash = evyro_core::trash::Trash::new(tmp.join("trash"));
+        let terms = Terminals::with_store(dir.clone());
+        let (o, e, _, rx) = collect();
+        let info = terms
+            .open(spec("/bin/sh", &["-c", "echo kept-output"]), o, e)
+            .unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), Some(0));
+        let batch = trash.batch(&[("threads", &dir)]).unwrap();
+        assert_eq!(terms.clear_saved(Some(&batch.folder("threads"))), 1);
+        assert_eq!(terms.saved_count(), 0);
+        assert!(!dir.join(format!("{}.json", info.id)).exists());
+        assert!(trash.restore(&batch.id).unwrap() >= 2);
+        let back = terms.list();
+        assert_eq!(back.len(), 1);
+        assert!(back[0].restored && !back[0].running);
+        assert!(terms.snapshot(&info.id).unwrap().0.contains("kept-output"));
+        // Closing one ended thread works the same way.
+        let batch = trash.batch(&[("threads", &dir)]).unwrap();
+        terms
+            .close(&info.id, Some(&batch.folder("threads")))
+            .unwrap();
+        assert!(terms.list().is_empty());
+        trash.restore(&batch.id).unwrap();
+        assert_eq!(terms.list().len(), 1);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[cfg(unix)]
@@ -1321,7 +1378,7 @@ mod tests {
         assert!(second.snapshot(other).is_ok());
 
         // Forgetting a thread also removes its last good copy.
-        second.close(damaged).unwrap();
+        second.close(damaged, None).unwrap();
         assert!(!dir.join(format!("{damaged}.json.bak")).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1369,7 +1426,7 @@ mod tests {
             assert!(!ids.contains(&new.id), "{ids:?}");
             let err = wrong.snapshot(&new.id).unwrap_err().to_string();
             assert!(err.contains("left on disk untouched"), "{err}");
-            wrong.clear_saved();
+            wrong.clear_saved(None);
             assert!(dir.join(format!("{}.json", new.id)).exists());
             assert!(dir.join(format!("{}.log", new.id)).exists());
         }
@@ -1458,9 +1515,9 @@ mod tests {
         let (o, e, _, _) = collect();
         let fresh = second.open(spec("/bin/cat", &[]), o, e).unwrap();
         assert!(saved.iter().all(|i| i.id != fresh.id));
-        second.close(&fresh.id).unwrap();
+        second.close(&fresh.id, None).unwrap();
         // Closing a saved thread forgets it; odd ids are refused.
-        second.close(&done.id).unwrap();
+        second.close(&done.id, None).unwrap();
         assert!(second.snapshot(&done.id).is_err());
         assert!(second.snapshot("../x").is_err());
         assert_eq!(second.list().len(), 1);
@@ -1483,7 +1540,7 @@ mod tests {
         }
         assert!(out.lock().unwrap().contains("hello-from-input"));
         assert!(terms.info(&info.id).unwrap().running);
-        terms.close(&info.id).unwrap();
+        terms.close(&info.id, None).unwrap();
         rx.recv_timeout(Duration::from_secs(10))
             .expect("cat should stop after close");
         assert!(terms.write(&info.id, "x").is_err());

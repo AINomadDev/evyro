@@ -25,6 +25,7 @@ mod search;
 mod skills;
 mod threads;
 mod tray;
+mod undo;
 mod updater;
 mod usage;
 
@@ -547,7 +548,7 @@ async fn history_status_cmd(
     history_status(&terms, &chats, json!({"threads": 0, "chats": 0}))
 }
 
-/// Change how many ended threads and chats are kept; older ones are deleted now.
+/// Change how many ended threads and chats are kept; older ones go to the trash now.
 #[tauri::command]
 async fn history_set(
     terms: tauri::State<'_, threads::Terms>,
@@ -563,11 +564,18 @@ async fn history_set(
         evyro_core::paths::GlobalPaths::resolve().map_err(|e| json!({"message": e.to_string()}))?;
     keep.save(&paths)
         .map_err(|e| json!({"code": "invalid_input", "message": e.to_string()}))?;
-    let removed = json!({"threads": terms.set_keep(keep.threads), "chats": chats.host.set_retention(keep.chats)});
-    history_status(&terms, &chats, removed)
+    let del = undo::Deleting::start()?;
+    let removed = json!({
+        "threads": terms.set_keep(keep.threads, Some(&del.threads())),
+        "chats": chats.host.set_retention(keep.chats, Some(&del.chats())),
+    });
+    let mut out = history_status(&terms, &chats, removed)?;
+    out["undo"] = del.finish();
+    Ok(out)
 }
 
 /// Delete saved ended threads and chats ("threads", "chats" or "all"). Running ones stay.
+/// They go to the trash first, so the result's `undo` can put them back for a while.
 #[tauri::command]
 async fn history_clear(
     terms: tauri::State<'_, threads::Terms>,
@@ -577,11 +585,14 @@ async fn history_clear(
     if !["threads", "chats", "all"].contains(&what.as_str()) {
         return Err(json!({"code": "invalid_input", "message": "choose threads, chats or all"}));
     }
+    let del = undo::Deleting::start()?;
     let removed = json!({
-        "threads": if what != "chats" { terms.clear_saved() } else { 0 },
-        "chats": if what != "threads" { chats.host.clear_saved() } else { 0 },
+        "threads": if what != "chats" { terms.clear_saved(Some(&del.threads())) } else { 0 },
+        "chats": if what != "threads" { chats.host.clear_saved(Some(&del.chats())) } else { 0 },
     });
-    history_status(&terms, &chats, removed)
+    let mut out = history_status(&terms, &chats, removed)?;
+    out["undo"] = del.finish();
+    Ok(out)
 }
 
 #[tauri::command]
@@ -1118,6 +1129,7 @@ fn main() {
             Err(_) => evyro_term::Terminals::new(),
         });
     let chats: chat::Chats = chat::new_chats();
+    undo::purge_old();
     {
         let terms = terms.clone();
         let chats = chats.clone();
@@ -1167,6 +1179,8 @@ fn main() {
             history_status_cmd,
             history_set,
             history_clear,
+            undo::trash_restore,
+            undo::release_undo,
             list_handoffs,
             handoff_detail,
             handoff_checkpoint,

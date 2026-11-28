@@ -240,7 +240,28 @@ const FIX = {
               if (args.what !== "chats") { removed.threads = hs.saved.threads; hs.saved.threads = 0; }
               if (args.what !== "threads") { removed.chats = hs.saved.chats; hs.saved.chats = 0; }
             }
-            return JSON.parse(JSON.stringify({ ...hs, removed }));
+            // Deletes go to the trash; the stub keeps what to put back.
+            const undo = removed.threads + removed.chats ? { id: "del_" + ((window.__trash ||= []).length + 1), secs: 10 } : null;
+            if (undo) window.__trash.push({ id: undo.id, removed: { ...removed } });
+            return JSON.parse(JSON.stringify({ ...hs, removed, undo }));
+          }
+          if (cmd === "trash_restore" && window.__closedTerms?.[args.id]) {
+            window.__terms.push(window.__closedTerms[args.id]);
+            delete window.__closedTerms[args.id];
+            return { files: 3, chats: 0 };
+          }
+          if (cmd === "trash_restore") {
+            (window.__historyCalls ||= []).push({ cmd, ...args });
+            const b = (window.__trash || []).find((x) => x.id === args.id);
+            if (!b) throw { message: "the deleted items were already removed for good" };
+            window.__trash = window.__trash.filter((x) => x !== b);
+            if (window.__history) { window.__history.saved.threads += b.removed.threads; window.__history.saved.chats += b.removed.chats; }
+            return { files: 1, chats: b.removed.chats };
+          }
+          if (cmd === "recover_sessions") return [{ session_id: "ses_stale", harness: "claude-code", checkpoint_id: "chk_r", changed_since_last_checkpoint: [] }];
+          if (cmd === "release_undo") {
+            window.__releaseUndo = args;
+            return { restored: [], refused: [{ session_id: "ses_stale", message: "T-1 was claimed by codex after its lease was freed; nothing was restored" }] };
           }
           if (cmd === "pr_feedback") return { task: args.task, branch: "feat/x", pr: { number: 5, url: "https://github.com/o/r/pull/5", state: "OPEN" }, pending: 0,
             failed: [{ name: "test (ubuntu)", url: null, log_tail: "boom" }], review: [{ author: "reviewer", path: "src/a.rs", line: 12, body: "rename" }], actionable: true,
@@ -288,7 +309,13 @@ const FIX = {
             (window.__writes ||= []).push(args);
           }
           if (cmd === "term_write") { setTimeout(() => window.__emit("term-output", { id: args.id, data: args.data, end: 0 }), 10); return null; }
-          if (cmd === "term_close") { window.__terms = terms.filter((t) => t.id !== args.id); return null; }
+          if (cmd === "term_close") {
+            const gone = terms.find((t) => t.id === args.id);
+            window.__terms = terms.filter((t) => t.id !== args.id);
+            if (!gone) return { undo: null };
+            (window.__closedTerms ||= {})["del_" + args.id] = { ...gone, running: false, restored: true };
+            return { undo: { id: "del_" + args.id, secs: 10 } };
+          }
           // Chat threads (ACP): a stand-in agent that plans, asks permission, edits and answers.
           const chats = (window.__chats = window.__chats || {});
           const say = (id, item) => { chats[id].log.push(item); window.__emit("chat-event", { id, item }); };
@@ -409,6 +436,12 @@ const FIX = {
     await tab("history");
     await page.waitForSelector("table tbody tr");
     await page.waitForSelector("h2:text-is('Sessions')");
+    // Recovering stale sessions offers an undo; one refused because another AI took the task says so.
+    await page.getByRole("button", { name: "Recover stale sessions" }).click();
+    await page.locator(".toast", { hasText: "Recovered 1 session" }).getByRole("button", { name: "Undo" }).click();
+    await page.getByText("Not undone: T-1 was claimed by codex").waitFor();
+    const undo = await page.evaluate(() => window.__releaseUndo);
+    if (undo.sessionIds.join() !== "ses_stale") throw new Error("undo asked for " + JSON.stringify(undo));
   });
   await step("decisions and memory", async () => { await tab("knowledge"); await page.waitForSelector("text=Store"); });
   await step("AI targets grouped by kind", async () => {
@@ -794,6 +827,20 @@ const FIX = {
     await page.waitForFunction(() => window.__snap.term_saved_shell.includes("Saved shell output") && window.__snap.term_saved_shell.includes("Resumed Evyro thread"));
     await pane.getByRole("button", { name: "Stop", exact: true }).click();
     await page.getByRole("button", { name: "Stop it" }).click();
+    // Stopping keeps the thread; the undo is an honest restart, not a resume of the killed program.
+    await page.waitForFunction(() => window.__stopped.includes("term_saved_shell"));
+    if (!(await page.evaluate(() => window.__terms.some((t) => t.id === "term_saved_shell")))) throw new Error("stopping deleted the thread");
+    const offer = page.locator(".toast", { hasText: "can't carry on where it was" });
+    await offer.getByRole("button", { name: "Restart shell" }).click();
+    await page.waitForFunction(() => window.__lastTermOpen && window.__lastTermOpen.resumeId === "term_saved_shell");
+    await pane.getByRole("button", { name: "Stop", exact: true }).click();
+    await page.getByRole("button", { name: "Stop it" }).click();
+    // Closing the ended thread deletes it, with an undo that brings it back.
+    await page.evaluate(() => window.__emit("term-exit", { id: "term_saved_shell", code: null }));
+    await pane.getByRole("button", { name: "Close", exact: true }).click();
+    await page.locator(".toast", { hasText: "Deleted Shell." }).getByRole("button", { name: "Undo" }).click();
+    await page.waitForFunction(() => window.__terms.some((t) => t.id === "term_saved_shell"));
+    await page.evaluate(() => { window.__terms = window.__terms.filter((t) => t.id !== "term_saved_shell"); return loadThreads().then(() => render()); });
   });
   await step("terminal drawer runs a shell under the panes", async () => {
     await page.click(".ws-bar >> text=Terminal");
@@ -1405,7 +1452,7 @@ const FIX = {
     // Clearing asks first; cancelling deletes nothing.
     await card.getByRole("button", { name: "Clear saved chats" }).click();
     const dialog = page.getByRole("dialog");
-    await dialog.getByText(/permanently deletes the saved chat output/).waitFor();
+    await dialog.getByText(/deletes the saved chat output from this computer. You can undo this/).waitFor();
     await dialog.getByRole("button", { name: "Cancel" }).click();
     if ((await page.evaluate(() => window.__historyCalls)).some((c) => c.cmd === "history_clear")) throw new Error("deleted without confirming");
     await card.getByRole("button", { name: "Clear saved chats" }).click();
@@ -1414,6 +1461,12 @@ const FIX = {
     const clearCall = await page.evaluate(() => window.__historyCalls.find((c) => c.cmd === "history_clear"));
     if (clearCall.what !== "chats") throw new Error("cleared " + clearCall.what);
     if (await card.getByRole("button", { name: "Clear saved chats" }).isEnabled()) throw new Error("nothing left to clear, yet the button is enabled");
+    // The delete can be undone from its toast: the chats come back.
+    await page.locator(".toast", { hasText: "Deleted 2 saved chats." }).getByRole("button", { name: "Undo" }).click();
+    await card.getByText("2 saved now").waitFor();
+    const restore = await page.evaluate(() => window.__historyCalls.find((c) => c.cmd === "trash_restore"));
+    if (!restore.id.startsWith("del_")) throw new Error("restored " + JSON.stringify(restore));
+    await page.getByText("Restored.").waitFor();
     await page.evaluate(() => { setTab("workspace"); });
   });
   await step("Work on next task starts the chosen AI on the chosen task with nothing to pick", async () => {

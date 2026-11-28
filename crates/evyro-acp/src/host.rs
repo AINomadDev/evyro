@@ -14,7 +14,7 @@ use evyro_core::at_rest::Sealer;
 use evyro_core::Store;
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -144,20 +144,49 @@ impl Host {
     }
 
     /// Change how many ended transcripts are kept and delete the surplus now. Returns how many went.
-    pub fn set_retention(&self, keep: usize) -> usize {
+    /// With `into`, deleted transcripts are moved into that folder instead (see `evyro_core::trash`).
+    pub fn set_retention(&self, keep: usize, into: Option<&Path>) -> usize {
         self.keep.store(keep, Ordering::SeqCst);
         let (Some(dir), Ok(mut c)) = (&self.archive, self.inner.lock()) else {
             return 0;
         };
-        Self::trim_ended(dir, &mut c, keep)
+        Self::trim_ended(dir, &mut c, keep, into)
     }
 
-    /// Delete every ended chat transcript. Chats still running keep their crash-safe copy.
-    pub fn clear_saved(&self) -> usize {
+    /// Delete every ended chat transcript, or with `into` move them into that folder.
+    /// Chats still running keep their crash-safe copy.
+    pub fn clear_saved(&self, into: Option<&Path>) -> usize {
         let (Some(dir), Ok(mut c)) = (&self.archive, self.inner.lock()) else {
             return 0;
         };
-        Self::trim_ended(dir, &mut c, 0)
+        Self::trim_ended(dir, &mut c, 0, into)
+    }
+
+    /// Read transcripts put back into the archive folder (an undone delete) into the history.
+    /// Returns how many came back.
+    pub fn reload_saved(&self) -> usize {
+        let Some(dir) = &self.archive else { return 0 };
+        let keep = self.keep.load(Ordering::SeqCst);
+        let Ok(mut c) = self.inner.lock() else {
+            return 0;
+        };
+        // Only add what is missing; transcripts already listed (and their files) are left alone.
+        let saved = match archive::load(dir, usize::MAX, &self.sealer) {
+            Ok(saved) => saved,
+            Err(e) => {
+                eprintln!("evyro: could not read chat history: {e}");
+                return 0;
+            }
+        };
+        let mut added = 0;
+        for (id, chat) in saved {
+            if !c.saved.contains_key(&id) && !c.map.contains_key(&id) {
+                c.saved.insert(id, chat);
+                added += 1;
+            }
+        }
+        Self::trim_ended(dir, &mut c, keep, None);
+        added
     }
 
     /// How many ended chat transcripts are saved.
@@ -168,7 +197,7 @@ impl Host {
     }
 
     /// Keep the newest `keep` ended transcripts and delete the rest from memory and disk.
-    fn trim_ended(dir: &std::path::Path, c: &mut Inner, keep: usize) -> usize {
+    fn trim_ended(dir: &Path, c: &mut Inner, keep: usize, into: Option<&Path>) -> usize {
         let mut ended: Vec<String> = c
             .saved
             .keys()
@@ -178,7 +207,7 @@ impl Host {
         ended.sort_unstable_by(|a, b| b.cmp(a));
         let mut removed = 0;
         for id in ended.into_iter().skip(keep) {
-            match archive::remove(dir, &id) {
+            match archive::remove(dir, &id, into) {
                 Ok(()) => {
                     c.saved.remove(&id);
                     removed += 1;
@@ -458,14 +487,15 @@ impl Host {
         Ok(hits)
     }
 
-    pub fn forget_saved(&self, id: &str) -> Result<(), String> {
+    /// Delete an ended chat's transcript, or with `into` move it into that folder.
+    pub fn forget_saved(&self, id: &str, into: Option<&Path>) -> Result<(), String> {
         let mut c = self.inner.lock().map_err(|e| e.to_string())?;
         if c.map.contains_key(id) {
             return Err("close the chat before deleting its transcript".into());
         }
         if c.saved.contains_key(id) {
             if let Some(dir) = &self.archive {
-                archive::remove(dir, id).map_err(|e| e.to_string())?;
+                archive::remove(dir, id, into).map_err(|e| e.to_string())?;
             }
             c.saved.remove(id);
         }
@@ -605,7 +635,7 @@ impl Host {
                 _ => Ok(()),
             };
             if let Some(dir) = &self.archive {
-                Self::trim_ended(dir, &mut c, self.keep.load(Ordering::SeqCst));
+                Self::trim_ended(dir, &mut c, self.keep.load(Ordering::SeqCst), None);
             }
             (entry, save)
         };
@@ -643,7 +673,7 @@ impl Host {
                 }
             }
         }
-        Self::trim_ended(dir, c, self.keep.load(Ordering::SeqCst));
+        Self::trim_ended(dir, c, self.keep.load(Ordering::SeqCst), None);
     }
 
     fn save_entry(
@@ -724,7 +754,7 @@ mod tests {
             "three ended transcripts and the live chat's crash copy"
         );
         // Keep two: the oldest ended transcript goes, from memory and from disk.
-        assert_eq!(host.set_retention(2), 1);
+        assert_eq!(host.set_retention(2, None), 1);
         assert_eq!(host.saved_count(), 2);
         assert!(host.saved_log(&ended[0]).is_none() && host.saved_log(&ended[2]).is_some());
         assert_eq!(files(), 3);
@@ -736,10 +766,10 @@ mod tests {
             "closing a chat never exceeds the limit"
         );
         // Clear removes every ended transcript.
-        assert_eq!(host.clear_saved(), 2);
+        assert_eq!(host.clear_saved(None), 2);
         assert_eq!(host.saved_count(), 0);
         assert_eq!(files(), 0);
-        assert_eq!(host.clear_saved(), 0);
+        assert_eq!(host.clear_saved(None), 0);
     }
 
     #[test]
@@ -763,7 +793,7 @@ mod tests {
             host.push(&id, json!({"t": "user", "text": method}));
             host.push(&id, json!({"t": "user", "text": "debug a.b"}));
             host.push(&id, json!({"t": "permission", "request": 1, "params": {}}));
-            assert!(host.forget_saved(&id).is_err());
+            assert!(host.forget_saved(&id, None).is_err());
             host.save_all();
             assert!(host.search_saved(project, "a.b").unwrap().is_empty());
             if method == "end chat" {
@@ -791,7 +821,7 @@ mod tests {
             assert!(reopened.log(id, None).is_err());
             assert!(reopened.pending(id).is_err());
         }
-        reopened.forget_saved(&ids[0]).unwrap();
+        reopened.forget_saved(&ids[0], None).unwrap();
         let reopened_again = open();
         assert!(reopened_again.saved_log(&ids[0]).is_none());
         assert!(reopened_again
@@ -799,5 +829,41 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(reopened_again.saved_log(&ids[1]).is_some());
+    }
+
+    #[test]
+    fn cleared_transcripts_go_to_the_trash_and_come_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("chats");
+        let trash = evyro_core::trash::Trash::new(tmp.path().join("trash"));
+        let host = Host::new(Arc::new(|_| {}), None).with_archive(dir.clone());
+        let id = evyro_core::util::new_id("chat");
+        host.inner.lock().unwrap().map.insert(
+            id.clone(),
+            Entry {
+                info: json!({"id": id, "kind": "chat", "running": false, "project_id": "p"}),
+                chat: None,
+                log: Vec::new(),
+                base: 0,
+                pending: Vec::new(),
+                dirty: true,
+            },
+        );
+        host.push(&id, json!({"t": "user", "text": "keep me"}));
+        host.close(&id).unwrap();
+        let batch = trash.batch(&[("chats", &dir)]).unwrap();
+        assert_eq!(host.clear_saved(Some(&batch.folder("chats"))), 1);
+        assert!(host.saved_log(&id).is_none());
+        assert!(trash.restore(&batch.id).unwrap() >= 1);
+        assert_eq!(host.reload_saved(), 1);
+        assert_eq!(host.saved_log(&id).unwrap()["log"][0]["text"], "keep me");
+        // One transcript deleted by itself comes back the same way.
+        let batch = trash.batch(&[("chats", &dir)]).unwrap();
+        host.forget_saved(&id, Some(&batch.folder("chats")))
+            .unwrap();
+        assert_eq!(host.saved_count(), 0);
+        trash.restore(&batch.id).unwrap();
+        assert_eq!(host.reload_saved(), 1);
+        assert_eq!(host.reload_saved(), 0, "nothing is added twice");
     }
 }

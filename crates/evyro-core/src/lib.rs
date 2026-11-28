@@ -48,6 +48,7 @@ pub mod skills;
 pub mod split;
 pub mod targets;
 pub mod tasks;
+pub mod trash;
 pub mod util;
 pub mod verify;
 

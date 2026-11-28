@@ -157,6 +157,7 @@ input:focus, textarea:focus, select:focus, .btn:focus-visible { outline: var(--l
 .toast-root { position: fixed; bottom: var(--space-18); right: var(--space-18); display: flex; flex-direction: column; gap: var(--space-8); z-index: 30; pointer-events: none; }
 .toast { background: var(--text); color: var(--bg); padding: var(--space-9) var(--space-14); border-radius: var(--radius-8); box-shadow: var(--shadow); max-width: var(--size-420); font-size: var(--fs-13); }
 .toast.bad { background: var(--bad); color: var(--on-accent); }
+.toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: var(--space-14); }
 
 table { width: 100%; border-collapse: collapse; font-size: var(--fs-13); }
 th { text-align: left; color: var(--muted); font-weight: 600; font-size: var(--fs-12); padding: var(--space-6) var(--space-8); border-bottom: var(--line-1) solid var(--border); }
