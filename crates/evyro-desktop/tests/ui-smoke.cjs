@@ -226,6 +226,17 @@ const FIX = {
             contract: { task: { key: window.__handoff.task } }, integrity_ok: true,
             markdown: "Reviewed the existing limiter.", resume_prompt: "Continue T-1. Write the failing test first."
           };
+          if (cmd === "worktree_prune_status" || cmd === "worktree_prune_run" || cmd === "worktree_prune_set") {
+            const w = (window.__wt ||= { settings: { auto: true, idle_days: 7 }, gone: false, calls: [] });
+            if (cmd !== "worktree_prune_status") w.calls.push({ cmd, ...args });
+            if (cmd === "worktree_prune_set") { w.settings = { auto: args.auto, idle_days: args.idleDays }; return w.settings; }
+            const kept = { task: "T-4", path: "/r/repo-t-4", removed: false, reason: "kept: it has uncommitted changes", bytes: 0 };
+            const going = { task: "T-3", path: "/r/repo-t-3", removed: cmd === "worktree_prune_run", reason: (cmd === "worktree_prune_run" ? "removed" : "would remove") + ": T-3 is done", bytes: 3 * 1024 ** 3 };
+            const items = w.gone ? [kept] : [going, kept];
+            if (cmd === "worktree_prune_run") w.gone = true;
+            const report = { dry_run: cmd !== "worktree_prune_run", projects: [{ project_id: "p", project: "repo", items }], bytes: w.gone && cmd !== "worktree_prune_run" ? 0 : going.bytes, errors: [] };
+            return cmd === "worktree_prune_run" ? report : { settings: w.settings, max_idle_days: 365, report };
+          }
           if (cmd === "history_status_cmd" || cmd === "history_set" || cmd === "history_clear") {
             const hs = (window.__history ||= { keep: { threads: 60, chats: 60 }, saved: { threads: 3, chats: 2 }, max: 500 });
             const removed = { threads: 0, chats: 0 };
@@ -1414,6 +1425,30 @@ const FIX = {
     const clearCall = await page.evaluate(() => window.__historyCalls.find((c) => c.cmd === "history_clear"));
     if (clearCall.what !== "chats") throw new Error("cleared " + clearCall.what);
     if (await card.getByRole("button", { name: "Clear saved chats" }).isEnabled()) throw new Error("nothing left to clear, yet the button is enabled");
+    await page.evaluate(() => { setTab("workspace"); });
+  });
+  await step("Settings lists finished worktrees with sizes and prunes only after confirming", async () => {
+    await page.evaluate(() => { window.__wt = null; setTab("settings"); });
+    const card = page.locator(".card", { has: page.getByRole("heading", { name: "Finished worktrees" }) });
+    await card.getByText("/r/repo-t-3").waitFor();
+    await card.getByText("1 kept, and why").click();
+    await card.getByText("it has uncommitted changes").waitFor();
+    const btn = card.getByRole("button", { name: /Prune and free 3/ });
+    await btn.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Cancel" }).click();
+    if ((await page.evaluate(() => window.__wt.calls)).length) throw new Error("pruned without confirming");
+    await btn.click();
+    await page.getByRole("dialog").getByRole("button", { name: "Prune", exact: true }).click();
+    await card.getByText("Nothing to remove.").waitFor();
+    await card.getByLabel(/last session ended this many days ago/).fill("0");
+    await card.getByRole("button", { name: "Save", exact: true }).click();
+    await page.getByText("Enter a whole number of days from 1 to 365.").waitFor();
+    await card.getByLabel(/last session ended this many days ago/).fill("14");
+    await card.getByLabel("Prune automatically when Evyro starts and once a day").uncheck();
+    await card.getByRole("button", { name: "Save", exact: true }).click();
+    await page.waitForFunction(() => window.__wt.settings.idle_days === 14 && window.__wt.settings.auto === false);
+    const calls = await page.evaluate(() => window.__wt.calls.map((c) => c.cmd));
+    if (calls.join() !== "worktree_prune_run,worktree_prune_set") throw new Error("calls: " + calls);
     await page.evaluate(() => { setTab("workspace"); });
   });
   await step("Work on next task starts the chosen AI on the chosen task with nothing to pick", async () => {

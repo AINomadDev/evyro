@@ -57,7 +57,7 @@ Evyro does not make a worktree for every task. Before an AI starts, it picks the
 
 Declare a task's files when you add it (`evyro task add ... --file src/area`) and unrelated tasks can run side by side in one checkout with no worktrees at all.
 
-Tidy up finished work with `evyro worktrees prune` (add `--dry-run` to look first). It removes only worktrees of finished tasks that are clean, merged and not in use, and says why it kept the others.
+Finished work is tidied automatically when the desktop app or `evyro serve` starts and once a day; run `evyro worktree prune` (add `--dry-run` to look first, `--all` for every project) to do it now. It removes only worktrees Evyro made whose task is closed, whose branch is merged, or whose last session ended long enough ago (`evyro worktree auto-prune --idle-days N`), and only when they have no uncommitted, unmerged or unpushed work. It reports the space freed and says why it kept the others.
 
 ## When an AI runs out of usage
 

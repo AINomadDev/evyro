@@ -1208,7 +1208,7 @@ async function viewSettings(v) {
   const info = h("div", { class: "card" }, h("h2", null, "Evyro"), h("div", { class: "muted" }, I18N.t("app.loading")));
   const doc = h("div", { class: "card wide" }, h("h2", null, I18N.t("app.set.doctor")), h("div", { class: "muted" }, I18N.t("app.set.running")));
   grid.prepend(appearanceCard());
-  grid.append(info, updatesCard(), historyCard(), doc, remoteCard());
+  grid.append(info, updatesCard(), historyCard(), worktreesCard(), doc, remoteCard());
   invoke("app_info").then((a) => {
     clear(info).append(h("h2", null, "Evyro"), h("dl", { class: "kv" },
       h("dt", null, I18N.t("app.tg.col.version")), h("dd", null, a.version), h("dt", null, I18N.t("app.set.dataFolder")), h("dd", { class: "mono" }, a.data_dir),
