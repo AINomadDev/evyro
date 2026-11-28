@@ -1196,6 +1196,7 @@ I18N.catalogs.en = {
   "thread.st.starting": "starting",
   "thread.st.needsYou": "needs you",
   "thread.st.working": "working",
+  "thread.st.running": "running",
   "thread.st.yourTurn": "your turn",
   "thread.st.limit": "limit hit?",
   "thread.st.stuck": "stuck?",

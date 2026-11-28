@@ -12,7 +12,7 @@
 
 const I18N = (() => {
   const catalogs = {};
-  const names = { en: "English", pseudo: "Pseudo-language (for translators)" };
+  const names = { en: "English", es: "Español", "pt-BR": "Português (Brasil)", "zh-CN": "简体中文", ja: "日本語", hi: "हिन्दी", pseudo: "Pseudo-language (for translators)" };
   const warned = new Set();
   let code = "en";
   let choice = "system";
@@ -23,8 +23,11 @@ const I18N = (() => {
     dirty = false;
     let want = choice;
     if (!want || want === "system") {
-      want = String(navigator.language || "en").toLowerCase();
-      want = catalogs[want] ? want : catalogs[want.split("-")[0]] ? want.split("-")[0] : "en";
+      // Codes are matched without regard to case ("pt-br" is "pt-BR"), then by language alone ("pt-PT" and
+      // "pt" pick "pt-BR", "zh-Hans-CN" picks "zh-CN").
+      const asked = String(navigator.language || "en").toLowerCase();
+      const codes = Object.keys(catalogs);
+      want = codes.find((c) => c.toLowerCase() === asked) || codes.find((c) => c.split("-")[0].toLowerCase() === asked.split("-")[0]) || "en";
     }
     code = catalogs[want] || want === "pseudo" ? want : "en";
     document.documentElement.lang = code === "pseudo" ? "en" : code;

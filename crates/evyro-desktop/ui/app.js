@@ -47,6 +47,15 @@ const clear = (el) => { while (el.firstChild) el.removeChild(el.firstChild); ret
 function ago(iso) {
   if (!iso) return "";
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  // Other languages use the browser's own wording ("hace 5 min", "5 分前").
+  const lang = I18N.current();
+  if (lang !== "en" && lang !== "pseudo") {
+    const rtf = new Intl.RelativeTimeFormat(lang, { style: "short" });
+    if (s < 60) return rtf.format(-Math.floor(s), "second");
+    if (s < 3600) return rtf.format(-Math.floor(s / 60), "minute");
+    if (s < 86400) return rtf.format(-Math.floor(s / 3600), "hour");
+    return rtf.format(-Math.floor(s / 86400), "day");
+  }
   if (s < 60) return `${Math.floor(s)}s ago`;
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
