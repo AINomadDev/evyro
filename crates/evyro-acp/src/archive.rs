@@ -230,7 +230,7 @@ pub(crate) fn load(
         };
         if record.info["id"] == id {
             if saved.len() >= keep {
-                if let Err(e) = remove(dir, id) {
+                if let Err(e) = remove(dir, id, None) {
                     eprintln!("evyro: could not trim old chat history: {e}");
                 }
                 continue;
@@ -245,7 +245,8 @@ pub(crate) fn load(
     Ok(saved)
 }
 
-pub(crate) fn remove(dir: &Path, id: &str) -> io::Result<()> {
+/// Delete a transcript and its last good copy, or with `into` move both into that folder.
+pub(crate) fn remove(dir: &Path, id: &str, into: Option<&Path>) -> io::Result<()> {
     if !valid_id(id) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -254,6 +255,10 @@ pub(crate) fn remove(dir: &Path, id: &str) -> io::Result<()> {
     }
     let path = dir.join(format!("{id}.json"));
     for p in [evyro_core::util::last_good_path(&path), path] {
+        if let Some(to) = into {
+            evyro_core::trash::move_into(&p, to)?;
+            continue;
+        }
         match fs::remove_file(p) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             result => result?,
@@ -404,7 +409,7 @@ mod tests {
         assert_eq!(load()[&damaged].log.len(), 1);
 
         // Deleting a transcript also deletes its last good copy.
-        remove(dir.path(), &damaged).unwrap();
+        remove(dir.path(), &damaged, None).unwrap();
         assert!(!last_good.exists());
         assert!(!load().contains_key(&damaged));
     }

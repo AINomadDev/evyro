@@ -52,6 +52,34 @@ impl Store {
     /// the task again. Refused when the task is finished, when anyone has claimed it since, or
     /// when a handoff for it is waiting.
     pub fn undo_lease_release(&self, project_id: &str, task_ref: &str) -> Result<RestoredLease> {
+        self.undo_release_of(project_id, task_ref, None)
+    }
+
+    /// Undo the release of the lease session `session_id` held, as [`Store::undo_lease_release`]
+    /// does, but only while that release is still the task's latest.
+    pub fn undo_session_release(
+        &self,
+        project_id: &str,
+        session_id: &str,
+    ) -> Result<RestoredLease> {
+        let s = self.get_session(session_id)?;
+        if s.project_id != project_id {
+            return Err(Error::NotFound(format!(
+                "session {session_id} in this project"
+            )));
+        }
+        let task = s
+            .task_id
+            .ok_or_else(|| Error::NotFound(format!("session {session_id} held no task")))?;
+        self.undo_release_of(project_id, &task, Some(session_id))
+    }
+
+    fn undo_release_of(
+        &self,
+        project_id: &str,
+        task_ref: &str,
+        only_session: Option<&str>,
+    ) -> Result<RestoredLease> {
         let task = self.resolve_task(project_id, task_ref)?;
         self.atomic(|| {
             let (seq, event_id, session_id, payload): (i64, String, String, String) = self
@@ -77,6 +105,12 @@ impl Store {
             if undone {
                 return Err(Error::Invalid(format!(
                     "the last release of {} was already undone",
+                    task.key
+                )));
+            }
+            if only_session.is_some_and(|want| want != session_id) {
+                return Err(Error::Conflict(format!(
+                    "{} was released again by another session; nothing was restored",
                     task.key
                 )));
             }
@@ -324,6 +358,50 @@ mod tests {
             .unwrap();
         let r = fx.store.undo_lease_release(&fx.project, &fx.task).unwrap();
         assert_eq!(r.harness, "codex");
+    }
+
+    #[test]
+    fn undoing_a_sessions_release_is_refused_once_another_ai_claimed_the_task() {
+        let fx = setup();
+        let s = fx.start("claude-code").unwrap();
+        fx.silence(&s.id);
+        fx.store.recover_session(&fx.project, &s.id, true).unwrap();
+        let other = fx.start("codex").unwrap();
+        let err = fx
+            .store
+            .undo_session_release(&fx.project, &s.id)
+            .unwrap_err();
+        assert!(matches!(err, Error::Conflict(_)), "{err}");
+        // Codex lets go too: the latest release is now codex's, so the first session's
+        // release is still not undone (that would hand codex's task to someone else).
+        fx.store
+            .set_session_status(&other.id, SessionStatus::Cancelled, None)
+            .unwrap();
+        let err = fx
+            .store
+            .undo_session_release(&fx.project, &s.id)
+            .unwrap_err();
+        assert!(matches!(err, Error::Conflict(_)), "{err}");
+        assert!(fx.store.lease(&fx.task).unwrap().is_none());
+        let r = fx
+            .store
+            .undo_session_release(&fx.project, &other.id)
+            .unwrap();
+        assert_eq!(r.harness, "codex");
+    }
+
+    #[test]
+    fn undoing_a_sessions_release_gives_the_task_back() {
+        let fx = setup();
+        let s = fx.start("claude-code").unwrap();
+        fx.silence(&s.id);
+        fx.store.recover_session(&fx.project, &s.id, true).unwrap();
+        let r = fx.store.undo_session_release(&fx.project, &s.id).unwrap();
+        assert_eq!(
+            (r.harness.as_str(), r.released_session_id.as_str()),
+            ("claude-code", s.id.as_str())
+        );
+        assert!(fx.store.undo_session_release("other", &s.id).is_err());
     }
 
     #[test]

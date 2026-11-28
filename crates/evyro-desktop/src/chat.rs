@@ -162,21 +162,22 @@ pub async fn chat_cancel(chats: State<'_, Chats>, id: String) -> CmdResult {
     Ok(Value::Null)
 }
 
-/// Stop a live chat or delete an already saved transcript.
+/// Stop a live chat, or move an already saved transcript to the trash (see `undo`).
 #[tauri::command]
 pub async fn chat_close(chats: State<'_, Chats>, id: String, forget: Option<bool>) -> CmdResult {
     let host = chats.host.clone();
     tauri::async_runtime::spawn_blocking(move || {
         if forget == Some(true) {
-            host.forget_saved(&id)
+            // The transcript goes to the trash, so the window can offer to put it back.
+            let del = crate::undo::Deleting::start()?;
+            host.forget_saved(&id, Some(&del.chats())).map_err(bad)?;
+            Ok(json!({"undo": del.finish()}))
         } else {
-            host.close(&id)
+            host.close(&id).map_err(bad).map(|()| Value::Null)
         }
     })
     .await
     .map_err(bad)?
-    .map_err(bad)?;
-    Ok(Value::Null)
 }
 
 /// When the app quits: stop every agent and close its session.
