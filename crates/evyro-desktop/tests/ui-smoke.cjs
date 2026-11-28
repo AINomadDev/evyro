@@ -1626,6 +1626,47 @@ const FIX = {
       await page.evaluate(() => { saveAppearance({ language: "system" }); delete I18N.catalogs.en["test.n"]; });
     }
   });
+  // Each shipped language can be chosen, and its longer words do not push the main screens sideways.
+  // EVYRO_LOCALE_SHOTS=<dir> also saves a screenshot of each screen in each language.
+  await step("languages: each catalog can be chosen and its screens do not overflow", async () => {
+    try {
+      const codes = await page.evaluate(() => I18N.available().filter((c) => c !== "en" && c !== "pseudo"));
+      if (codes.length < 5) throw new Error("expected the shipped languages, got " + codes.join(","));
+      await page.evaluate(() => setTab("settings"));
+      const offered = await page.locator("#ap-language option").evaluateAll((os) => os.map((o) => o.value));
+      for (const c of codes) if (!offered.includes(c)) throw new Error(`the Language setting does not offer ${c}`);
+      const shots = process.env.EVYRO_LOCALE_SHOTS && path.resolve(process.env.EVYRO_LOCALE_SHOTS);
+      if (shots) fs.mkdirSync(shots, { recursive: true });
+      for (const c of codes) {
+        await page.evaluate((c) => saveAppearance({ language: c }), c);
+        if (await page.evaluate(() => document.documentElement.lang) !== c) throw new Error(`${c}: lang attribute`);
+        const tabs = await page.evaluate(() => [...document.querySelectorAll(".tab")].map((b) => b.textContent).join(","));
+        if (tabs === "Workspace,Tasks,Changes,History,Knowledge,Skills,AI targets,Settings") throw new Error(`${c}: tabs are still English`);
+        for (const v of ["workspace", "tasks", "changes", "agents", "settings"]) {
+          await tab(v);
+          await page.waitForTimeout(150);
+          const wide = await page.evaluate(() => {
+            const out = [];
+            const root = document.documentElement;
+            if (root.scrollWidth > root.clientWidth + 1) out.push(`page ${root.scrollWidth}>${root.clientWidth}`);
+            const tabs = document.querySelector(".tabs");
+            if (tabs.scrollWidth > tabs.clientWidth + 1) out.push(`tabs ${tabs.scrollWidth}>${tabs.clientWidth}`);
+            // Segmented switches (Density, Motion) stay on one line.
+            const segs = [...document.querySelectorAll(".seg-btn")].map((b) => b.offsetHeight);
+            if (segs.length && Math.max(...segs) > Math.min(...segs) + 1) out.push(`a switch wraps (${Math.min(...segs)}-${Math.max(...segs)}px)`);
+            return out;
+          });
+          if (wide.length) throw new Error(`${c} on ${v}: ${wide.join(", ")}`);
+          if (shots) {
+            await page.evaluate(() => document.querySelectorAll(".toast").forEach((t) => t.remove()));
+            await page.screenshot({ path: path.join(shots, `${c}-${v}.png`) });
+          }
+        }
+      }
+    } finally {
+      await page.evaluate(() => saveAppearance({ language: "system" }));
+    }
+  });
   await step("first-run setup when there are no projects", async () => {
     await page.evaluate(() => { state.projects = []; state.project = null; setTab("overview"); });
     await page.waitForSelector("ol.setup");

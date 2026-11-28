@@ -276,7 +276,7 @@ function threadStatus(t) {
     if (asking) return pill("warn", I18N.t("thread.st.needsYou"));
     return t.busy ? pill("running", I18N.t("thread.st.working")) : pill("ok", I18N.t("thread.st.yourTurn"));
   }
-  if (t.running) return t.limit_hit ? pill("warn", I18N.t("thread.st.limit")) : t.stuck ? pill("warn", I18N.t("thread.st.stuck")) : pill("running");
+  if (t.running) return t.limit_hit ? pill("warn", I18N.t("thread.st.limit")) : t.stuck ? pill("warn", I18N.t("thread.st.stuck")) : pill("running", I18N.t("thread.st.running"));
   if (t.stopped_by_app) return pill("", I18N.t("thread.st.stoppedApp"));
   return pill(t.exit_code === 0 ? "" : "bad", t.exit_code == null ? I18N.t("thread.st.ended") : I18N.t("thread.st.exit", { code: t.exit_code }));
 }
