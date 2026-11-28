@@ -486,6 +486,49 @@ pub(crate) fn commits_ahead(root: &Path, base: &str, branch: &str) -> usize {
         .unwrap_or(0)
 }
 
+/// Commits on `branch` that its upstream does not have. 0 when it has no upstream.
+pub(crate) fn commits_unpushed(root: &Path, branch: &str) -> usize {
+    let up = format!("{branch}@{{upstream}}");
+    match git(root, &["rev-parse", "--verify", "--quiet", &up]) {
+        Ok(_) => commits_ahead(root, &up, branch),
+        Err(_) => 0,
+    }
+}
+
+/// Whether `branch` was merged into `main` by a merge commit: its tip is in `main`'s history
+/// but not on `main`'s own first-parent line. A branch that was only created from `main`
+/// and never got a commit of its own does not count.
+pub(crate) fn merged_by_merge(root: &Path, main: &str, branch: &str) -> bool {
+    let Ok(tip) = git(
+        root,
+        &["rev-parse", "--verify", &format!("{branch}^{{commit}}")],
+    ) else {
+        return false;
+    };
+    let tip = tip.trim();
+    if !is_ancestor(root, tip, main) {
+        return false;
+    }
+    git(root, &["rev-list", "--first-parent", main])
+        .map(|s| !s.lines().any(|l| l.trim() == tip))
+        .unwrap_or(false)
+}
+
+const CREATED_MARK: &str = "evyro-created";
+
+/// Record in a worktree's private git folder that Evyro made it, so a later prune can tell it
+/// apart from worktrees made by people or other tools.
+pub(crate) fn mark_created(worktree: &Path) {
+    if let Ok(dir) = git(worktree, &["rev-parse", "--absolute-git-dir"]) {
+        let _ = std::fs::write(PathBuf::from(dir.trim()).join(CREATED_MARK), b"evyro\n");
+    }
+}
+
+pub(crate) fn is_marked_created(worktree: &Path) -> bool {
+    git(worktree, &["rev-parse", "--absolute-git-dir"])
+        .is_ok_and(|d| PathBuf::from(d.trim()).join(CREATED_MARK).is_file())
+}
+
 /// Forget worktree records whose folder is gone.
 pub(crate) fn prune_worktree_records(root: &Path) {
     let _ = git(root, &["worktree", "prune"]);

@@ -46,7 +46,7 @@ Commands:
   saved-output   Encryption at rest for saved terminal output and chat transcripts (off by default). `evyro saved-output` shows whether it is on
   sessions       Agent sessions
   recover        Recover sessions whose process died (quota kill, crash)
-  worktrees      Git worktrees
+  worktrees      Git worktrees [alias: worktree]
   sample         Create a small sample project to try Evyro on (inside Evyro's own data folder) with two ready tasks and a test command that works anywhere, and print the first steps
   pr             The pull request of a task: open one written from the task's records, or read what is failing and what reviewers asked for. Needs the GitHub CLI (`gh`)
   plan           Plan first: an AI proposes a plan, you approve it, then it builds
@@ -1309,11 +1309,12 @@ Git worktrees
 Usage: evyro worktrees [OPTIONS] <COMMAND>
 
 Commands:
-  list    
-  add     Create a worktree + branch for a task
-  prune   Tidy finished work: remove the worktrees of finished tasks that are clean and merged, and keep any with uncommitted or unmerged work
-  remove  Remove a worktree (refuses with uncommitted changes unless --force)
-  help    Print this message or the help of the given subcommand(s)
+  list        
+  add         Create a worktree + branch for a task
+  prune       Tidy finished work: remove the worktrees Evyro made whose task is finished, whose branch is merged, or whose last session ended long enough ago. Only clean worktrees with no unmerged or unpushed commits go; the rest are kept and say why
+  auto-prune  Show or change the automatic prune (when the app or `evyro serve` starts, then daily)
+  remove      Remove a worktree (refuses with uncommitted changes unless --force)
+  help        Print this message or the help of the given subcommand(s)
 
 Options:
       --json               Machine-readable JSON output

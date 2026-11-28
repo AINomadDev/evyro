@@ -54,6 +54,17 @@ pub struct Pruned {
     pub branch: Option<String>,
     pub removed: bool,
     pub reason: String,
+    /// Bytes on disk, measured for worktrees that are (or would be) removed.
+    pub bytes: u64,
+}
+
+/// How a prune decides which worktrees are finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PruneOptions {
+    pub dry_run: bool,
+    /// A worktree of an unfinished task also counts as finished once its last session ended
+    /// this many days ago. `None` leaves those alone.
+    pub idle_days: Option<u32>,
 }
 
 fn paths_overlap(a: &str, b: &str) -> bool {
@@ -92,6 +103,7 @@ impl Store {
         } else {
             git::add_worktree(&root, &path, &branch)?;
         }
+        git::mark_created(&path);
         self.point_task_at(task, &branch, &path)
     }
 
@@ -265,6 +277,7 @@ impl Store {
                     } else {
                         git::add_worktree(&root, &path, &branch)?;
                     }
+                    git::mark_created(&path);
                     note = Some(format!(
                         "{} continues in its worktree {} (restored on branch {branch}).",
                         task.key,
@@ -307,50 +320,163 @@ impl Store {
         Ok(Checkout { task, plan, note })
     }
 
-    /// Remove worktrees of finished tasks that are clean, merged and not in use, and delete their
-    /// merged branches. Anything with unmerged or uncommitted work is kept and says why.
-    pub fn prune_worktrees(&self, p: &Project, dry_run: bool) -> Result<Vec<Pruned>> {
+    /// Whether Evyro made the worktree at `path`: it carries Evyro's mark, or one of the tasks
+    /// in it is on the branch Evyro names after that task.
+    fn evyro_made(path: &Path, tasks: &[&Task]) -> bool {
+        git::is_marked_created(path)
+            || tasks
+                .iter()
+                .any(|t| t.branch.as_deref() == Some(&format!("evyro/{}", t.key.to_lowercase())))
+    }
+
+    /// Why the work in a task's worktree counts as finished, or `None` when it does not.
+    fn finished_why(
+        &self,
+        p: &Project,
+        main: &str,
+        task: &Task,
+        path: &Path,
+        idle_days: Option<u32>,
+    ) -> Result<Option<String>> {
+        if task.status.is_closed() {
+            return Ok(Some(format!("{} is {}", task.key, task.status.as_str())));
+        }
+        let root = p.root();
+        if let Some(b) = task.branch.as_deref() {
+            if git::merged_by_merge(&root, main, b) {
+                return Ok(Some(format!("its branch {b} is merged into {main}")));
+            }
+        }
+        let Some(days) = idle_days else {
+            return Ok(None);
+        };
+        let sessions: Vec<Session> = self
+            .list_sessions(&p.id, false)?
+            .into_iter()
+            .filter(|s| {
+                s.worktree
+                    .as_deref()
+                    .is_some_and(|w| same_dir(Path::new(w), path))
+            })
+            .collect();
+        if sessions.is_empty() || sessions.iter().any(|s| s.ended_at.is_none() && s.is_live()) {
+            return Ok(None);
+        }
+        let last = sessions
+            .iter()
+            .filter_map(|s| s.ended_at.as_deref().or(s.last_event_at.as_deref()))
+            .filter_map(|t| {
+                time::OffsetDateTime::parse(t, &time::format_description::well_known::Rfc3339).ok()
+            })
+            .max();
+        let Some(last) = last else { return Ok(None) };
+        let age = (time::OffsetDateTime::now_utc() - last).whole_days();
+        Ok((age >= i64::from(days)).then(|| format!("its last session ended {age} days ago")))
+    }
+
+    /// Remove worktrees Evyro made whose work is finished (the task is closed, its branch is
+    /// merged, or its last session ended long enough ago), and delete their merged branches.
+    /// Only clean worktrees with no unmerged or unpushed commits go; anything else is kept and
+    /// says why. Worktrees Evyro did not make and the main checkout are never touched.
+    pub fn prune_worktrees(&self, p: &Project, opts: PruneOptions) -> Result<Vec<Pruned>> {
         let root = p.root();
         git::prune_worktree_records(&root);
+        let main = p
+            .main_branch
+            .clone()
+            .filter(|b| git::branch_exists(&root, b))
+            .unwrap_or_else(|| "HEAD".to_owned());
+        let registered = git::worktrees(&root)?;
+        let tasks: Vec<Task> = self
+            .list_tasks(&p.id, None, true)?
+            .into_iter()
+            .filter(|t| t.worktree.is_some() && !comparison::is_candidate(t))
+            .collect();
+        let mut seen: Vec<PathBuf> = Vec::new();
         let mut out = Vec::new();
-        for task in self.list_tasks(&p.id, None, true)? {
-            let (Some(wt), false) = (task.worktree.clone(), comparison::is_candidate(&task)) else {
-                continue;
-            };
+        for task in &tasks {
+            let wt = task.worktree.clone().unwrap_or_default();
             let path = PathBuf::from(&wt);
+            if seen.iter().any(|s| same_dir(s, &path)) {
+                continue;
+            }
+            seen.push(path.clone());
+            // Tasks that continue in the same worktree (a follow-up in its parent's).
+            let sharing: Vec<&Task> = tasks
+                .iter()
+                .filter(|t| {
+                    t.worktree
+                        .as_deref()
+                        .is_some_and(|w| same_dir(Path::new(w), &path))
+                })
+                .collect();
             let mut item = Pruned {
-                task: task.key.clone(),
+                task: sharing
+                    .iter()
+                    .map(|t| t.key.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
                 path: wt.clone(),
                 branch: task.branch.clone(),
                 removed: false,
                 reason: String::new(),
+                bytes: 0,
             };
-            let keep = |item: &mut Pruned, why: &str| {
-                item.reason = why.to_owned();
-            };
-            if !task.status.is_closed() {
-                keep(&mut item, "the task is not finished");
-            } else if !path.is_dir() {
+            let unfinished = sharing.iter().find_map(|t| {
+                match self.finished_why(p, &main, t, &path, opts.idle_days) {
+                    Ok(Some(_)) => None,
+                    Ok(None) => Some(Ok(t.key.clone())),
+                    Err(e) => Some(Err(e)),
+                }
+            });
+            let is_registered = registered
+                .iter()
+                .any(|w| same_dir(Path::new(&w.path), &path));
+            if !path.is_dir() {
                 item.reason = "already gone".into();
+            } else if same_dir(&path, &root) {
+                item.reason = "kept: it is the main checkout".into();
+            } else if !is_registered || !Self::evyro_made(&path, &sharing) {
+                item.reason = "kept: Evyro did not create it".into();
+            } else if let Some(key) = unfinished.transpose()? {
+                item.reason = format!("kept: {key} is not finished");
             } else if self.live_in(p, &path)? {
-                keep(&mut item, "an AI is still working in it");
+                item.reason = "kept: an AI is still working in it".into();
             } else if git::dirty_paths(&path).map_or(true, |d| !d.is_empty()) {
-                keep(&mut item, "it has uncommitted changes");
+                item.reason = "kept: it has uncommitted changes".into();
             } else if task
                 .branch
                 .as_deref()
-                .is_some_and(|b| git::commits_ahead(&root, "HEAD", b) > 0)
+                .is_some_and(|b| git::commits_ahead(&root, &main, b) > 0)
             {
-                keep(&mut item, "its branch has commits that are not merged");
-            } else if dry_run {
-                item.reason = "would remove".into();
+                item.reason =
+                    format!("kept: its branch has commits that are not merged into {main}");
+            } else if task
+                .branch
+                .as_deref()
+                .is_some_and(|b| git::commits_unpushed(&root, b) > 0)
+            {
+                item.reason = "kept: its branch has commits that are not pushed".into();
             } else {
-                git::remove_worktree(&root, &path, false)?;
-                if let Some(b) = task.branch.as_deref() {
-                    git::delete_merged_branch(&root, b);
+                let why = sharing
+                    .iter()
+                    .find_map(|t| {
+                        self.finished_why(p, &main, t, &path, opts.idle_days)
+                            .ok()
+                            .flatten()
+                    })
+                    .unwrap_or_default();
+                item.bytes = util::dir_size(&path);
+                if opts.dry_run {
+                    item.reason = format!("would remove: {why}");
+                } else {
+                    git::remove_worktree(&root, &path, false)?;
+                    if let Some(b) = task.branch.as_deref() {
+                        git::delete_merged_branch(&root, b);
+                    }
+                    item.removed = true;
+                    item.reason = format!("removed: {why}");
                 }
-                item.removed = true;
-                item.reason = "removed".into();
             }
             out.push(item);
         }
@@ -690,12 +816,12 @@ mod tests {
                 .unwrap();
         }
         let before = worktree_count(&f);
-        let dry = f.store.prune_worktrees(&f.project, true).unwrap();
+        let dry = f.store.prune_worktrees(&f.project, opts(true)).unwrap();
         assert_eq!(worktree_count(&f), before, "a dry run removes nothing");
         assert!(dry
             .iter()
-            .any(|i| i.task == clean.key && i.reason == "would remove"));
-        let done = f.store.prune_worktrees(&f.project, false).unwrap();
+            .any(|i| i.task == clean.key && i.reason.starts_with("would remove") && i.bytes > 0));
+        let done = f.store.prune_worktrees(&f.project, opts(false)).unwrap();
         let by = |k: &str| done.iter().find(|i| i.task == k).unwrap();
         assert!(by(&clean.key).removed);
         assert!(!Path::new(clean.worktree.as_deref().unwrap()).exists());
@@ -703,5 +829,177 @@ mod tests {
         assert!(!by(&unmerged.key).removed && by(&unmerged.key).reason.contains("not merged"));
         assert!(!by(&open.key).removed && by(&open.key).reason.contains("not finished"));
         assert!(Path::new(open.worktree.as_deref().unwrap()).is_dir());
+    }
+
+    fn opts(dry_run: bool) -> PruneOptions {
+        PruneOptions {
+            dry_run,
+            idle_days: Some(7),
+        }
+    }
+
+    fn close(f: &Fix, t: &Task) {
+        f.store
+            .update_task(
+                &t.id,
+                TaskUpdate {
+                    status: Some(TaskStatus::Cancelled),
+                    ..Default::default()
+                },
+                &Actor::Human {
+                    override_reason: None,
+                },
+            )
+            .unwrap();
+    }
+
+    /// A task with its own Evyro worktree holding one commit.
+    fn with_commit(f: &Fix, title: &str) -> (Task, PathBuf) {
+        let t = task(f, title, &[], None);
+        let t = f
+            .store
+            .add_task_worktree(&f.project, &t, None, None)
+            .unwrap();
+        let wt = PathBuf::from(t.worktree.clone().unwrap());
+        std::fs::write(wt.join(format!("{title}.rs")), "work\n").unwrap();
+        git(&wt, &["add", "-A"]);
+        git(&wt, &["commit", "-qm", title]);
+        (t, wt)
+    }
+
+    #[test]
+    fn a_merged_branch_counts_as_finished_even_when_the_task_is_open() {
+        let f = fixture(true);
+        let (t, wt) = with_commit(&f, "merged");
+        let fresh = task(&f, "fresh", &[], None);
+        let fresh = f
+            .store
+            .add_task_worktree(&f.project, &fresh, None, None)
+            .unwrap();
+        git(
+            &f.root,
+            &[
+                "merge",
+                "-q",
+                "--no-ff",
+                "-m",
+                "merge",
+                t.branch.as_deref().unwrap(),
+            ],
+        );
+        let done = f.store.prune_worktrees(&f.project, opts(false)).unwrap();
+        let by = |k: &str| done.iter().find(|i| i.task == k).unwrap();
+        assert!(by(&t.key).removed, "{:?}", by(&t.key));
+        assert!(by(&t.key).reason.contains("merged"));
+        assert!(by(&t.key).bytes > 0);
+        assert!(!wt.exists());
+        assert!(!git::branch_exists(&f.root, t.branch.as_deref().unwrap()));
+        // A branch that only started from main has nothing merged yet.
+        assert!(!by(&fresh.key).removed && by(&fresh.key).reason.contains("not finished"));
+    }
+
+    #[test]
+    fn unpushed_commits_keep_a_worktree() {
+        let f = fixture(true);
+        let remote = f._dir.path().join("remote.git");
+        git(
+            f._dir.path(),
+            &["init", "-q", "--bare", remote.to_str().unwrap()],
+        );
+        git(
+            &f.root,
+            &["remote", "add", "origin", remote.to_str().unwrap()],
+        );
+        let (t, wt) = with_commit(&f, "pushed");
+        git(
+            &wt,
+            &["push", "-q", "-u", "origin", t.branch.as_deref().unwrap()],
+        );
+        std::fs::write(wt.join("later.rs"), "later\n").unwrap();
+        git(&wt, &["add", "-A"]);
+        git(&wt, &["commit", "-qm", "not pushed"]);
+        git(
+            &f.root,
+            &[
+                "merge",
+                "-q",
+                "--no-ff",
+                "-m",
+                "merge",
+                t.branch.as_deref().unwrap(),
+            ],
+        );
+        close(&f, &t);
+        let done = f.store.prune_worktrees(&f.project, opts(false)).unwrap();
+        assert!(
+            !done[0].removed && done[0].reason.contains("not pushed"),
+            "{:?}",
+            done[0]
+        );
+        assert!(wt.is_dir());
+    }
+
+    #[test]
+    fn worktrees_evyro_did_not_make_and_the_main_checkout_are_never_removed() {
+        let f = fixture(true);
+        let theirs = f._dir.path().join("theirs");
+        git(
+            &f.root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "mine",
+                theirs.to_str().unwrap(),
+            ],
+        );
+        let a = task(&f, "Theirs", &[], None);
+        let a = f.store.point_task_at(&a, "mine", &theirs).unwrap();
+        let b = task(&f, "Main", &[], None);
+        let b = f.store.point_task_at(&b, "main", &f.root).unwrap();
+        close(&f, &a);
+        close(&f, &b);
+        let done = f.store.prune_worktrees(&f.project, opts(false)).unwrap();
+        let by = |k: &str| done.iter().find(|i| i.task == k).unwrap();
+        assert!(!by(&a.key).removed && by(&a.key).reason.contains("did not create"));
+        assert!(!by(&b.key).removed && by(&b.key).reason.contains("main checkout"));
+        assert!(theirs.is_dir() && f.root.is_dir());
+    }
+
+    #[test]
+    fn a_worktree_idle_past_the_set_age_counts_as_finished() {
+        let f = fixture(true);
+        let t = task(&f, "Idle", &[], None);
+        let t = f
+            .store
+            .add_task_worktree(&f.project, &t, None, None)
+            .unwrap();
+        let s = work_on(&f, &t, "codex");
+        f.store
+            .set_session_status(&s.id, crate::sessions::SessionStatus::Completed, None)
+            .unwrap();
+        let keep = f.store.prune_worktrees(&f.project, opts(true)).unwrap();
+        assert!(keep[0].reason.contains("not finished"), "{:?}", keep[0]);
+        f.store
+            .conn
+            .execute(
+                "UPDATE sessions SET ended_at = '2020-01-01T00:00:00.000Z', last_event_at = NULL WHERE id = ?1",
+                [&s.id],
+            )
+            .unwrap();
+        let dry = f.store.prune_worktrees(&f.project, opts(true)).unwrap();
+        assert!(dry[0].reason.contains("last session ended"), "{:?}", dry[0]);
+        assert!(
+            Path::new(t.worktree.as_deref().unwrap()).is_dir(),
+            "a dry run removes nothing"
+        );
+        let off = PruneOptions {
+            dry_run: true,
+            idle_days: None,
+        };
+        assert!(f.store.prune_worktrees(&f.project, off).unwrap()[0]
+            .reason
+            .contains("not finished"));
     }
 }

@@ -50,6 +50,7 @@ pub mod targets;
 pub mod tasks;
 pub mod util;
 pub mod verify;
+pub mod worktree_prune;
 
 pub use db::Store;
 pub use error::{Error, Result};

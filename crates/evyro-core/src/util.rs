@@ -19,6 +19,42 @@ pub fn now() -> String {
     )
 }
 
+/// Bytes used by the files under `dir`, not following symbolic links. Unreadable parts count
+/// as nothing.
+pub fn dir_size(dir: &Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else {
+            continue;
+        };
+        for e in entries.flatten() {
+            match e.file_type() {
+                Ok(t) if t.is_dir() => stack.push(e.path()),
+                Ok(t) if t.is_file() => total += e.metadata().map_or(0, |m| m.len()),
+                _ => {}
+            }
+        }
+    }
+    total
+}
+
+/// A byte count for people, e.g. `1.4 GB`.
+pub fn human_bytes(n: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", UNITS[i])
+    }
+}
+
 /// Stable, time-sortable id with a type prefix, e.g. `tsk_0193...`.
 pub fn new_id(prefix: &str) -> String {
     format!("{prefix}_{}", uuid::Uuid::now_v7().simple())

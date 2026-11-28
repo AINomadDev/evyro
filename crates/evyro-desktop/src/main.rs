@@ -567,6 +567,50 @@ async fn history_set(
     history_status(&terms, &chats, removed)
 }
 
+/// The automatic prune settings and what a prune would remove now (a dry run, with sizes).
+#[tauri::command]
+async fn worktree_prune_status() -> CmdResult {
+    with_store(|s| {
+        let settings = evyro_core::worktree_prune::PruneSettings::load(&s.paths);
+        let report = s.prune_all_worktrees(evyro_core::checkout::PruneOptions {
+            dry_run: true,
+            idle_days: Some(settings.idle_days),
+        })?;
+        Ok(json!({
+            "settings": settings,
+            "max_idle_days": evyro_core::worktree_prune::MAX_IDLE_DAYS,
+            "report": report,
+        }))
+    })
+    .await
+}
+
+/// Remove the finished worktrees a dry run lists; anything with work in it is kept.
+#[tauri::command]
+async fn worktree_prune_run() -> CmdResult {
+    with_store(|s| {
+        let settings = evyro_core::worktree_prune::PruneSettings::load(&s.paths);
+        Ok(json!(s.prune_all_worktrees(
+            evyro_core::checkout::PruneOptions {
+                dry_run: false,
+                idle_days: Some(settings.idle_days),
+            }
+        )?))
+    })
+    .await
+}
+
+/// Turn the automatic prune on or off and set the idle age.
+#[tauri::command]
+async fn worktree_prune_set(auto: bool, idle_days: u32) -> CmdResult {
+    with_store(move |s| {
+        let settings = evyro_core::worktree_prune::PruneSettings { auto, idle_days };
+        settings.save(&s.paths)?;
+        Ok(json!(settings))
+    })
+    .await
+}
+
 /// Delete saved ended threads and chats ("threads", "chats" or "all"). Running ones stay.
 #[tauri::command]
 async fn history_clear(
@@ -1127,12 +1171,16 @@ fn main() {
             chats.host.save_all();
         });
     }
+    evyro_core::worktree_prune::spawn_auto_prune(Store::open_default);
     let remote: remote::Remote = Default::default();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            worktree_prune_status,
+            worktree_prune_run,
+            worktree_prune_set,
             app_info,
             updater::check_update,
             updater::install_update,

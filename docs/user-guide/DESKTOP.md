@@ -121,6 +121,10 @@ evyro saved-output decrypt   # stop encrypting and decrypt what is saved; the ke
 
 The setting is read when the app starts. Files saved before you turned it on still open and are encrypted the next time they are saved (`encrypt` converts them all at once). The key is a random 256-bit key in the login Keychain (service `dev.evyro.saved-output`). If it is missing or different, encrypted threads and chats are not listed, the app says why in its log, and the files are left on disk untouched, never replaced or deleted, including by **Clear saved threads/chats** and the keep limits; put the key back and they return. Deleting the Keychain item makes them unreadable for good. A switch in Settings is planned.
 
+## Finished worktrees
+
+Worktrees Evyro makes for parallel AIs each carry their own build output. **Settings → Finished worktrees** lists the ones whose work is finished (task closed, branch merged into the main branch, or no session for the number of days you set) with their sizes, and **Prune** removes them after you confirm. Anything with uncommitted changes, commits not merged or not pushed, an AI working in it, or that Evyro did not make is kept, and the card says why. The app also prunes when it starts and once a day; turn that off or change the age on the same card.
+
 ## Appearance
 
 Settings › **Appearance** changes the look at once and keeps it on this computer.

@@ -165,7 +165,7 @@ enum Cmd {
         include_unknown: bool,
     },
     /// Git worktrees.
-    #[command(subcommand)]
+    #[command(subcommand, visible_alias = "worktree")]
     Worktrees(WorktreeCmd),
     /// Create a small sample project to try Evyro on (inside Evyro's own data folder) with two
     /// ready tasks and a test command that works anywhere, and print the first steps.
@@ -919,12 +919,29 @@ enum WorktreeCmd {
         #[arg(long)]
         path: Option<PathBuf>,
     },
-    /// Tidy finished work: remove the worktrees of finished tasks that are clean and merged,
-    /// and keep any with uncommitted or unmerged work.
+    /// Tidy finished work: remove the worktrees Evyro made whose task is finished, whose branch
+    /// is merged, or whose last session ended long enough ago. Only clean worktrees with no
+    /// unmerged or unpushed commits go; the rest are kept and say why.
     Prune {
-        /// Show what would be removed without removing it.
+        /// Show what would be removed and its size without removing it.
         #[arg(long)]
         dry_run: bool,
+        /// Prune every project, not only this one.
+        #[arg(long)]
+        all: bool,
+        /// Count a worktree as finished once its last session ended this many days ago
+        /// (default: the saved setting).
+        #[arg(long)]
+        idle_days: Option<u32>,
+    },
+    /// Show or change the automatic prune (when the app or `evyro serve` starts, then daily).
+    AutoPrune {
+        /// Turn the automatic prune on or off.
+        #[arg(long)]
+        enabled: Option<bool>,
+        /// The idle age, in days, after which a worktree counts as finished.
+        #[arg(long)]
+        idle_days: Option<u32>,
     },
     /// Remove a worktree (refuses with uncommitted changes unless --force).
     Remove {
@@ -1989,6 +2006,44 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 }
             }
         }
+        Cmd::Worktrees(WorktreeCmd::AutoPrune { enabled, idle_days }) => {
+            use evyro_core::worktree_prune::PruneSettings;
+            let mut s = PruneSettings::load(&store.paths);
+            if enabled.is_some() || idle_days.is_some() {
+                s.auto = enabled.unwrap_or(s.auto);
+                s.idle_days = idle_days.unwrap_or(s.idle_days);
+                s.save(&store.paths)?;
+            }
+            o.print(&json!({"auto": s.auto, "idle_days": s.idle_days}), || {
+                format!(
+                    "Automatic prune: {} (worktrees idle for {} days count as finished)",
+                    if s.auto { "on" } else { "off" },
+                    s.idle_days
+                )
+            });
+        }
+        Cmd::Worktrees(WorktreeCmd::Prune {
+            dry_run,
+            all: true,
+            idle_days,
+        }) => {
+            let opts = prune_options(&store, dry_run, idle_days);
+            let r = store.prune_all_worktrees(opts)?;
+            o.print(&r, || {
+                let mut lines: Vec<String> = r
+                    .projects
+                    .iter()
+                    .flat_map(|p| {
+                        p.items
+                            .iter()
+                            .map(move |i| format!("{}: {}", p.project, pruned_line(i)))
+                    })
+                    .chain(r.errors.iter().cloned())
+                    .collect();
+                lines.push(freed_line(dry_run, r.bytes));
+                lines.join("\n")
+            });
+        }
         Cmd::Worktrees(w) => {
             let p = project(&store, &cli.project, &dir)?;
             match w {
@@ -2022,19 +2077,26 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                         format!("Worktree {} on branch {} for {}", wt, branch, t.key)
                     });
                 }
-                WorktreeCmd::Prune { dry_run } => {
-                    let items = store.prune_worktrees(&p, dry_run)?;
+                WorktreeCmd::Prune {
+                    dry_run, idle_days, ..
+                } => {
+                    let items =
+                        store.prune_worktrees(&p, prune_options(&store, dry_run, idle_days))?;
+                    let bytes: u64 = items
+                        .iter()
+                        .filter(|i| i.removed || i.reason.starts_with("would"))
+                        .map(|i| i.bytes)
+                        .sum();
                     o.print(&items, || {
                         if items.is_empty() {
                             return "No task worktrees to tidy.".to_owned();
                         }
-                        items
-                            .iter()
-                            .map(|i| format!("{} {} ({})", i.task, i.path, i.reason))
-                            .collect::<Vec<_>>()
-                            .join("\n")
+                        let mut lines: Vec<String> = items.iter().map(pruned_line).collect();
+                        lines.push(freed_line(dry_run, bytes));
+                        lines.join("\n")
                     });
                 }
+                WorktreeCmd::AutoPrune { .. } => unreachable!("handled above"),
                 WorktreeCmd::Remove { path, force } => {
                     git::remove_worktree(&p.root(), &path, force)?;
                     o.print(&json!({"removed": path}), || {
@@ -2142,6 +2204,7 @@ fn run(cli: Cli, o: &Out) -> anyhow::Result<i32> {
                 None,
             )
             .map_err(|e| anyhow::anyhow!(e))?;
+            evyro_core::worktree_prune::spawn_auto_prune(Store::open_default);
             let url = running.url();
             let info =
                 json!({"url": url, "reach": running.reach, "api": evyro_remote::API_VERSION});
@@ -3541,5 +3604,40 @@ fn access_until(d: &evyro_core::remote::Device) -> String {
         (None, _) => "no expiry".into(),
         (Some(t), "expired") => format!("expired {t} UTC"),
         (Some(t), _) => format!("expires {t} UTC"),
+    }
+}
+
+fn prune_options(
+    store: &Store,
+    dry_run: bool,
+    idle_days: Option<u32>,
+) -> evyro_core::checkout::PruneOptions {
+    let saved = evyro_core::worktree_prune::PruneSettings::load(&store.paths);
+    evyro_core::checkout::PruneOptions {
+        dry_run,
+        idle_days: Some(idle_days.unwrap_or(saved.idle_days)),
+    }
+}
+
+fn pruned_line(i: &evyro_core::checkout::Pruned) -> String {
+    if i.bytes > 0 {
+        format!(
+            "{} {} ({}, {})",
+            i.task,
+            i.path,
+            i.reason,
+            evyro_core::util::human_bytes(i.bytes)
+        )
+    } else {
+        format!("{} {} ({})", i.task, i.path, i.reason)
+    }
+}
+
+fn freed_line(dry_run: bool, bytes: u64) -> String {
+    let size = evyro_core::util::human_bytes(bytes);
+    if dry_run {
+        format!("Would free {size}.")
+    } else {
+        format!("Freed {size}.")
     }
 }
